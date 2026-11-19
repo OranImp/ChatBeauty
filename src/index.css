@@ -4,6 +4,8 @@
 
 :root,
 [data-theme='oled'] {
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-pop: cubic-bezier(0.16, 1, 0.3, 1);
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'HarmonyOS Sans SC',
     'PingFang SC', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
   --font-serif: 'Newsreader', 'LXGW WenKai', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC',
@@ -296,4 +298,131 @@ body,
   text-align: right;
   color: rgba(148, 163, 184, 0.45);
   user-select: none;
+}
+
+/* Smooth GPU-accelerated UI micro-animations */
+@keyframes cbFadeUp {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes cbPanelEnter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 5px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes cbStepForward {
+  from {
+    opacity: 0;
+    transform: translate3d(14px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes cbStepBackward {
+  from {
+    opacity: 0;
+    transform: translate3d(-14px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes cbListItem {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes cbMsgEnter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes cbIndicatorIn {
+  from {
+    opacity: 0;
+    transform: scaleY(0.35);
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
+.cb-fade-up {
+  animation: cbFadeUp 260ms var(--ease-spring) both;
+  animation-delay: calc(min(var(--stagger-i, 0), 8) * 32ms);
+}
+
+.cb-panel-enter {
+  animation: cbPanelEnter 200ms var(--ease-spring) both;
+}
+
+.cb-step-forward {
+  animation: cbStepForward 230ms var(--ease-spring) both;
+}
+
+.cb-step-backward {
+  animation: cbStepBackward 230ms var(--ease-spring) both;
+}
+
+.cb-list-item {
+  animation: cbListItem 190ms var(--ease-pop) both;
+  animation-delay: calc(min(var(--stagger-i, 0), 8) * 24ms);
+}
+
+.cb-msg-enter {
+  animation: cbMsgEnter 220ms var(--ease-spring) both;
+}
+
+.cb-indicator-in {
+  transform-origin: center;
+  animation: cbIndicatorIn 200ms var(--ease-spring) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cb-fade-up,
+  .cb-panel-enter,
+  .cb-step-forward,
+  .cb-step-backward,
+  .cb-list-item,
+  .cb-msg-enter,
+  .cb-indicator-in {
+    animation: none !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
 }

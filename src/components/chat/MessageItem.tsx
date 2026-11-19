@@ -45,9 +45,9 @@ export const MessageItem: React.FC<MessageItemProps> = ({
 
   if (isUser) {
     return (
-      <div className="group flex flex-col items-end my-4">
+      <div className="cb-msg-enter group flex flex-col items-end my-4">
         {editing ? (
-          <div className="w-full max-w-[88%] rounded-2xl border border-fg/30 bg-surface p-3 space-y-2">
+          <div className="cb-panel-enter w-full max-w-[88%] rounded-2xl border border-fg/30 bg-surface p-3 space-y-2">
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -119,7 +119,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   }
 
   return (
-    <div className="group my-5">
+    <div className="cb-msg-enter group my-5">
       {message.parts.length === 0 && isStreaming ? (
         <div className="py-2 text-sm text-muted animate-pulse">正在思考与生成</div>
       ) : (

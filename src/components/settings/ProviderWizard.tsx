@@ -24,6 +24,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
   const { fetchProviderModels, testProviderConnection } = useAppStore();
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [direction, setDirection] = useState<'forward' | 'backward'>('forward');
   const [protocol, setProtocol] = useState<ProtocolType>('openai-chat');
   const [draft, setDraft] = useState<ProviderConfig>(() => {
     const tpl = PROTOCOL_TEMPLATES['openai-chat'];
@@ -60,6 +61,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
       models: [...tpl.suggestedModels],
     }));
     setStatusMsg(null);
+    setDirection('forward');
     setStep(2);
   };
 
@@ -115,6 +117,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
     }
     setDraft(candidate);
     setStatusMsg(null);
+    setDirection('forward');
     setStep(3);
   };
 
@@ -171,27 +174,38 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
       <div className="flex items-center justify-between">
         <button
           type="button"
-          onClick={() => (step === 1 ? onCancel() : setStep((s) => (s === 3 ? 2 : 1)))}
-          className="flex items-center gap-1.5 text-muted hover:text-fg transition"
+          onClick={() => {
+            if (step === 1) {
+              onCancel();
+            } else {
+              setDirection('backward');
+              setStep((s) => (s === 3 ? 2 : 1));
+            }
+          }}
+          className="flex items-center gap-1.5 text-muted hover:text-fg active:scale-95 transition"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>{step === 1 ? '返回列表' : '上一步'}</span>
         </button>
 
-        <div className="text-muted tabular-nums">步骤 {step} / 3</div>
+        <div className="text-muted font-mono tabular-nums">步骤 {step} / 3</div>
       </div>
 
       <div className="grid grid-cols-3 gap-1.5">
         {[1, 2, 3].map((idx) => (
           <div
             key={idx}
-            className={`h-1 rounded-full transition-colors ${
-              idx <= step ? 'bg-accent' : 'bg-fg/10'
+            className={`h-1 rounded-full transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              idx <= step ? 'bg-accent scale-x-100' : 'bg-fg/10'
             }`}
           />
         ))}
       </div>
 
+      <div
+        key={step}
+        className={direction === 'forward' ? 'cb-step-forward' : 'cb-step-backward'}
+      >
       {step === 1 && (
         <div className="space-y-3">
           <div>
@@ -210,7 +224,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
                   key={proto}
                   type="button"
                   onClick={() => selectProtocol(proto)}
-                  className={`p-3.5 rounded-2xl border text-left transition ${
+                  className={`p-3.5 rounded-2xl border text-left active:scale-[0.985] transition ${
                     selected
                       ? 'border-fg/40 bg-elevated text-fg'
                       : 'border-borderc bg-surface/50 text-fg hover:bg-surface'
@@ -433,6 +447,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };

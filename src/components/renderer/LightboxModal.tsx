@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Copy, Download, Image as ImageIcon, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { exportSvgToPng, triggerDownload, type ResolvedTheme } from './svgUtils';
+import { usePresence } from '@/components/ui/MotionPrimitives';
 
 export type LightboxPayload =
   | { kind: 'svg'; title?: string; svgHtml: string; rawSource: string }
@@ -14,6 +15,8 @@ interface LightboxModalProps {
 }
 
 export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, onClose }) => {
+  const [renderedPayload, setRenderedPayload] = useState<LightboxPayload | null>(payload);
+  const lightboxPresence = usePresence(Boolean(payload), 200);
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [copied, setCopied] = useState(false);
@@ -25,9 +28,12 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
   const pinchDist = useRef<number | null>(null);
 
   useEffect(() => {
-    setScale(payload?.kind === 'math' ? 1.45 : 1);
-    setOffset({ x: 0, y: 0 });
-    setCopied(false);
+    if (payload) {
+      setRenderedPayload(payload);
+      setScale(payload.kind === 'math' ? 1.45 : 1);
+      setOffset({ x: 0, y: 0 });
+      setCopied(false);
+    }
   }, [payload]);
 
   useEffect(() => {
@@ -39,7 +45,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
     return () => window.removeEventListener('keydown', onKey);
   }, [payload, onClose]);
 
-  if (!payload) return null;
+  const activePayload = payload ?? renderedPayload;
+  if (!lightboxPresence.mounted || !activePayload) return null;
 
   const copySource = async (text: string) => {
     await navigator.clipboard.writeText(text);
@@ -48,14 +55,14 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
   };
 
   const handleWheel: React.WheelEventHandler<HTMLDivElement> = (e) => {
-    if (payload.kind === 'iframe') return;
+    if (activePayload.kind === 'iframe') return;
     e.preventDefault();
     const delta = e.deltaY < 0 ? 0.14 : -0.14;
     setScale((prev) => Math.max(0.4, Math.min(5, Number((prev + delta).toFixed(2)))));
   };
 
   const handlePointerDown: React.PointerEventHandler<HTMLDivElement> = (e) => {
-    if (payload.kind === 'iframe') return;
+    if (activePayload.kind === 'iframe') return;
     dragging.current = { active: true, x: e.clientX - offset.x, y: e.clientY - offset.y };
   };
 
@@ -72,7 +79,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
   };
 
   const handleTouchMove: React.TouchEventHandler<HTMLDivElement> = (e) => {
-    if (payload.kind === 'iframe') return;
+    if (activePayload.kind === 'iframe') return;
     if (e.touches.length === 2) {
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
@@ -91,19 +98,23 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-black/90 backdrop-blur-md text-zinc-100"
+      className={`fixed inset-0 z-50 flex flex-col bg-black/90 backdrop-blur-md text-zinc-100 transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        lightboxPresence.visible
+          ? 'opacity-100 scale-100'
+          : 'opacity-0 scale-[0.97] pointer-events-none'
+      }`}
       role="dialog"
       aria-modal="true"
     >
       {/* Top Toolbar */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0 safe-top">
         <div className="text-sm font-medium truncate max-w-[45%]">
-          {payload.kind === 'math'
+          {activePayload.kind === 'math'
             ? '公式详情 & LaTeX 源码'
-            : payload.title || (payload.kind === 'iframe' ? '交互式实验预览' : '矢量图形查看器')}
+            : activePayload.title || (activePayload.kind === 'iframe' ? '交互式实验预览' : '矢量图形查看器')}
         </div>
         <div className="flex items-center gap-1.5">
-          {payload.kind !== 'iframe' && (
+          {activePayload.kind !== 'iframe' && (
             <>
               <button
                 type="button"
@@ -127,7 +138,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
               <button
                 type="button"
                 onClick={() => {
-                  setScale(payload.kind === 'math' ? 1.45 : 1);
+                  setScale(activePayload.kind === 'math' ? 1.45 : 1);
                   setOffset({ x: 0, y: 0 });
                 }}
                 className="p-2 rounded-lg hover:bg-white/10 transition"
@@ -141,22 +152,22 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
           <button
             type="button"
             onClick={() =>
-              void copySource(payload.kind === 'math' ? payload.latex : payload.rawSource)
+              void copySource(activePayload.kind === 'math' ? activePayload.latex : activePayload.rawSource)
             }
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs transition"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-fg" /> : <Copy className="w-3.5 h-3.5" />}
-            <span>{payload.kind === 'math' ? '复制 LaTeX' : '复制源码'}</span>
+            <span>{activePayload.kind === 'math' ? '复制 LaTeX' : '复制源码'}</span>
           </button>
 
-          {payload.kind === 'svg' && (
+          {activePayload.kind === 'svg' && (
             <>
               <button
                 type="button"
                 onClick={() =>
                   triggerDownload(
                     `chatbeauty-diagram-${Date.now()}.svg`,
-                    new Blob([payload.rawSource], { type: 'image/svg+xml;charset=utf-8' })
+                    new Blob([activePayload.rawSource], { type: 'image/svg+xml;charset=utf-8' })
                   )
                 }
                 className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs transition"
@@ -168,7 +179,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
                 type="button"
                 onClick={() =>
                   void exportSvgToPng(
-                    payload.svgHtml,
+                    activePayload.svgHtml,
                     `chatbeauty-diagram-${Date.now()}.png`,
                     theme
                   )
@@ -193,11 +204,11 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
       </div>
 
       {/* Main Viewport */}
-      {payload.kind === 'iframe' ? (
+      {activePayload.kind === 'iframe' ? (
         <div className="flex-1 p-3 sm:p-6">
           <iframe
-            title={payload.title || 'Interactive Preview'}
-            srcDoc={payload.htmlDoc}
+            title={activePayload.title || 'Interactive Preview'}
+            srcDoc={activePayload.htmlDoc}
             sandbox="allow-scripts"
             referrerPolicy="no-referrer"
             className="w-full h-full rounded-2xl border border-white/15 bg-transparent"
@@ -221,29 +232,29 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
             }}
             className="transition-transform duration-75 max-w-[92vw]"
           >
-            {payload.kind === 'svg' ? (
+            {activePayload.kind === 'svg' ? (
               <div
                 className="w-[min(860px,88vw)] text-zinc-100 p-4 rounded-2xl border border-white/10 bg-zinc-950/80"
-                dangerouslySetInnerHTML={{ __html: payload.svgHtml }}
+                dangerouslySetInnerHTML={{ __html: activePayload.svgHtml }}
               />
             ) : (
               <div
                 className="p-6 rounded-2xl border border-white/10 bg-zinc-950/90 text-zinc-100 text-lg overflow-x-auto max-w-[88vw]"
-                dangerouslySetInnerHTML={{ __html: payload.katexHtml }}
+                dangerouslySetInnerHTML={{ __html: activePayload.katexHtml }}
               />
             )}
           </div>
         </div>
       )}
 
-      {payload.kind === 'math' && (
+      {activePayload.kind === 'math' && (
         <div className="px-4 py-3 border-t border-white/10 bg-zinc-950/80 shrink-0 safe-bottom">
           <div className="max-w-3xl mx-auto">
             <div className="text-[11px] uppercase tracking-wider text-zinc-400 mb-1">
               LaTeX 源码
             </div>
             <pre className="text-xs font-mono text-zinc-200 bg-black/50 p-2.5 rounded-lg overflow-x-auto border border-white/10">
-              {payload.latex}
+              {activePayload.latex}
             </pre>
           </div>
         </div>

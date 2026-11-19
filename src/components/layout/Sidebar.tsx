@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Check,
   PanelLeftClose,
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import type { Conversation } from '@/types/chat';
+import { usePresence } from '@/components/ui/MotionPrimitives';
 
 interface SidebarProps {
   desktopOpen: boolean;
@@ -49,6 +50,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [query, setQuery] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
+  const drawerPresence = usePresence(mobileOpen, 240);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCloseMobile();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mobileOpen, onCloseMobile]);
 
   const { pinnedList, recentList } = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -88,7 +99,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             : 'text-muted hover:text-fg hover:bg-fg/[0.04]'
         }`}
       >
-        {active && <span className="w-[2.5px] h-4 rounded-full bg-accent shrink-0" />}
+        {active && <span className="cb-indicator-in w-[2.5px] h-4 rounded-full bg-accent shrink-0" />}
         {editingId === conv.id ? (
           <div
             className="flex-1 flex items-center gap-1 min-w-0"
@@ -265,20 +276,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <>
       {/* Desktop persistent sidebar */}
       <aside
-        className="hidden md:block shrink-0 transition-all duration-200 overflow-hidden"
+        className={`hidden md:block shrink-0 overflow-hidden transition-[width,opacity] duration-[250ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+          desktopOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
         style={{ width: desktopOpen ? 268 : 0 }}
       >
         <div className="w-[268px] h-full">{innerContent}</div>
       </aside>
 
       {/* Mobile slide-over drawer */}
-      {mobileOpen && (
+      {drawerPresence.mounted && (
         <div className="fixed inset-0 z-50 md:hidden flex">
           <div
-            className="fixed inset-0 bg-black/65 backdrop-blur-sm"
+            className={`fixed inset-0 bg-black/65 backdrop-blur-sm transition-opacity duration-[240ms] ease-out ${
+              drawerPresence.visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            }`}
             onClick={onCloseMobile}
           />
-          <div className="relative z-10 w-[82vw] max-w-[300px] h-full shadow-2xl">
+          <div
+            className={`relative z-10 w-[82vw] max-w-[300px] h-full shadow-2xl transition-transform duration-[250ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              drawerPresence.visible ? 'translate-x-0' : '-translate-x-full'
+            }`}
+          >
             {innerContent}
           </div>
         </div>

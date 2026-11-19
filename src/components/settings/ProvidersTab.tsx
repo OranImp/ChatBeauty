@@ -16,6 +16,7 @@ import { PROTOCOL_TEMPLATES } from '@/services/llm/registry';
 import { toModelDefinition } from '@/services/llm/adapters/shared';
 import type { ProtocolType, ProviderConfig } from '@/types/chat';
 import { SmoothSlider } from '@/components/ui/SmoothSlider';
+import { Collapsible } from '@/components/ui/MotionPrimitives';
 import { ProviderWizard } from './ProviderWizard';
 
 export const ProvidersTab: React.FC = () => {
@@ -40,6 +41,7 @@ export const ProvidersTab: React.FC = () => {
   const [statusMsg, setStatusMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const openEditor = (p: ProviderConfig) => {
     setDraft(structuredClone(p));
@@ -144,16 +146,18 @@ export const ProvidersTab: React.FC = () => {
 
   if (view === 'wizard') {
     return (
-      <ProviderWizard
-        onCancel={() => setView('list')}
-        onComplete={handleWizardComplete}
-      />
+      <div className="cb-panel-enter">
+        <ProviderWizard
+          onCancel={() => setView('list')}
+          onComplete={handleWizardComplete}
+        />
+      </div>
     );
   }
 
   if (view === 'edit' && draft) {
     return (
-      <div className="space-y-4 text-xs">
+      <div className="cb-panel-enter space-y-4 text-xs">
         <div className="flex items-center justify-between">
           <button
             type="button"
@@ -378,7 +382,7 @@ export const ProvidersTab: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6 text-xs">
+    <div className="cb-panel-enter space-y-6 text-xs">
       {/* Header + Single Add Provider CTA */}
       <div className="flex items-center justify-between gap-3">
         <div>
@@ -390,7 +394,7 @@ export const ProvidersTab: React.FC = () => {
         <button
           type="button"
           onClick={() => setView('wizard')}
-          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-accent text-accentfg font-semibold shrink-0 hover:opacity-90 transition"
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-accent text-accentfg font-semibold shrink-0 hover:opacity-90 active:scale-95 transition"
         >
           <Plus className="w-3.5 h-3.5" />
           <span>添加供应商</span>
@@ -404,7 +408,7 @@ export const ProvidersTab: React.FC = () => {
           <button
             type="button"
             onClick={() => setView('wizard')}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-accentfg font-semibold"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-accentfg font-semibold active:scale-95 transition"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>立即配置</span>
@@ -419,7 +423,7 @@ export const ProvidersTab: React.FC = () => {
                 key={p.id}
                 type="button"
                 onClick={() => openEditor(p)}
-                className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-2xl border border-borderc bg-surface/45 hover:bg-surface transition text-left"
+                className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-2xl border border-borderc bg-surface/45 hover:bg-surface active:scale-[0.99] transition text-left"
               >
                 <div className="min-w-0 space-y-0.5">
                   <div className="flex items-center gap-2">
@@ -442,73 +446,84 @@ export const ProvidersTab: React.FC = () => {
         </div>
       )}
 
-      {/* Collapsible Sampling Parameters (Continuous SmoothSliders) */}
-      <details className="rounded-2xl border border-borderc bg-surface/35 p-4">
-        <summary className="cursor-pointer font-semibold text-fg">
-          高级采样参数（可选调节）
-        </summary>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
-          <label className="space-y-1">
-            <div className="flex justify-between text-muted">
-              <span>Temperature</span>
-              <span className="tabular-nums text-fg">{generation.temperature.toFixed(2)}</span>
-            </div>
-            <SmoothSlider
-              min={0}
-              max={2}
-              decimals={2}
-              value={generation.temperature}
-              onChange={(val) => void updateGeneration({ temperature: val })}
-              ariaLabel="Temperature"
-            />
-          </label>
+      {/* Smooth Collapsible Sampling Parameters (Continuous SmoothSliders) */}
+      <div className="rounded-2xl border border-borderc bg-surface/35 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          className="w-full flex items-center justify-between px-4 py-3.5 text-left font-semibold text-fg hover:bg-fg/[0.03] transition"
+        >
+          <span>高级采样参数（可选调节）</span>
+          <ChevronRight
+            className={`w-4 h-4 text-muted transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              advancedOpen ? 'rotate-90 text-fg' : ''
+            }`}
+          />
+        </button>
+        <Collapsible open={advancedOpen}>
+          <div className="px-4 pb-4 pt-3 border-t border-borderc grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className="space-y-1">
+              <div className="flex justify-between text-muted">
+                <span>Temperature</span>
+                <span className="tabular-nums text-fg">{generation.temperature.toFixed(2)}</span>
+              </div>
+              <SmoothSlider
+                min={0}
+                max={2}
+                decimals={2}
+                value={generation.temperature}
+                onChange={(val) => void updateGeneration({ temperature: val })}
+                ariaLabel="Temperature"
+              />
+            </label>
 
-          <label className="space-y-1">
-            <div className="flex justify-between text-muted">
-              <span>Top-P</span>
-              <span className="tabular-nums text-fg">{generation.topP.toFixed(2)}</span>
-            </div>
-            <SmoothSlider
-              min={0.1}
-              max={1}
-              decimals={2}
-              value={generation.topP}
-              onChange={(val) => void updateGeneration({ topP: val })}
-              ariaLabel="Top-P"
-            />
-          </label>
+            <label className="space-y-1">
+              <div className="flex justify-between text-muted">
+                <span>Top-P</span>
+                <span className="tabular-nums text-fg">{generation.topP.toFixed(2)}</span>
+              </div>
+              <SmoothSlider
+                min={0.1}
+                max={1}
+                decimals={2}
+                value={generation.topP}
+                onChange={(val) => void updateGeneration({ topP: val })}
+                ariaLabel="Top-P"
+              />
+            </label>
 
-          <label className="space-y-1">
-            <div className="flex justify-between text-muted">
-              <span>Max Output Tokens</span>
-              <span className="tabular-nums text-fg">{generation.maxTokens}</span>
-            </div>
-            <SmoothSlider
-              min={512}
-              max={32768}
-              decimals={0}
-              value={generation.maxTokens}
-              onChange={(val) => void updateGeneration({ maxTokens: val })}
-              ariaLabel="Max Output Tokens"
-            />
-          </label>
+            <label className="space-y-1">
+              <div className="flex justify-between text-muted">
+                <span>Max Output Tokens</span>
+                <span className="tabular-nums text-fg">{generation.maxTokens}</span>
+              </div>
+              <SmoothSlider
+                min={512}
+                max={32768}
+                decimals={0}
+                value={generation.maxTokens}
+                onChange={(val) => void updateGeneration({ maxTokens: val })}
+                ariaLabel="Max Output Tokens"
+              />
+            </label>
 
-          <label className="space-y-1">
-            <div className="flex justify-between text-muted">
-              <span>上下文携带消息数</span>
-              <span className="tabular-nums text-fg">{generation.maxContextMessages} 条</span>
-            </div>
-            <SmoothSlider
-              min={4}
-              max={64}
-              decimals={0}
-              value={generation.maxContextMessages}
-              onChange={(val) => void updateGeneration({ maxContextMessages: val })}
-              ariaLabel="上下文携带消息数"
-            />
-          </label>
-        </div>
-      </details>
+            <label className="space-y-1">
+              <div className="flex justify-between text-muted">
+                <span>上下文携带消息数</span>
+                <span className="tabular-nums text-fg">{generation.maxContextMessages} 条</span>
+              </div>
+              <SmoothSlider
+                min={4}
+                max={64}
+                decimals={0}
+                value={generation.maxContextMessages}
+                onChange={(val) => void updateGeneration({ maxContextMessages: val })}
+                ariaLabel="上下文携带消息数"
+              />
+            </label>
+          </div>
+        </Collapsible>
+      </div>
     </div>
   );
 };

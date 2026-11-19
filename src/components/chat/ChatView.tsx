@@ -5,6 +5,7 @@ import type { ResolvedTheme } from '@/components/renderer/svgUtils';
 import type { LightboxPayload } from '@/components/renderer/LightboxModal';
 import { MessageItem } from './MessageItem';
 import { ChatInput } from './ChatInput';
+import { usePresence } from '@/components/ui/MotionPrimitives';
 
 interface ChatViewProps {
   theme: ResolvedTheme;
@@ -37,6 +38,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const autoFollowRef = useRef(true);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const scrollBtnPresence = usePresence(showScrollBottom, 180);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
   const activeConv = conversations.find((c) => c.id === activeConversationId);
@@ -110,10 +112,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
           {messages.length === 0 ? (
             <div className="min-h-[60vh] flex flex-col items-center justify-center text-center py-10 space-y-6">
               <div className="space-y-2.5">
-                <h1 className="font-editorial text-3xl sm:text-[34px] font-medium tracking-tight text-fg">
+                <h1
+                  className="cb-fade-up font-editorial text-3xl sm:text-[34px] font-medium tracking-tight text-fg"
+                  style={{ '--stagger-i': 0 } as React.CSSProperties}
+                >
                   有什么可以帮你的？
                 </h1>
-                <p className="text-sm text-muted max-w-md mx-auto">
+                <p
+                  className="cb-fade-up text-sm text-muted max-w-md mx-auto"
+                  style={{ '--stagger-i': 1 } as React.CSSProperties}
+                >
                   支持多步数学推导、化学式、矢量图解与交互原理实验。
                 </p>
               </div>
@@ -122,7 +130,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
                 <button
                   type="button"
                   onClick={() => onOpenSettings('providers')}
-                  className="px-4 py-2.5 rounded-2xl bg-accent text-accentfg text-sm font-medium shadow-md active:scale-95 transition"
+                  style={{ '--stagger-i': 2 } as React.CSSProperties}
+                  className="cb-fade-up px-4 py-2.5 rounded-2xl bg-accent text-accentfg text-sm font-medium shadow-md hover:opacity-95 active:scale-95 transition"
                 >
                   添加模型供应商
                 </button>
@@ -134,7 +143,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
                     key={idx}
                     type="button"
                     onClick={() => void dispatchSend(prompt)}
-                    className="p-3.5 rounded-2xl border border-borderc bg-surface/55 hover:bg-elevated hover:border-fg/25 transition text-xs sm:text-[13px] text-fg/90 leading-relaxed"
+                    style={{ '--stagger-i': idx + 2 } as React.CSSProperties}
+                    className="cb-fade-up p-3.5 rounded-2xl border border-borderc bg-surface/55 hover:bg-elevated hover:border-fg/25 hover:-translate-y-0.5 active:scale-[0.99] transition-all duration-200 text-xs sm:text-[13px] text-fg/90 leading-relaxed"
                   >
                     {prompt}
                   </button>
@@ -170,12 +180,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
         </div>
       </div>
 
-      {/* Scroll-to-bottom circular button */}
-      {showScrollBottom && (
+      {/* Animated Scroll-to-bottom circular button */}
+      {scrollBtnPresence.mounted && (
         <button
           type="button"
           onClick={() => scrollToBottom('smooth')}
-          className="absolute bottom-[114px] left-1/2 -translate-x-1/2 z-20 w-9 h-9 rounded-full border border-borderc bg-elevated/90 backdrop-blur-md text-fg shadow-lg flex items-center justify-center hover:bg-surface active:scale-95 transition"
+          className={`absolute bottom-[114px] left-1/2 -translate-x-1/2 z-20 w-9 h-9 rounded-full border border-borderc bg-elevated/90 backdrop-blur-md text-fg shadow-lg flex items-center justify-center hover:bg-surface active:scale-95 transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+            scrollBtnPresence.visible
+              ? 'opacity-100 translate-y-0 scale-100'
+              : 'opacity-0 translate-y-3 scale-90 pointer-events-none'
+          }`}
           aria-label="滚动到底部"
         >
           <ArrowDown className="w-4 h-4" />

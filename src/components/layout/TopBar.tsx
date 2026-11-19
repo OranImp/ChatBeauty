@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Download,
   MoreVertical,
@@ -9,6 +9,7 @@ import {
 import { useAppStore } from '@/store/useAppStore';
 import { exportConversationMarkdown } from '@/db/backup';
 import { triggerDownload } from '@/components/renderer/svgUtils';
+import { usePresence } from '@/components/ui/MotionPrimitives';
 
 interface TopBarProps {
   sidebarOpen: boolean;
@@ -32,6 +33,17 @@ export const TopBar: React.FC<TopBarProps> = ({
   } = useAppStore();
 
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const morePresence = usePresence(moreMenuOpen, 170);
+
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMoreMenuOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [moreMenuOpen]);
+
   const activeConv = conversations.find((c) => c.id === activeConversationId);
   const currentProvider = providers.find(
     (p) => p.id === (activeConv?.providerId || activeProviderId)
@@ -156,17 +168,24 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
 
       {/* Mobile More Menu */}
-      {moreMenuOpen && (
+      {morePresence.mounted && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setMoreMenuOpen(false)} />
-          <div className="absolute right-3.5 top-14 z-40 w-44 rounded-2xl border border-borderc bg-elevated/95 backdrop-blur-xl shadow-2xl p-1.5 text-sm">
+          <div
+            className={`absolute right-3.5 top-14 z-40 w-44 rounded-2xl border border-borderc bg-elevated/95 backdrop-blur-xl shadow-2xl p-1.5 text-sm origin-top-right transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+              morePresence.visible
+                ? 'opacity-100 translate-y-0 scale-100'
+                : 'opacity-0 -translate-y-2 scale-[0.95] pointer-events-none'
+            }`}
+          >
             <button
               type="button"
               onClick={() => {
                 setMoreMenuOpen(false);
                 onOpenSettings('providers');
               }}
-              className="w-full text-left px-3 py-2 rounded-xl hover:bg-white/10"
+              style={{ '--stagger-i': 0 } as React.CSSProperties}
+              className="cb-list-item w-full text-left px-3 py-2 rounded-xl hover:bg-fg/10 active:scale-[0.98] transition"
             >
               模型与接口
             </button>
@@ -176,7 +195,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                 setMoreMenuOpen(false);
                 onOpenSettings('prompts');
               }}
-              className="w-full text-left px-3 py-2 rounded-xl hover:bg-white/10"
+              style={{ '--stagger-i': 1 } as React.CSSProperties}
+              className="cb-list-item w-full text-left px-3 py-2 rounded-xl hover:bg-fg/10 active:scale-[0.98] transition"
             >
               提示词与渲染
             </button>
@@ -186,7 +206,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                 setMoreMenuOpen(false);
                 onOpenSettings('appearance');
               }}
-              className="w-full text-left px-3 py-2 rounded-xl hover:bg-white/10"
+              style={{ '--stagger-i': 2 } as React.CSSProperties}
+              className="cb-list-item w-full text-left px-3 py-2 rounded-xl hover:bg-fg/10 active:scale-[0.98] transition"
             >
               外观与排版
             </button>
@@ -196,7 +217,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                 setMoreMenuOpen(false);
                 onOpenSettings('data');
               }}
-              className="w-full text-left px-3 py-2 rounded-xl hover:bg-white/10"
+              style={{ '--stagger-i': 3 } as React.CSSProperties}
+              className="cb-list-item w-full text-left px-3 py-2 rounded-xl hover:bg-fg/10 active:scale-[0.98] transition"
             >
               数据与同步
             </button>
@@ -204,7 +226,8 @@ export const TopBar: React.FC<TopBarProps> = ({
               <button
                 type="button"
                 onClick={handleExportMd}
-                className="w-full text-left px-3 py-2 rounded-xl hover:bg-white/10 border-t border-borderc mt-1 pt-2"
+                style={{ '--stagger-i': 4 } as React.CSSProperties}
+                className="cb-list-item w-full text-left px-3 py-2 rounded-xl hover:bg-fg/10 active:scale-[0.98] border-t border-borderc mt-1 pt-2 transition"
               >
                 导出 Markdown
               </button>

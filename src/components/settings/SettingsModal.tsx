@@ -4,6 +4,7 @@ import { ProvidersTab } from './ProvidersTab';
 import { PromptsTab } from './PromptsTab';
 import { AppearanceTab } from './AppearanceTab';
 import { DataSyncTab } from './DataSyncTab';
+import { usePresence } from '@/components/ui/MotionPrimitives';
 
 export type SettingsTabKey = 'providers' | 'prompts' | 'appearance' | 'data';
 
@@ -27,6 +28,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onTabChange,
   onClose,
 }) => {
+  const modalPresence = usePresence(open, 200);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -36,22 +39,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!modalPresence.mounted) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-sm sm:p-4"
+      className={`fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-sm sm:p-4 transition-opacity duration-200 ease-out ${
+        modalPresence.visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+      }`}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
       role="dialog"
       aria-modal="true"
     >
-      <div className="w-full sm:max-w-3xl h-[92dvh] sm:h-[82vh] rounded-t-3xl sm:rounded-3xl border border-borderc bg-bg flex flex-col overflow-hidden shadow-2xl">
+      <div
+        className={`w-full sm:max-w-3xl h-[92dvh] sm:h-[82vh] rounded-t-3xl sm:rounded-3xl border border-borderc bg-bg flex flex-col overflow-hidden shadow-2xl transition-all duration-[250ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+          modalPresence.visible
+            ? 'opacity-100 translate-y-0 sm:scale-100'
+            : 'opacity-0 translate-y-8 sm:translate-y-3 sm:scale-[0.97]'
+        }`}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-borderc shrink-0">
           <div className="font-semibold text-base text-fg">ChatBeauty 设置</div>
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl text-muted hover:text-fg hover:bg-surface transition"
+            className="p-2 rounded-xl text-muted hover:text-fg hover:bg-surface active:scale-95 transition"
             aria-label="关闭设置"
           >
             <X className="w-4 h-4" />
@@ -67,10 +81,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 key={key}
                 type="button"
                 onClick={() => onTabChange(key)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition ${
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap active:scale-95 transition ${
                   active
-                    ? 'bg-accent text-accentfg'
-                    : 'text-muted hover:text-fg hover:bg-white/5'
+                    ? 'bg-accent text-accentfg shadow-sm'
+                    : 'text-muted hover:text-fg hover:bg-fg/5'
                 }`}
               >
                 {label}
@@ -81,10 +95,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 safe-bottom">
-          {activeTab === 'providers' && <ProvidersTab />}
-          {activeTab === 'prompts' && <PromptsTab />}
-          {activeTab === 'appearance' && <AppearanceTab />}
-          {activeTab === 'data' && <DataSyncTab />}
+          <div key={activeTab} className="cb-panel-enter">
+            {activeTab === 'providers' && <ProvidersTab />}
+            {activeTab === 'prompts' && <PromptsTab />}
+            {activeTab === 'appearance' && <AppearanceTab />}
+            {activeTab === 'data' && <DataSyncTab />}
+          </div>
         </div>
 
         {/* Subtle License & Font Attribution Footer */}

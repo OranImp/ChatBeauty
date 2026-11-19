@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { MarkdownBlock } from './MarkdownBlock';
+import { Collapsible } from '@/components/ui/MotionPrimitives';
 import type { AppearanceSettings } from '@/types/settings';
 import type { ResolvedTheme } from './svgUtils';
 import type { LightboxPayload } from './LightboxModal';
@@ -44,10 +45,14 @@ export const ReasoningCard: React.FC<ReasoningCardProps> = ({
             <span className="font-mono text-[11px] text-muted/80 tabular-nums">{durationText}</span>
           )}
         </span>
-        {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+        <ChevronRight
+          className={`w-4 h-4 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+            open ? 'rotate-90 text-fg' : ''
+          }`}
+        />
       </button>
 
-      {open && (
+      <Collapsible open={open}>
         <div className="px-3.5 pb-3 pt-2 border-t border-borderc text-[13px] text-muted leading-relaxed">
           <div className="border-l-2 border-accent/55 pl-3">
             <MarkdownBlock
@@ -59,7 +64,7 @@ export const ReasoningCard: React.FC<ReasoningCardProps> = ({
             />
           </div>
         </div>
-      )}
+      </Collapsible>
     </div>
   );
 };

@@ -1,9 +1,10 @@
-import React from 'react';
-import { RotateCcw } from 'lucide-react';
+import React, { useState } from 'react';
+import { ChevronRight, RotateCcw } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { DEFAULT_APPEARANCE_SETTINGS, type ThemeMode } from '@/types/settings';
 import { SmoothSlider } from '@/components/ui/SmoothSlider';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { Collapsible } from '@/components/ui/MotionPrimitives';
 
 const ACCENT_PRESETS = [
   { hex: '#d97757', label: '陶土暖橙' },
@@ -23,6 +24,7 @@ const THEMES: Array<{ id: ThemeMode; name: string; desc: string }> = [
 
 export const AppearanceTab: React.FC = () => {
   const { appearance, updateAppearance } = useAppStore();
+  const [customCssOpen, setCustomCssOpen] = useState(false);
 
   return (
     <div className="space-y-6 text-xs">
@@ -37,7 +39,7 @@ export const AppearanceTab: React.FC = () => {
                 key={t.id}
                 type="button"
                 onClick={() => void updateAppearance({ theme: t.id })}
-                className={`p-3 rounded-2xl border text-left transition ${
+                className={`p-3 rounded-2xl border text-left active:scale-[0.98] transition ${
                   active
                     ? 'border-fg/40 bg-elevated text-fg'
                     : 'border-borderc bg-surface/50 text-muted hover:text-fg'
@@ -63,7 +65,7 @@ export const AppearanceTab: React.FC = () => {
                 type="button"
                 onClick={() => void updateAppearance({ accentColor: hex })}
                 style={{ backgroundColor: hex }}
-                className={`w-7 h-7 rounded-full border-2 transition ${
+                className={`w-7 h-7 rounded-full border-2 hover:scale-110 active:scale-95 transition ${
                   active
                     ? 'border-fg scale-110 shadow-md'
                     : 'border-borderc opacity-85 hover:opacity-100'
@@ -243,23 +245,36 @@ export const AppearanceTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Custom CSS Injection */}
-      <details className="rounded-2xl border border-borderc bg-surface/40 p-4">
-        <summary className="cursor-pointer font-semibold text-fg">
-          进阶自定义：全局自定义 CSS 注入
-        </summary>
-        <p className="text-muted mt-1.5 mb-2">
-          可覆盖任意页面变量（如 <code>--bg</code>、<code>--accent</code>）或{' '}
-          <code>.cb-markdown</code>、<code>.katex</code> 样式，实时生效。
-        </p>
-        <textarea
-          rows={5}
-          value={appearance.customCss}
-          onChange={(e) => void updateAppearance({ customCss: e.target.value })}
-          placeholder={`/* 示例：\n.cb-markdown .katex-display { background: rgba(255,255,255,0.03); border-radius: 12px; }\n*/`}
-          className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
-        />
-      </details>
+      {/* Smooth Collapsible Custom CSS Injection */}
+      <div className="rounded-2xl border border-borderc bg-surface/40 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setCustomCssOpen((v) => !v)}
+          className="w-full flex items-center justify-between px-4 py-3.5 text-left font-semibold text-fg hover:bg-fg/[0.03] transition"
+        >
+          <span>进阶自定义：全局自定义 CSS 注入</span>
+          <ChevronRight
+            className={`w-4 h-4 text-muted transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              customCssOpen ? 'rotate-90 text-fg' : ''
+            }`}
+          />
+        </button>
+        <Collapsible open={customCssOpen}>
+          <div className="px-4 pb-4 pt-1 border-t border-borderc">
+            <p className="text-muted mt-1.5 mb-2">
+              可覆盖任意页面变量（如 <code>--bg</code>、<code>--accent</code>）或{' '}
+              <code>.cb-markdown</code>、<code>.katex</code> 样式，实时生效。
+            </p>
+            <textarea
+              rows={5}
+              value={appearance.customCss}
+              onChange={(e) => void updateAppearance({ customCss: e.target.value })}
+              placeholder={`/* 示例：\n.cb-markdown .katex-display { background: rgba(255,255,255,0.03); border-radius: 12px; }\n*/`}
+              className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
+            />
+          </div>
+        </Collapsible>
+      </div>
     </div>
   );
 };
