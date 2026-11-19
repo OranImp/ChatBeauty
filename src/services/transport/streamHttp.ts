@@ -1,0 +1,301 @@
+import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
+
+export interface StreamHttpOptions {
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  signal?: AbortSignal;
+  onOpen?: (status: number) => void;
+  onChunk: (chunk: string) => void;
+}
+
+export interface SimpleHttpOptions {
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  signal?: AbortSignal;
+}
+
+export interface SimpleHttpResponse {
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
+export interface ElectronBridge {
+  platform: string;
+  streamFetch: (payload: {
+    requestId: string;
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    body?: string;
+  }) => Promise<{ status: number; statusText: string; headers: Record<string, string> }>;
+  abortStream: (requestId: string) => Promise<void>;
+  onStreamChunk: (cb: (data: { requestId: string; chunk: string }) => void) => () => void;
+  onStreamEnd: (cb: (data: { requestId: string }) => void) => () => void;
+  onStreamError: (cb: (data: { requestId: string; error: string }) => void) => () => void;
+  simpleRequest: (payload: {
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    body?: string;
+  }) => Promise<SimpleHttpResponse>;
+}
+
+declare global {
+  interface Window {
+    electronBridge?: ElectronBridge;
+  }
+}
+
+interface NativeStreamPlugin {
+  startStream(options: {
+    requestId: string;
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    body?: string;
+  }): Promise<{ status: number }>;
+  abortStream(options: { requestId: string }): Promise<void>;
+  simpleRequest(options: {
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    body?: string;
+  }): Promise<SimpleHttpResponse>;
+  addListener(
+    eventName: 'streamChunk',
+    listenerFunc: (data: { requestId: string; chunk: string }) => void
+  ): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: 'streamEnd',
+    listenerFunc: (data: { requestId: string }) => void
+  ): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: 'streamError',
+    listenerFunc: (data: { requestId: string; error: string; status?: number }) => void
+  ): Promise<PluginListenerHandle>;
+}
+
+const NativeStream = registerPlugin<NativeStreamPlugin>('NativeStream');
+
+function createRequestId(): string {
+  return `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function getRuntimeEnvironment(): 'electron' | 'capacitor' | 'web' {
+  if (typeof window !== 'undefined' && window.electronBridge) {
+    return 'electron';
+  }
+  if (typeof window !== 'undefined' && Capacitor.isNativePlatform()) {
+    return 'capacitor';
+  }
+  return 'web';
+}
+
+export async function streamRequest(options: StreamHttpOptions): Promise<void> {
+  const { url, method = 'POST', headers = {}, body, signal, onOpen, onChunk } = options;
+
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
+
+  const env = getRuntimeEnvironment();
+
+  if (env === 'electron' && window.electronBridge) {
+    const bridge = window.electronBridge;
+    const requestId = createRequestId();
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        offChunk();
+        offEnd();
+        offError();
+        signal?.removeEventListener('abort', onAbort);
+      };
+
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        void bridge.abortStream(requestId);
+        reject(new DOMException('Aborted', 'AbortError'));
+      };
+
+      const offChunk = bridge.onStreamChunk((data) => {
+        if (data.requestId === requestId) {
+          onChunk(data.chunk);
+        }
+      });
+
+      const offEnd = bridge.onStreamEnd((data) => {
+        if (data.requestId === requestId && !settled) {
+          settled = true;
+          cleanup();
+          resolve();
+        }
+      });
+
+      const offError = bridge.onStreamError((data) => {
+        if (data.requestId === requestId && !settled) {
+          settled = true;
+          cleanup();
+          reject(new Error(data.error || '请求失败'));
+        }
+      });
+
+      signal?.addEventListener('abort', onAbort, { once: true });
+
+      bridge
+        .streamFetch({ requestId, url, method, headers, body })
+        .then((res) => {
+          onOpen?.(res.status);
+        })
+        .catch((err) => {
+          if (!settled) {
+            settled = true;
+            cleanup();
+            reject(err instanceof Error ? err : new Error(String(err)));
+          }
+        });
+    });
+    return;
+  }
+
+  if (env === 'capacitor') {
+    const requestId = createRequestId();
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const handles: PluginListenerHandle[] = [];
+
+      const cleanup = () => {
+        signal?.removeEventListener('abort', onAbort);
+        for (const h of handles) {
+          void h.remove();
+        }
+      };
+
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        void NativeStream.abortStream({ requestId });
+        reject(new DOMException('Aborted', 'AbortError'));
+      };
+
+      signal?.addEventListener('abort', onAbort, { once: true });
+
+      Promise.all([
+        NativeStream.addListener('streamChunk', (data) => {
+          if (data.requestId === requestId) {
+            onChunk(data.chunk);
+          }
+        }),
+        NativeStream.addListener('streamEnd', (data) => {
+          if (data.requestId === requestId && !settled) {
+            settled = true;
+            cleanup();
+            resolve();
+          }
+        }),
+        NativeStream.addListener('streamError', (data) => {
+          if (data.requestId === requestId && !settled) {
+            settled = true;
+            cleanup();
+            reject(new Error(data.error || `HTTP ${data.status ?? 'Error'}`));
+          }
+        }),
+      ])
+        .then((registered) => {
+          handles.push(...registered);
+          if (signal?.aborted) {
+            onAbort();
+            return;
+          }
+          return NativeStream.startStream({ requestId, url, method, headers, body }).then((res) => {
+            onOpen?.(res.status);
+          });
+        })
+        .catch((err) => {
+          if (!settled) {
+            settled = true;
+            cleanup();
+            reject(err instanceof Error ? err : new Error(String(err)));
+          }
+        });
+    });
+    return;
+  }
+
+  // Web browser fallback
+  const response = await fetch(url, {
+    method,
+    headers,
+    body,
+    signal,
+  });
+  onOpen?.(response.status);
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => response.statusText);
+    throw new Error(`HTTP ${response.status}: ${errText || response.statusText}`);
+  }
+
+  if (!response.body) {
+    throw new Error('响应流为空');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        const tail = decoder.decode();
+        if (tail) onChunk(tail);
+        break;
+      }
+      if (value) {
+        const text = decoder.decode(value, { stream: true });
+        if (text) onChunk(text);
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export async function simpleRequest(options: SimpleHttpOptions): Promise<SimpleHttpResponse> {
+  const { url, method = 'GET', headers = {}, body, signal } = options;
+
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
+
+  const env = getRuntimeEnvironment();
+  if (env === 'electron' && window.electronBridge) {
+    return window.electronBridge.simpleRequest({ url, method, headers, body });
+  }
+  if (env === 'capacitor') {
+    return NativeStream.simpleRequest({ url, method, headers, body });
+  }
+
+  const res = await fetch(url, { method, headers, body, signal });
+  const text = await res.text();
+  const respHeaders: Record<string, string> = {};
+  res.headers.forEach((v, k) => {
+    respHeaders[k] = v;
+  });
+  return {
+    status: res.status,
+    statusText: res.statusText,
+    headers: respHeaders,
+    body: text,
+  };
+}
