@@ -1,0 +1,28 @@
+appId: com.chatbeaty.app
+productName: ChatBeaty
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - dist-electron/**/*.cjs
+  - build/icon.png
+  - build/icon.ico
+  - package.json
+asar: true
+win:
+  icon: build/icon.ico
+  signExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ChatBeaty-Setup-${version}.${ext}
+portable:
+  artifactName: ChatBeaty-Portable-${version}.${ext}

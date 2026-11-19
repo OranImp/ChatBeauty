@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ChatBeaty</string>
+    <string name="title_activity_main">ChatBeaty</string>
+    <string name="package_name">com.chatbeaty.app</string>
+    <string name="custom_url_scheme">com.chatbeaty.app</string>
+</resources>
