@@ -3,27 +3,42 @@ import type { Conversation, Message } from '@/types/chat';
 import {
   DEFAULT_APPEARANCE_SETTINGS,
   DEFAULT_GENERATION_SETTINGS,
+  DEFAULT_MODEL_PROFILE_SYNC_SETTINGS,
   DEFAULT_WEBDAV_SETTINGS,
   type AppBackupV1,
   type AppearanceSettings,
   type GenerationSettings,
+  type ModelProfileSyncSettings,
   type WebDavSyncSettings,
 } from '@/types/settings';
 import { DEFAULT_PROMPT_SETTINGS } from '@/services/prompts/presets';
 import type { PromptSettings } from '@/types/prompt';
 
 export async function exportFullBackup(): Promise<AppBackupV1> {
-  const [conversations, messages, providers, promptPresets, appearance, generation, prompt, webdav] =
-    await Promise.all([
-      db.conversations.toArray(),
-      db.messages.toArray(),
-      db.providers.toArray(),
-      db.promptPresets.toArray(),
-      getKv<AppearanceSettings>(KV_KEYS.APPEARANCE, DEFAULT_APPEARANCE_SETTINGS),
-      getKv<GenerationSettings>(KV_KEYS.GENERATION, DEFAULT_GENERATION_SETTINGS),
-      getKv<PromptSettings>(KV_KEYS.PROMPT, DEFAULT_PROMPT_SETTINGS),
-      getKv<WebDavSyncSettings>(KV_KEYS.WEBDAV, DEFAULT_WEBDAV_SETTINGS),
-    ]);
+  const [
+    conversations,
+    messages,
+    providers,
+    promptPresets,
+    appearance,
+    generation,
+    prompt,
+    webdav,
+    modelProfiles,
+  ] = await Promise.all([
+    db.conversations.toArray(),
+    db.messages.toArray(),
+    db.providers.toArray(),
+    db.promptPresets.toArray(),
+    getKv<AppearanceSettings>(KV_KEYS.APPEARANCE, DEFAULT_APPEARANCE_SETTINGS),
+    getKv<GenerationSettings>(KV_KEYS.GENERATION, DEFAULT_GENERATION_SETTINGS),
+    getKv<PromptSettings>(KV_KEYS.PROMPT, DEFAULT_PROMPT_SETTINGS),
+    getKv<WebDavSyncSettings>(KV_KEYS.WEBDAV, DEFAULT_WEBDAV_SETTINGS),
+    getKv<ModelProfileSyncSettings>(
+      KV_KEYS.MODEL_PROFILES,
+      DEFAULT_MODEL_PROFILE_SYNC_SETTINGS
+    ),
+  ]);
 
   return {
     version: 1,
@@ -38,6 +53,7 @@ export async function exportFullBackup(): Promise<AppBackupV1> {
       generation,
       prompt,
       webdav,
+      modelProfiles,
     },
   };
 }
@@ -73,6 +89,9 @@ export async function importFullBackup(
         if (data.settings.generation) await setKv(KV_KEYS.GENERATION, data.settings.generation);
         if (data.settings.prompt) await setKv(KV_KEYS.PROMPT, data.settings.prompt);
         if (data.settings.webdav) await setKv(KV_KEYS.WEBDAV, data.settings.webdav);
+        if (data.settings.modelProfiles) {
+          await setKv(KV_KEYS.MODEL_PROFILES, data.settings.modelProfiles);
+        }
       }
     }
   );

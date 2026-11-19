@@ -4,9 +4,11 @@ import type { PromptSettings, SystemPromptPreset } from '@/types/prompt';
 import {
   DEFAULT_APPEARANCE_SETTINGS,
   DEFAULT_GENERATION_SETTINGS,
+  DEFAULT_MODEL_PROFILE_SYNC_SETTINGS,
   DEFAULT_WEBDAV_SETTINGS,
   type AppearanceSettings,
   type GenerationSettings,
+  type ModelProfileSyncSettings,
   type WebDavSyncSettings,
 } from '@/types/settings';
 import { BUILTIN_PROMPT_PRESETS, DEFAULT_PROMPT_SETTINGS } from '@/services/prompts/presets';
@@ -44,6 +46,7 @@ const KV_KEYS = {
   GENERATION: 'settings:generation',
   PROMPT: 'settings:prompt',
   WEBDAV: 'settings:webdav',
+  MODEL_PROFILES: 'settings:modelProfiles',
   ACTIVE_CONVERSATION: 'state:activeConversationId',
   ACTIVE_PROVIDER: 'state:activeProviderId',
   ACTIVE_MODEL: 'state:activeModelId',
@@ -83,6 +86,7 @@ export async function ensureDatabaseSeeded(): Promise<void> {
         await setKv(KV_KEYS.GENERATION, DEFAULT_GENERATION_SETTINGS);
         await setKv(KV_KEYS.PROMPT, DEFAULT_PROMPT_SETTINGS);
         await setKv(KV_KEYS.WEBDAV, DEFAULT_WEBDAV_SETTINGS);
+        await setKv(KV_KEYS.MODEL_PROFILES, DEFAULT_MODEL_PROFILE_SYNC_SETTINGS);
         await setKv(KV_KEYS.INITIALIZED, true);
       }
     );
@@ -124,6 +128,7 @@ export async function loadInitialState(): Promise<{
   generation: GenerationSettings;
   promptSettings: PromptSettings;
   webdav: WebDavSyncSettings;
+  modelProfileSync: ModelProfileSyncSettings;
   activeConversationId: string | null;
   activeProviderId: string | null;
   activeModelId: string | null;
@@ -137,6 +142,7 @@ export async function loadInitialState(): Promise<{
     generation,
     promptSettings,
     webdav,
+    modelProfileSync,
     activeConversationId,
     activeProviderId,
     activeModelId,
@@ -148,6 +154,10 @@ export async function loadInitialState(): Promise<{
     getKv<GenerationSettings>(KV_KEYS.GENERATION, DEFAULT_GENERATION_SETTINGS),
     getKv<PromptSettings>(KV_KEYS.PROMPT, DEFAULT_PROMPT_SETTINGS),
     getKv<WebDavSyncSettings>(KV_KEYS.WEBDAV, DEFAULT_WEBDAV_SETTINGS),
+    getKv<ModelProfileSyncSettings>(
+      KV_KEYS.MODEL_PROFILES,
+      DEFAULT_MODEL_PROFILE_SYNC_SETTINGS
+    ),
     getKv<string | null>(KV_KEYS.ACTIVE_CONVERSATION, null),
     getKv<string | null>(KV_KEYS.ACTIVE_PROVIDER, null),
     getKv<string | null>(KV_KEYS.ACTIVE_MODEL, null),
@@ -158,9 +168,17 @@ export async function loadInitialState(): Promise<{
     providers,
     promptPresets,
     appearance: { ...DEFAULT_APPEARANCE_SETTINGS, ...appearance },
-    generation: { ...DEFAULT_GENERATION_SETTINGS, ...generation },
+    generation: {
+      ...DEFAULT_GENERATION_SETTINGS,
+      ...generation,
+      enabledParams: {
+        ...DEFAULT_GENERATION_SETTINGS.enabledParams,
+        ...generation.enabledParams,
+      },
+    },
     promptSettings: { ...DEFAULT_PROMPT_SETTINGS, ...promptSettings },
     webdav: { ...DEFAULT_WEBDAV_SETTINGS, ...webdav },
+    modelProfileSync: { ...DEFAULT_MODEL_PROFILE_SYNC_SETTINGS, ...modelProfileSync },
     activeConversationId,
     activeProviderId,
     activeModelId,

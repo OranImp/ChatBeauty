@@ -1,10 +1,24 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, ChevronDown, Mic, Plus, Square } from 'lucide-react';
+import {
+  ArrowUp,
+  ChevronDown,
+  Mic,
+  Plus,
+  RotateCcw,
+  SlidersHorizontal,
+  Square,
+} from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
-import type { ReasoningEffort } from '@/types/chat';
+import type { CustomModelParams } from '@/types/chat';
 import { PROTOCOL_TEMPLATES } from '@/services/llm/registry';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { SmoothSlider } from '@/components/ui/SmoothSlider';
 import { usePresence } from '@/components/ui/MotionPrimitives';
+import {
+  coerceReasoningEffort,
+  resolveModelReasoningProfile,
+  type ProfileMatchSource,
+} from '@/services/llm/modelProfiles';
 
 interface ChatInputProps {
   onSend: (text: string) => void;
@@ -13,12 +27,15 @@ interface ChatInputProps {
   onOpenSettings: (tab?: 'providers' | 'prompts' | 'appearance' | 'data') => void;
 }
 
-const REASONING_OPTIONS: Array<{ value: ReasoningEffort; label: string; desc: string }> = [
-  { value: 'off', label: '关闭', desc: '直接输出，不额外开启思考链' },
-  { value: 'low', label: '低', desc: '轻量思考，响应更快' },
-  { value: 'medium', label: '中', desc: '均衡思考深度与速度' },
-  { value: 'high', label: '高', desc: '深度推理，适合复杂推导' },
-];
+type ComposerMenu = 'plus' | 'model' | 'reasoning' | 'params';
+
+const SOURCE_LABELS: Record<ProfileMatchSource, string> = {
+  'model-override': '模型自定义',
+  'custom-rule': '自定义规则',
+  'remote-rule': '在线规则',
+  builtin: '自动匹配',
+  fallback: '默认识别',
+};
 
 export const ChatInput: React.FC<ChatInputProps> = ({
   onSend,
@@ -36,16 +53,19 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     generation,
     promptPresets,
     promptSettings,
+    modelProfileSync,
     updateConversationConfig,
     setActiveProviderModel,
     updateGeneration,
   } = useAppStore();
 
   const [text, setText] = useState('');
-  const [activeMenu, setActiveMenu] = useState<'plus' | 'model' | 'reasoning' | null>(null);
-  const [renderedMenu, setRenderedMenu] = useState<'plus' | 'model' | 'reasoning' | null>(null);
+  const [activeMenu, setActiveMenu] = useState<ComposerMenu | null>(null);
+  const [renderedMenu, setRenderedMenu] = useState<ComposerMenu | null>(null);
   const [reservedHint, setReservedHint] = useState<string | null>(null);
   const [renderedHint, setRenderedHint] = useState<string | null>(null);
+  const [extraJsonText, setExtraJsonText] = useState('{}');
+  const [extraJsonError, setExtraJsonError] = useState<string | null>(null);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -73,14 +93,35 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   );
   const currentModelId =
     activeConv?.modelId || activeModelId || currentProvider?.defaultModel || '';
-  const currentReasoning: ReasoningEffort =
-    activeConv?.reasoningEffort ?? generation.reasoningEffort ?? 'medium';
+  const currentModelDef = currentProvider?.models.find((m) => m.id === currentModelId);
+
+  const { profile: reasoningProfile, source: profileSource } = resolveModelReasoningProfile({
+    modelId: currentModelId,
+    protocol: currentProvider?.protocol,
+    modelDef: currentModelDef,
+    customRules: modelProfileSync.customRules,
+    remoteRules: modelProfileSync.remoteRules,
+  });
+
+  const effectiveReasoning = coerceReasoningEffort(
+    activeConv?.reasoningEffort ?? generation.reasoningEffort,
+    reasoningProfile
+  );
+  const activeLevel = reasoningProfile.levels.find((l) => l.value === effectiveReasoning);
 
   const renderEnabled =
     activeConv?.enableRenderPrompt !== undefined
       ? activeConv.enableRenderPrompt
       : promptSettings.renderEnhancementEnabled;
   const activePresetId = activeConv?.systemPromptPresetId || promptSettings.defaultPresetId;
+
+  useEffect(() => {
+    if (activeMenu === 'params') {
+      const src = activeConv?.customParams?.extraBody;
+      setExtraJsonText(src && Object.keys(src).length > 0 ? JSON.stringify(src, null, 2) : '{}');
+      setExtraJsonError(null);
+    }
+  }, [activeMenu, activeConv?.id]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -96,9 +137,58 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     hintTimerRef.current = setTimeout(() => setReservedHint(null), 2600);
   };
 
-  const toggleMenu = (target: 'plus' | 'model' | 'reasoning') => {
+  const toggleMenu = (target: ComposerMenu) => {
     setRenderedMenu(target);
     setActiveMenu((m) => (m === target ? null : target));
+  };
+
+  const patchConvParams = (patch: Partial<CustomModelParams>) => {
+    if (!activeConv) {
+      void updateGeneration({
+        ...(patch.temperature !== undefined ? { temperature: patch.temperature } : {}),
+        ...(patch.topP !== undefined ? { topP: patch.topP } : {}),
+        ...(patch.maxTokens !== undefined ? { maxTokens: patch.maxTokens } : {}),
+        ...(patch.extraBody !== undefined ? { extraBody: patch.extraBody } : {}),
+      });
+      return;
+    }
+    const next: CustomModelParams = { ...(activeConv.customParams || {}), ...patch };
+    void updateConversationConfig(activeConv.id, { customParams: next });
+  };
+
+  const handleExtraBodyChange = (raw: string) => {
+    setExtraJsonText(raw);
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed === '{}') {
+      setExtraJsonError(null);
+      if (activeConv) {
+        const next: CustomModelParams = { ...(activeConv.customParams || {}) };
+        delete next.extraBody;
+        void updateConversationConfig(activeConv.id, {
+          customParams: Object.keys(next).length > 0 ? next : undefined,
+        });
+      }
+      return;
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        setExtraJsonError('必须为 JSON 对象，例如 {"stop": ["END"]}');
+        return;
+      }
+      setExtraJsonError(null);
+      patchConvParams({ extraBody: parsed as Record<string, unknown> });
+    } catch {
+      setExtraJsonError('JSON 格式有误，修正后自动生效');
+    }
+  };
+
+  const handleResetConvParams = () => {
+    setExtraJsonText('{}');
+    setExtraJsonError(null);
+    if (activeConv) {
+      void updateConversationConfig(activeConv.id, { customParams: undefined });
+    }
   };
 
   const handleSubmit = () => {
@@ -119,14 +209,36 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
   };
 
-  const reasoningLabel =
-    REASONING_OPTIONS.find((o) => o.value === currentReasoning)?.label ?? '中';
+  const hasCustomParams = Boolean(
+    (activeConv?.customParams && Object.keys(activeConv.customParams).length > 0) ||
+      (currentModelDef?.params && Object.keys(currentModelDef.params).length > 0)
+  );
+
+  const effectiveTemp =
+    activeConv?.customParams?.temperature ??
+    currentModelDef?.params?.temperature ??
+    generation.temperature;
+  const effectiveTopP =
+    activeConv?.customParams?.topP ?? currentModelDef?.params?.topP ?? generation.topP;
+  const effectiveMaxTokens =
+    activeConv?.customParams?.maxTokens ??
+    currentModelDef?.params?.maxTokens ??
+    generation.maxTokens;
+  const effectiveBudget =
+    activeConv?.customParams?.thinkingBudget ??
+    currentModelDef?.params?.thinkingBudget ??
+    activeLevel?.budgetTokens ??
+    8192;
+  const showBudgetSlider =
+    (reasoningProfile.strategy === 'gemini-budget' ||
+      reasoningProfile.strategy === 'anthropic-budget') &&
+    effectiveReasoning !== 'off';
 
   const popoverPanelWidth =
-    renderedMenu === 'model'
+    renderedMenu === 'model' || renderedMenu === 'params'
       ? 'left-0 w-72 sm:w-80'
       : renderedMenu === 'reasoning'
-        ? 'left-12 sm:left-24 w-64'
+        ? 'left-12 sm:left-24 w-72'
         : 'left-0 w-72';
 
   let modelRowIdx = 0;
@@ -150,7 +262,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           <div className="fixed inset-0 z-20" onClick={() => setActiveMenu(null)} />
         )}
 
-        {/* Animated Popover Menu (Plus / Model Selector / Reasoning Effort) */}
+        {/* Animated Popover Menu (Plus / Model / Reasoning / Custom Params) */}
         {menuPresence.mounted && renderedMenu && (
           <div
             className={`absolute ${popoverPanelWidth} bottom-[106px] z-30 rounded-2xl border border-borderc bg-elevated/95 backdrop-blur-xl shadow-2xl text-xs origin-bottom-left transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
@@ -177,7 +289,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
                 {activeConv && (
                   <>
-                    <div className="cb-list-item flex items-center justify-between px-2.5 py-2 rounded-xl bg-surface border border-borderc" style={{ '--stagger-i': 0 } as React.CSSProperties}>
+                    <div
+                      className="cb-list-item flex items-center justify-between px-2.5 py-2 rounded-xl bg-surface border border-borderc"
+                      style={{ '--stagger-i': 0 } as React.CSSProperties}
+                    >
                       <span className="text-fg">学术公式与 SVG 渲染增强</span>
                       <ToggleSwitch
                         checked={renderEnabled}
@@ -283,6 +398,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                               const idx = modelRowIdx++;
                               const selected =
                                 currentProvider?.id === p.id && currentModelId === m.id;
+                              const { profile: mProf } = resolveModelReasoningProfile({
+                                modelId: m.id,
+                                protocol: p.protocol,
+                                modelDef: m,
+                                customRules: modelProfileSync.customRules,
+                                remoteRules: modelProfileSync.remoteRules,
+                              });
                               return (
                                 <button
                                   key={`${p.id}_${m.id}`}
@@ -292,14 +414,24 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                                     setActiveMenu(null);
                                   }}
                                   style={{ '--stagger-i': idx } as React.CSSProperties}
-                                  className={`cb-list-item w-full text-left px-2.5 py-1.5 rounded-xl flex items-center justify-between active:scale-[0.985] transition ${
+                                  className={`cb-list-item w-full text-left px-2.5 py-1.5 rounded-xl flex items-center justify-between gap-2 active:scale-[0.985] transition ${
                                     selected
                                       ? 'bg-accent text-accentfg font-medium'
                                       : 'text-fg hover:bg-fg/5'
                                   }`}
                                 >
                                   <span className="truncate font-mono">{m.name || m.id}</span>
-                                  {selected && <span className="text-[10px] ml-2 shrink-0">当前</span>}
+                                  <span
+                                    className={`text-[10px] shrink-0 ${
+                                      selected ? 'opacity-90' : 'text-muted'
+                                    }`}
+                                  >
+                                    {mProf.strategy === 'none'
+                                      ? '标准'
+                                      : mProf.strategy === 'fixed'
+                                        ? '内置思考'
+                                        : `${mProf.levels.length} 档思考`}
+                                  </span>
                                 </button>
                               );
                             })}
@@ -313,44 +445,191 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             )}
 
             {renderedMenu === 'reasoning' && (
-              <div className="p-2 space-y-1">
-                <div className="px-2 py-1 text-[11px] text-muted font-medium">推理强度</div>
-                {REASONING_OPTIONS.map((opt, idx) => {
-                  const selected = currentReasoning === opt.value;
-                  return (
+              <div className="p-2.5 space-y-1.5">
+                <div className="px-1.5 py-1 flex items-center justify-between gap-2 border-b border-borderc pb-2">
+                  <span className="font-semibold text-fg truncate">
+                    {reasoningProfile.familyName}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-fg/10 text-muted shrink-0">
+                    {SOURCE_LABELS[profileSource]}
+                  </span>
+                </div>
+
+                {reasoningProfile.strategy === 'none' ? (
+                  <div className="cb-list-item p-2.5 space-y-2.5 text-muted leading-relaxed">
+                    <p>当前模型未配备可调思考强度。若这是支持思考的新模型或中转站自定义名称，可在供应商配置中指定思考系列或同步规则库。</p>
                     <button
-                      key={opt.value}
                       type="button"
                       onClick={() => {
-                        if (activeConv) {
-                          void updateConversationConfig(activeConv.id, {
-                            reasoningEffort: opt.value,
-                          });
-                        }
-                        void updateGeneration({ reasoningEffort: opt.value });
                         setActiveMenu(null);
+                        onOpenSettings('providers');
                       }}
-                      style={{ '--stagger-i': idx } as React.CSSProperties}
-                      className={`cb-list-item w-full text-left px-2.5 py-2 rounded-xl active:scale-[0.985] transition ${
-                        selected
-                          ? 'bg-accent text-accentfg font-medium'
-                          : 'text-fg hover:bg-fg/5'
-                      }`}
+                      className="w-full px-3 py-1.5 rounded-xl bg-surface hover:bg-fg/10 border border-borderc text-fg font-medium active:scale-95 transition"
                     >
-                      <div className="flex items-center justify-between">
-                        <span>{opt.label}</span>
-                        {selected && <span className="text-[10px]">当前</span>}
-                      </div>
-                      <div
-                        className={`text-[11px] mt-0.5 ${
-                          selected ? 'opacity-80' : 'text-muted'
-                        }`}
-                      >
-                        {opt.desc}
-                      </div>
+                      前往设置思考系列 / 更新规则库
                     </button>
-                  );
-                })}
+                  </div>
+                ) : reasoningProfile.strategy === 'fixed' ? (
+                  <div className="cb-list-item p-2.5 space-y-2.5 text-muted leading-relaxed">
+                    <p>{reasoningProfile.levels[0]?.desc || '模型内置固定思维链推理。'}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveMenu(null);
+                        onOpenSettings('providers');
+                      }}
+                      className="w-full px-3 py-1.5 rounded-xl bg-surface hover:bg-fg/10 border border-borderc text-fg font-medium active:scale-95 transition"
+                    >
+                      自定义模型系列映射
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {reasoningProfile.levels.map((opt, idx) => {
+                      const selected = effectiveReasoning === opt.value;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => {
+                            if (activeConv) {
+                              void updateConversationConfig(activeConv.id, {
+                                reasoningEffort: opt.value,
+                              });
+                            }
+                            void updateGeneration({ reasoningEffort: opt.value });
+                            setActiveMenu(null);
+                          }}
+                          style={{ '--stagger-i': idx } as React.CSSProperties}
+                          className={`cb-list-item w-full text-left px-2.5 py-2 rounded-xl active:scale-[0.985] transition ${
+                            selected
+                              ? 'bg-accent text-accentfg font-medium'
+                              : 'text-fg hover:bg-fg/5'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span>{opt.label}</span>
+                            {selected && <span className="text-[10px]">当前</span>}
+                          </div>
+                          <div
+                            className={`text-[11px] mt-0.5 ${
+                              selected ? 'opacity-85' : 'text-muted'
+                            }`}
+                          >
+                            {opt.desc}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {renderedMenu === 'params' && (
+              <div className="p-3 max-h-[65vh] overflow-y-auto no-scrollbar space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-fg">当前会话参数覆盖</span>
+                  <button
+                    type="button"
+                    onClick={handleResetConvParams}
+                    className="flex items-center gap-1 text-muted hover:text-fg transition"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>恢复默认</span>
+                  </button>
+                </div>
+
+                <div
+                  className="cb-list-item space-y-2.5"
+                  style={{ '--stagger-i': 0 } as React.CSSProperties}
+                >
+                  <label className="block space-y-1">
+                    <div className="flex justify-between text-muted">
+                      <span>Temperature</span>
+                      <span className="font-mono tabular-nums text-fg">
+                        {effectiveTemp.toFixed(2)}
+                      </span>
+                    </div>
+                    <SmoothSlider
+                      min={0}
+                      max={2}
+                      decimals={2}
+                      value={effectiveTemp}
+                      onChange={(val) => patchConvParams({ temperature: val })}
+                      ariaLabel="会话 Temperature"
+                    />
+                  </label>
+
+                  <label className="block space-y-1">
+                    <div className="flex justify-between text-muted">
+                      <span>Top-P</span>
+                      <span className="font-mono tabular-nums text-fg">
+                        {effectiveTopP.toFixed(2)}
+                      </span>
+                    </div>
+                    <SmoothSlider
+                      min={0.05}
+                      max={1}
+                      decimals={2}
+                      value={effectiveTopP}
+                      onChange={(val) => patchConvParams({ topP: val })}
+                      ariaLabel="会话 Top-P"
+                    />
+                  </label>
+
+                  <label className="block space-y-1">
+                    <div className="flex justify-between text-muted">
+                      <span>Max Output Tokens</span>
+                      <span className="font-mono tabular-nums text-fg">{effectiveMaxTokens}</span>
+                    </div>
+                    <SmoothSlider
+                      min={256}
+                      max={32768}
+                      decimals={0}
+                      value={effectiveMaxTokens}
+                      onChange={(val) => patchConvParams({ maxTokens: val })}
+                      ariaLabel="会话 Max Tokens"
+                    />
+                  </label>
+
+                  {showBudgetSlider && (
+                    <label className="block space-y-1">
+                      <div className="flex justify-between text-muted">
+                        <span>思考预算 Tokens</span>
+                        <span className="font-mono tabular-nums text-fg">{effectiveBudget}</span>
+                      </div>
+                      <SmoothSlider
+                        min={1024}
+                        max={32768}
+                        decimals={0}
+                        value={Math.max(1024, effectiveBudget)}
+                        onChange={(val) => patchConvParams({ thinkingBudget: val })}
+                        ariaLabel="会话思考预算 Tokens"
+                      />
+                    </label>
+                  )}
+                </div>
+
+                <div
+                  className="cb-list-item space-y-1 pt-2 border-t border-borderc"
+                  style={{ '--stagger-i': 1 } as React.CSSProperties}
+                >
+                  <div className="flex items-center justify-between text-muted">
+                    <span>自定义请求体 JSON (extraBody)</span>
+                    {extraJsonError && <span className="text-[10px] text-rose-400">格式错误</span>}
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={extraJsonText}
+                    onChange={(e) => handleExtraBodyChange(e.target.value)}
+                    placeholder='{"seed": 42}'
+                    className="w-full px-2.5 py-1.5 rounded-xl bg-surface border border-borderc font-mono text-[11px] text-fg focus:outline-none focus:border-fg/40"
+                  />
+                  {extraJsonError && (
+                    <div className="text-[10px] text-rose-400">{extraJsonError}</div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -369,7 +648,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           />
 
           <div className="flex items-center justify-between gap-2 mt-2 pt-1">
-            {/* Left controls: +, Monospace Model Pill, Reasoning Pill */}
+            {/* Left controls: +, Monospace Model Pill, Dynamic Reasoning Pill, Custom Params Pill */}
             <div className="flex items-center gap-1.5 min-w-0">
               <button
                 type="button"
@@ -390,7 +669,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => toggleMenu('model')}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border bg-bg/55 hover:bg-elevated active:scale-95 text-xs font-mono text-fg max-w-[140px] sm:max-w-[210px] transition ${
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border bg-bg/55 hover:bg-elevated active:scale-95 text-xs font-mono text-fg max-w-[125px] sm:max-w-[200px] transition ${
                   activeMenu === 'model' ? 'border-fg/30 bg-elevated' : 'border-borderc'
                 }`}
                 title="切换模型"
@@ -407,19 +686,49 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => toggleMenu('reasoning')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-full border bg-bg/55 hover:bg-elevated active:scale-95 text-xs text-muted hover:text-fg shrink-0 transition ${
-                  activeMenu === 'reasoning' ? 'border-fg/30 bg-elevated text-fg' : 'border-borderc'
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-full border bg-bg/55 hover:bg-elevated active:scale-95 text-xs shrink-0 transition ${
+                  activeMenu === 'reasoning'
+                    ? 'border-fg/30 bg-elevated text-fg'
+                    : 'border-borderc text-muted hover:text-fg'
                 }`}
-                title="设置推理强度"
+                title={`设置推理强度 (${reasoningProfile.familyName})`}
                 aria-expanded={activeMenu === 'reasoning'}
               >
-                <span>推理</span>
-                <span className="font-mono text-fg/90">{reasoningLabel}</span>
+                {reasoningProfile.strategy === 'none' ? (
+                  <span>无思考</span>
+                ) : reasoningProfile.strategy === 'fixed' ? (
+                  <span>内置推理</span>
+                ) : (
+                  <>
+                    <span>推理</span>
+                    <span className="font-mono text-fg/90">
+                      {activeLevel?.label ?? effectiveReasoning}
+                    </span>
+                  </>
+                )}
                 <ChevronDown
                   className={`w-3 h-3 opacity-75 shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                     activeMenu === 'reasoning' ? 'rotate-180 opacity-100' : ''
                   }`}
                 />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => toggleMenu('params')}
+                className={`relative w-7 h-7 rounded-full border flex items-center justify-center active:scale-95 shrink-0 transition ${
+                  activeMenu === 'params'
+                    ? 'border-fg/30 bg-elevated text-fg'
+                    : 'border-borderc bg-bg/55 hover:bg-elevated text-muted hover:text-fg'
+                }`}
+                title="自定义模型参数"
+                aria-label="自定义模型参数"
+                aria-expanded={activeMenu === 'params'}
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                {hasCustomParams && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-accent ring-2 ring-surface" />
+                )}
               </button>
             </div>
 

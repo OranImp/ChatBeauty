@@ -1,7 +1,48 @@
-import type { Conversation, Message, ProviderConfig, ReasoningEffort } from './chat';
+import type { Conversation, Message, ProtocolType, ProviderConfig, ReasoningEffort } from './chat';
 import type { PromptSettings, SystemPromptPreset } from './prompt';
 
 export type ThemeMode = 'oled' | 'dark' | 'light' | 'system';
+
+export type ReasoningStrategy =
+  | 'none'
+  | 'openai-effort'
+  | 'gemini-budget'
+  | 'gemini-level'
+  | 'anthropic-budget'
+  | 'fixed'
+  | 'toggle-effort';
+
+export interface ReasoningLevelOption {
+  value: ReasoningEffort;
+  label: string;
+  desc: string;
+  budgetTokens?: number;
+  apiValue?: string;
+}
+
+export interface ModelReasoningProfile {
+  id: string;
+  familyName: string;
+  strategy: ReasoningStrategy;
+  levels: ReasoningLevelOption[];
+  defaultLevel: ReasoningEffort;
+  supportsSamplingWhenThinking?: boolean;
+}
+
+export interface ModelProfileRule {
+  pattern: string;
+  profileId: string;
+  protocols?: ProtocolType[];
+  note?: string;
+}
+
+export interface ModelProfileSyncSettings {
+  remoteUrl: string;
+  remoteRules: ModelProfileRule[];
+  customRules: ModelProfileRule[];
+  lastSyncedAt?: number;
+  lastStatus?: string;
+}
 
 export interface AppearanceSettings {
   theme: ThemeMode;
@@ -26,6 +67,16 @@ export interface GenerationSettings {
   reasoningEffort: ReasoningEffort;
   reasoningBudgetTokens: number;
   maxContextMessages: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
+  extraBody?: Record<string, unknown>;
+  enabledParams?: {
+    temperature?: boolean;
+    topP?: boolean;
+    maxTokens?: boolean;
+    presencePenalty?: boolean;
+    frequencyPenalty?: boolean;
+  };
 }
 
 export interface WebDavSyncSettings {
@@ -52,6 +103,7 @@ export interface AppBackupV1 {
     generation: GenerationSettings;
     prompt: PromptSettings;
     webdav: WebDavSyncSettings;
+    modelProfiles?: ModelProfileSyncSettings;
   };
 }
 
@@ -78,6 +130,21 @@ export const DEFAULT_GENERATION_SETTINGS: GenerationSettings = {
   reasoningEffort: 'medium',
   reasoningBudgetTokens: 4096,
   maxContextMessages: 24,
+  presencePenalty: 0,
+  frequencyPenalty: 0,
+  enabledParams: {
+    temperature: true,
+    topP: true,
+    maxTokens: true,
+    presencePenalty: false,
+    frequencyPenalty: false,
+  },
+};
+
+export const DEFAULT_MODEL_PROFILE_SYNC_SETTINGS: ModelProfileSyncSettings = {
+  remoteUrl: 'https://raw.githubusercontent.com/OranImp/ChatBeauty/main/public/model-profiles.json',
+  remoteRules: [],
+  customRules: [],
 };
 
 export const DEFAULT_WEBDAV_SETTINGS: WebDavSyncSettings = {

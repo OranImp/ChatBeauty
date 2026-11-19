@@ -3,11 +3,17 @@ import type { ChatStreamCallbacks, ChatStreamRequest, LLMProviderAdapter } from 
 import { SSEParser } from '@/services/llm/sseParser';
 import { simpleRequest, streamRequest } from '@/services/transport/streamHttp';
 import {
+  deepMergePayload,
   extractTextFromParts,
+  resolveEffectiveParams,
   sliceContextMessages,
   toModelDefinition,
   trimBaseUrl,
 } from './shared';
+import {
+  coerceReasoningEffort,
+  resolveModelReasoningProfile,
+} from '@/services/llm/modelProfiles';
 
 function buildChatEndpoint(baseUrl: string): string {
   const clean = trimBaseUrl(baseUrl || 'https://api.openai.com/v1');
@@ -60,15 +66,66 @@ export class OpenAIChatAdapter implements LLMProviderAdapter {
       }
     }
 
-    const body = JSON.stringify({
+    const modelDef = req.provider.models.find((m) => m.id === req.modelId);
+    const modelParams = req.modelParams ?? modelDef?.params;
+    const profile =
+      req.reasoningProfile ??
+      resolveModelReasoningProfile({
+        modelId: req.modelId,
+        protocol: 'openai-chat',
+        modelDef,
+      }).profile;
+    const effort = coerceReasoningEffort(req.generation.reasoningEffort, profile);
+    const activeLevel = profile.levels.find((l) => l.value === effort);
+    const effective = resolveEffectiveParams(req.generation, modelParams, req.conversationParams);
+
+    const modelLower = req.modelId.toLowerCase();
+    const usesMaxCompletionTokens = /(^|\/)(o[134]($|[-._])|gpt-5($|[-._]))/.test(modelLower);
+
+    let payload: Record<string, unknown> = {
       model: req.modelId,
       messages: apiMessages,
       stream: true,
       stream_options: { include_usage: true },
-      temperature: req.generation.temperature,
-      top_p: req.generation.topP,
-      max_tokens: req.generation.maxTokens,
-    });
+    };
+
+    if (effective.maxTokens !== undefined) {
+      if (usesMaxCompletionTokens) {
+        payload.max_completion_tokens = effective.maxTokens;
+      } else {
+        payload.max_tokens = effective.maxTokens;
+      }
+    }
+
+    const thinkingActive = profile.strategy !== 'none' && effort !== 'off';
+    const allowSampling = profile.supportsSamplingWhenThinking !== false || !thinkingActive;
+    if (allowSampling) {
+      if (effective.temperature !== undefined) payload.temperature = effective.temperature;
+      if (effective.topP !== undefined) payload.top_p = effective.topP;
+    }
+
+    if (effective.presencePenalty !== undefined && allowSampling) {
+      payload.presence_penalty = effective.presencePenalty;
+    }
+    if (effective.frequencyPenalty !== undefined && allowSampling) {
+      payload.frequency_penalty = effective.frequencyPenalty;
+    }
+    if (effective.seed !== undefined) payload.seed = effective.seed;
+    if (effective.stop && effective.stop.length > 0) payload.stop = effective.stop;
+
+    if (profile.strategy === 'openai-effort' || profile.strategy === 'toggle-effort') {
+      if (effort !== 'off' || activeLevel?.apiValue === 'none') {
+        payload.reasoning_effort = activeLevel?.apiValue ?? effort;
+      } else if (
+        profile.strategy === 'toggle-effort' &&
+        /(qwen3|glm|doubao)/.test(modelLower)
+      ) {
+        payload.enable_thinking = false;
+      }
+    }
+
+    payload = deepMergePayload(payload, effective.extraBody);
+    const body = JSON.stringify(payload);
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

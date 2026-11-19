@@ -5,9 +5,12 @@ import type { PromptSettings, SystemPromptPreset } from '@/types/prompt';
 import {
   DEFAULT_APPEARANCE_SETTINGS,
   DEFAULT_GENERATION_SETTINGS,
+  DEFAULT_MODEL_PROFILE_SYNC_SETTINGS,
   DEFAULT_WEBDAV_SETTINGS,
   type AppearanceSettings,
   type GenerationSettings,
+  type ModelProfileRule,
+  type ModelProfileSyncSettings,
   type WebDavSyncSettings,
 } from '@/types/settings';
 import {
@@ -16,6 +19,12 @@ import {
   DEFAULT_PROMPT_SETTINGS,
 } from '@/services/prompts/presets';
 import { getProviderAdapter, PROTOCOL_TEMPLATES } from '@/services/llm/registry';
+import {
+  coerceReasoningEffort,
+  parseModelProfileRulesJson,
+  resolveModelReasoningProfile,
+} from '@/services/llm/modelProfiles';
+import { simpleRequest } from '@/services/transport/streamHttp';
 
 function uid(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -31,6 +40,7 @@ interface AppState {
   generation: GenerationSettings;
   promptSettings: PromptSettings;
   webdav: WebDavSyncSettings;
+  modelProfileSync: ModelProfileSyncSettings;
 
   activeConversationId: string | null;
   activeProviderId: string | null;
@@ -56,6 +66,7 @@ interface AppState {
         | 'providerId'
         | 'modelId'
         | 'reasoningEffort'
+        | 'customParams'
         | 'systemPromptPresetId'
         | 'customSystemPrompt'
         | 'enableRenderPrompt'
@@ -83,6 +94,9 @@ interface AppState {
   updateAppearance: (patch: Partial<AppearanceSettings>) => Promise<void>;
   updateGeneration: (patch: Partial<GenerationSettings>) => Promise<void>;
   updateWebDav: (patch: Partial<WebDavSyncSettings>) => Promise<void>;
+  updateModelProfileSync: (patch: Partial<ModelProfileSyncSettings>) => Promise<void>;
+  syncRemoteModelProfiles: (urlOverride?: string) => Promise<{ count: number }>;
+  saveCustomModelProfileRules: (rules: ModelProfileRule[]) => Promise<void>;
 }
 
 export const useAppStore = create<AppState>((set, get) => {
@@ -199,7 +213,18 @@ export const useAppStore = create<AppState>((set, get) => {
 
     try {
       const adapter = getProviderAdapter(provider.protocol);
-      const effectiveReasoning = conversation.reasoningEffort ?? state.generation.reasoningEffort;
+      const modelDef = provider.models.find((m) => m.id === modelId);
+      const { profile } = resolveModelReasoningProfile({
+        modelId,
+        protocol: provider.protocol,
+        modelDef,
+        customRules: state.modelProfileSync.customRules,
+        remoteRules: state.modelProfileSync.remoteRules,
+      });
+      const effectiveReasoning = coerceReasoningEffort(
+        conversation.reasoningEffort ?? state.generation.reasoningEffort,
+        profile
+      );
       await adapter.chatStream(
         {
           provider,
@@ -210,6 +235,9 @@ export const useAppStore = create<AppState>((set, get) => {
             ...state.generation,
             reasoningEffort: effectiveReasoning,
           },
+          modelParams: modelDef?.params,
+          conversationParams: conversation.customParams,
+          reasoningProfile: profile,
         },
         {
           onReasoningDelta: (delta) => {
@@ -268,6 +296,7 @@ export const useAppStore = create<AppState>((set, get) => {
     generation: DEFAULT_GENERATION_SETTINGS,
     promptSettings: DEFAULT_PROMPT_SETTINGS,
     webdav: DEFAULT_WEBDAV_SETTINGS,
+    modelProfileSync: DEFAULT_MODEL_PROFILE_SYNC_SETTINGS,
     activeConversationId: null,
     activeProviderId: null,
     activeModelId: null,
@@ -302,6 +331,7 @@ export const useAppStore = create<AppState>((set, get) => {
         generation: loaded.generation,
         promptSettings: loaded.promptSettings,
         webdav: loaded.webdav,
+        modelProfileSync: loaded.modelProfileSync,
         activeConversationId: activeConvId,
         activeProviderId: activeProv?.id ?? null,
         activeModelId: activeModel,
@@ -614,16 +644,54 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     setActiveProviderModel: async (providerId, modelId) => {
+      const state = get();
+      const targetProvider = state.providers.find((p) => p.id === providerId);
+      const targetModelDef = targetProvider?.models.find((m) => m.id === modelId);
+      const { profile: targetProfile } = resolveModelReasoningProfile({
+        modelId,
+        protocol: targetProvider?.protocol,
+        modelDef: targetModelDef,
+        customRules: state.modelProfileSync.customRules,
+        remoteRules: state.modelProfileSync.remoteRules,
+      });
+
+      const activeConv = state.conversations.find((c) => c.id === state.activeConversationId);
+      const prevProvider = state.providers.find(
+        (p) => p.id === (activeConv?.providerId || state.activeProviderId)
+      );
+      const prevModelId =
+        activeConv?.modelId || state.activeModelId || prevProvider?.defaultModel || '';
+      const prevModelDef = prevProvider?.models.find((m) => m.id === prevModelId);
+      const { profile: prevProfile } = resolveModelReasoningProfile({
+        modelId: prevModelId,
+        protocol: prevProvider?.protocol,
+        modelDef: prevModelDef,
+        customRules: state.modelProfileSync.customRules,
+        remoteRules: state.modelProfileSync.remoteRules,
+      });
+
+      const currentEffort = activeConv?.reasoningEffort ?? state.generation.reasoningEffort;
+      const nextEffort =
+        prevProfile.strategy === 'none' &&
+        (currentEffort === 'off' || currentEffort === undefined)
+          ? targetProfile.defaultLevel
+          : coerceReasoningEffort(currentEffort, targetProfile);
+
       await setKv(KV_KEYS.ACTIVE_PROVIDER, providerId);
       await setKv(KV_KEYS.ACTIVE_MODEL, modelId);
       set({ activeProviderId: providerId, activeModelId: modelId });
 
-      const activeConvId = get().activeConversationId;
-      if (activeConvId) {
-        await db.conversations.update(activeConvId, { providerId, modelId });
+      if (activeConv) {
+        await db.conversations.update(activeConv.id, {
+          providerId,
+          modelId,
+          reasoningEffort: nextEffort,
+        });
         set((s) => ({
           conversations: s.conversations.map((c) =>
-            c.id === activeConvId ? { ...c, providerId, modelId } : c
+            c.id === activeConv.id
+              ? { ...c, providerId, modelId, reasoningEffort: nextEffort }
+              : c
           ),
         }));
       }
@@ -719,6 +787,57 @@ export const useAppStore = create<AppState>((set, get) => {
       const next = { ...get().webdav, ...patch };
       await setKv(KV_KEYS.WEBDAV, next);
       set({ webdav: next });
+    },
+
+    updateModelProfileSync: async (patch) => {
+      const next = { ...get().modelProfileSync, ...patch };
+      await setKv(KV_KEYS.MODEL_PROFILES, next);
+      set({ modelProfileSync: next });
+    },
+
+    saveCustomModelProfileRules: async (rules) => {
+      const next: ModelProfileSyncSettings = {
+        ...get().modelProfileSync,
+        customRules: rules,
+      };
+      await setKv(KV_KEYS.MODEL_PROFILES, next);
+      set({ modelProfileSync: next });
+    },
+
+    syncRemoteModelProfiles: async (urlOverride) => {
+      const state = get();
+      const url = (urlOverride ?? state.modelProfileSync.remoteUrl).trim();
+      if (!url) {
+        throw new Error('请填写规则库同步 URL');
+      }
+      const res = await simpleRequest({
+        url,
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      });
+      if (res.status < 200 || res.status >= 300) {
+        const msg = `同步失败 (HTTP ${res.status})`;
+        const errNext = {
+          ...state.modelProfileSync,
+          remoteUrl: url,
+          lastStatus: msg,
+        };
+        await setKv(KV_KEYS.MODEL_PROFILES, errNext);
+        set({ modelProfileSync: errNext });
+        throw new Error(msg);
+      }
+
+      const rules = parseModelProfileRulesJson(res.body);
+      const next: ModelProfileSyncSettings = {
+        ...state.modelProfileSync,
+        remoteUrl: url,
+        remoteRules: rules,
+        lastSyncedAt: Date.now(),
+        lastStatus: `已同步 ${rules.length} 条在线规则`,
+      };
+      await setKv(KV_KEYS.MODEL_PROFILES, next);
+      set({ modelProfileSync: next });
+      return { count: rules.length };
     },
   };
 });

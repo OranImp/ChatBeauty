@@ -11,6 +11,7 @@ vi.mock('@/services/transport/streamHttp', () => ({
 }));
 
 import { getProviderAdapter } from '@/services/llm/registry';
+import { BUILTIN_REASONING_PROFILES } from '@/services/llm/modelProfiles';
 
 const userMessages: Message[] = [
   {
@@ -247,10 +248,10 @@ describe('LLM Protocol Adapters', () => {
     );
 
     const callArg = mockStreamRequest.mock.calls[0][0] as { url: string; body: string };
-    const payload = JSON.parse(callArg.body) as Record<string, unknown>;
+    const antPayload = JSON.parse(callArg.body) as Record<string, unknown>;
     expect(callArg.url).toBe('https://api.anthropic.com/v1/messages');
-    expect(payload.temperature).toBeUndefined();
-    expect(payload.thinking).toEqual({ type: 'enabled', budget_tokens: 6144 });
+    expect(antPayload.temperature).toBeUndefined();
+    expect(antPayload.thinking).toEqual({ type: 'enabled', budget_tokens: 8192 });
     expect(reasoning).toBe('先分析');
     expect(text).toBe('结论');
     expect(usage).toEqual({
@@ -260,7 +261,7 @@ describe('LLM Protocol Adapters', () => {
     });
   });
 
-  it('respects reasoningEffort: off across Responses, Gemini, and Anthropic adapters', async () => {
+  it('respects reasoningEffort: off across Responses (GPT-5.2), Gemini 2.5 Flash, and Anthropic adapters', async () => {
     mockStreamRequest.mockImplementation(async (opts: { onChunk: (c: string) => void }) => {
       opts.onChunk('data: [DONE]\n\n');
     });
@@ -275,12 +276,12 @@ describe('LLM Protocol Adapters', () => {
           protocol: 'openai-responses',
           baseUrl: 'https://api.openai.com/v1',
           apiKey: 'sk-resp',
-          defaultModel: 'o3',
+          defaultModel: 'gpt-5.2',
           models: [],
           enabled: true,
           createdAt: 1,
         },
-        modelId: 'o3',
+        modelId: 'gpt-5.2',
         systemPrompt: '',
         messages: userMessages,
         generation: offGen,
@@ -292,7 +293,7 @@ describe('LLM Protocol Adapters', () => {
     const respPayload = JSON.parse(
       (mockStreamRequest.mock.calls[0][0] as { body: string }).body
     ) as Record<string, unknown>;
-    expect(respPayload.reasoning).toBeUndefined();
+    expect(respPayload.reasoning).toEqual({ effort: 'none' });
 
     await getProviderAdapter('gemini').chatStream(
       {
@@ -302,12 +303,12 @@ describe('LLM Protocol Adapters', () => {
           protocol: 'gemini',
           baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
           apiKey: 'AIzaTest',
-          defaultModel: 'gemini-2.5-pro',
+          defaultModel: 'gemini-2.5-flash',
           models: [],
           enabled: true,
           createdAt: 1,
         },
-        modelId: 'gemini-2.5-pro',
+        modelId: 'gemini-2.5-flash',
         systemPrompt: '',
         messages: userMessages,
         generation: offGen,
@@ -319,7 +320,10 @@ describe('LLM Protocol Adapters', () => {
     const gemPayload = JSON.parse(
       (mockStreamRequest.mock.calls[1][0] as { body: string }).body
     ) as { generationConfig: Record<string, unknown> };
-    expect(gemPayload.generationConfig.thinkingConfig).toBeUndefined();
+    expect(gemPayload.generationConfig.thinkingConfig).toEqual({
+      includeThoughts: false,
+      thinkingBudget: 0,
+    });
 
     await getProviderAdapter('anthropic').chatStream(
       {
@@ -348,5 +352,143 @@ describe('LLM Protocol Adapters', () => {
     ) as Record<string, unknown>;
     expect(antPayload.thinking).toBeUndefined();
     expect(antPayload.temperature).toBe(0.7);
+    expect(antPayload.top_p).toBeUndefined();
+  });
+
+  it('applies series-specific effort, Gemini 3 thinkingLevel, and layered custom model/conversation extraBody', async () => {
+    mockStreamRequest.mockImplementation(async (opts: { onChunk: (c: string) => void }) => {
+      opts.onChunk('data: [DONE]\n\n');
+    });
+
+    // 1) OpenAI Chat with gpt-5.2 xhigh -> max_completion_tokens + reasoning_effort: xhigh + extraBody
+    await getProviderAdapter('openai-chat').chatStream(
+      {
+        provider: {
+          id: 'p1',
+          name: 'OpenAI',
+          protocol: 'openai-chat',
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'sk-test',
+          defaultModel: 'gpt-5.2',
+          models: [],
+          enabled: true,
+          createdAt: 1,
+        },
+        modelId: 'gpt-5.2',
+        systemPrompt: '',
+        messages: userMessages,
+        generation: { ...DEFAULT_GENERATION_SETTINGS, reasoningEffort: 'xhigh' },
+        modelParams: { seed: 42, extraBody: { store: false } },
+        conversationParams: { maxTokens: 4096, extraBody: { metadata: { tab: 'math' } } },
+        reasoningProfile: BUILTIN_REASONING_PROFILES['openai-gpt5-xhigh'],
+      },
+      { onReasoningDelta: () => {}, onTextDelta: () => {} },
+      new AbortController().signal
+    );
+
+    const chatBody = JSON.parse(
+      (mockStreamRequest.mock.calls[0][0] as { body: string }).body
+    ) as Record<string, unknown>;
+    expect(chatBody.max_completion_tokens).toBe(4096);
+    expect(chatBody.max_tokens).toBeUndefined();
+    expect(chatBody.reasoning_effort).toBe('xhigh');
+    expect(chatBody.temperature).toBeUndefined();
+    expect(chatBody.seed).toBe(42);
+    expect(chatBody.store).toBe(false);
+    expect(chatBody.metadata).toEqual({ tab: 'math' });
+
+    // 2) OpenAI Responses on o3 downgrades 'off' -> 'low'
+    await getProviderAdapter('openai-responses').chatStream(
+      {
+        provider: {
+          id: 'p2',
+          name: 'OpenAI Resp',
+          protocol: 'openai-responses',
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'sk-resp',
+          defaultModel: 'o3',
+          models: [],
+          enabled: true,
+          createdAt: 1,
+        },
+        modelId: 'o3',
+        systemPrompt: '',
+        messages: userMessages,
+        generation: { ...DEFAULT_GENERATION_SETTINGS, reasoningEffort: 'off' },
+      },
+      { onReasoningDelta: () => {}, onTextDelta: () => {} },
+      new AbortController().signal
+    );
+
+    const o3Body = JSON.parse(
+      (mockStreamRequest.mock.calls[1][0] as { body: string }).body
+    ) as Record<string, unknown>;
+    expect(o3Body.reasoning).toEqual({ effort: 'low', summary: 'auto' });
+
+    // 3) Gemini 3 Flash sends thinkingLevel & merges generationConfig extraBody
+    await getProviderAdapter('gemini').chatStream(
+      {
+        provider: {
+          id: 'p3',
+          name: 'Gemini',
+          protocol: 'gemini',
+          baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+          apiKey: 'AIza',
+          defaultModel: 'gemini-3-flash',
+          models: [],
+          enabled: true,
+          createdAt: 1,
+        },
+        modelId: 'gemini-3-flash',
+        systemPrompt: '',
+        messages: userMessages,
+        generation: { ...DEFAULT_GENERATION_SETTINGS, reasoningEffort: 'minimal' },
+        conversationParams: {
+          extraBody: { generationConfig: { candidateCount: 1 } },
+        },
+      },
+      { onReasoningDelta: () => {}, onTextDelta: () => {} },
+      new AbortController().signal
+    );
+
+    const gem3Body = JSON.parse(
+      (mockStreamRequest.mock.calls[2][0] as { body: string }).body
+    ) as { generationConfig: Record<string, unknown> };
+    expect(gem3Body.generationConfig.thinkingConfig).toEqual({
+      includeThoughts: true,
+      thinkingLevel: 'minimal',
+    });
+    expect(gem3Body.generationConfig.candidateCount).toBe(1);
+
+    // 4) Anthropic respects custom thinkingBudget override & stop_sequences
+    await getProviderAdapter('anthropic').chatStream(
+      {
+        provider: {
+          id: 'p4',
+          name: 'Anthropic',
+          protocol: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          apiKey: 'sk-ant',
+          defaultModel: 'claude-sonnet-4-5',
+          models: [],
+          enabled: true,
+          createdAt: 1,
+        },
+        modelId: 'claude-sonnet-4-5',
+        systemPrompt: '',
+        messages: userMessages,
+        generation: { ...DEFAULT_GENERATION_SETTINGS, maxTokens: 4096, reasoningEffort: 'medium' },
+        modelParams: { thinkingBudget: 12000, stop: ['DONE'] },
+      },
+      { onReasoningDelta: () => {}, onTextDelta: () => {} },
+      new AbortController().signal
+    );
+
+    const antBody = JSON.parse(
+      (mockStreamRequest.mock.calls[3][0] as { body: string }).body
+    ) as Record<string, unknown>;
+    expect(antBody.thinking).toEqual({ type: 'enabled', budget_tokens: 12000 });
+    expect(antBody.max_tokens).toBe(13024);
+    expect(antBody.stop_sequences).toEqual(['DONE']);
   });
 });

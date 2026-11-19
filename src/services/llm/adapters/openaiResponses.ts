@@ -3,12 +3,17 @@ import type { ChatStreamCallbacks, ChatStreamRequest, LLMProviderAdapter } from 
 import { SSEParser } from '@/services/llm/sseParser';
 import { simpleRequest, streamRequest } from '@/services/transport/streamHttp';
 import {
+  deepMergePayload,
   extractTextFromParts,
-  isModelReasoningCapable,
+  resolveEffectiveParams,
   sliceContextMessages,
   toModelDefinition,
   trimBaseUrl,
 } from './shared';
+import {
+  coerceReasoningEffort,
+  resolveModelReasoningProfile,
+} from '@/services/llm/modelProfiles';
 
 function buildResponsesEndpoint(baseUrl: string): string {
   const clean = trimBaseUrl(baseUrl || 'https://api.openai.com/v1');
@@ -61,30 +66,52 @@ export class OpenAIResponsesAdapter implements LLMProviderAdapter {
       }
     }
 
-    const reasoningCapable = isModelReasoningCapable(req.modelId, req.provider.models);
+    const modelDef = req.provider.models.find((m) => m.id === req.modelId);
+    const modelParams = req.modelParams ?? modelDef?.params;
+    const profile =
+      req.reasoningProfile ??
+      resolveModelReasoningProfile({
+        modelId: req.modelId,
+        protocol: 'openai-responses',
+        modelDef,
+      }).profile;
+    const effort = coerceReasoningEffort(req.generation.reasoningEffort, profile);
+    const activeLevel = profile.levels.find((l) => l.value === effort);
+    const effective = resolveEffectiveParams(req.generation, modelParams, req.conversationParams);
 
-    const payload: Record<string, unknown> = {
+    let payload: Record<string, unknown> = {
       model: req.modelId,
       input,
       stream: true,
-      max_output_tokens: req.generation.maxTokens,
     };
+
+    if (effective.maxTokens !== undefined) {
+      payload.max_output_tokens = effective.maxTokens;
+    }
 
     if (req.systemPrompt.trim()) {
       payload.instructions = req.systemPrompt.trim();
     }
 
-    if (reasoningCapable) {
-      if (req.generation.reasoningEffort !== 'off') {
+    if (profile.strategy === 'openai-effort' || profile.strategy === 'toggle-effort') {
+      if (effort !== 'off') {
         payload.reasoning = {
-          effort: req.generation.reasoningEffort,
+          effort: activeLevel?.apiValue ?? effort,
           summary: 'auto',
         };
+      } else if (activeLevel?.apiValue === 'none') {
+        payload.reasoning = { effort: 'none' };
       }
-    } else {
-      payload.temperature = req.generation.temperature;
-      payload.top_p = req.generation.topP;
     }
+
+    const thinkingActive = profile.strategy !== 'none' && effort !== 'off';
+    const allowSampling = profile.supportsSamplingWhenThinking !== false || !thinkingActive;
+    if (allowSampling) {
+      if (effective.temperature !== undefined) payload.temperature = effective.temperature;
+      if (effective.topP !== undefined) payload.top_p = effective.topP;
+    }
+
+    payload = deepMergePayload(payload, effective.extraBody);
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

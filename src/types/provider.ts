@@ -1,5 +1,11 @@
-import type { Message, ModelDefinition, ProviderConfig, TokenUsage } from './chat';
-import type { GenerationSettings } from './settings';
+import type {
+  CustomModelParams,
+  Message,
+  ModelDefinition,
+  ProviderConfig,
+  TokenUsage,
+} from './chat';
+import type { GenerationSettings, ModelReasoningProfile } from './settings';
 
 export interface ChatStreamRequest {
   provider: ProviderConfig;
@@ -7,6 +13,9 @@ export interface ChatStreamRequest {
   systemPrompt: string;
   messages: Message[];
   generation: GenerationSettings;
+  modelParams?: CustomModelParams;
+  conversationParams?: CustomModelParams;
+  reasoningProfile?: ModelReasoningProfile;
 }
 
 export interface ChatStreamCallbacks {

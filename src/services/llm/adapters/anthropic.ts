@@ -3,14 +3,19 @@ import type { ChatStreamCallbacks, ChatStreamRequest, LLMProviderAdapter } from 
 import { SSEParser } from '@/services/llm/sseParser';
 import { getRuntimeEnvironment, simpleRequest, streamRequest } from '@/services/transport/streamHttp';
 import {
+  deepMergePayload,
   extractDataUrlParts,
   extractTextFromParts,
-  isModelReasoningCapable,
+  resolveEffectiveParams,
   resolveThinkingBudget,
   sliceContextMessages,
   toModelDefinition,
   trimBaseUrl,
 } from './shared';
+import {
+  coerceReasoningEffort,
+  resolveModelReasoningProfile,
+} from '@/services/llm/modelProfiles';
 
 function buildAnthropicEndpoint(baseUrl: string, suffix: string): string {
   const clean = trimBaseUrl(baseUrl || 'https://api.anthropic.com/v1');
@@ -72,11 +77,29 @@ export class AnthropicAdapter implements LLMProviderAdapter {
       apiMessages.shift();
     }
 
-    const budget = resolveThinkingBudget(req.generation.reasoningEffort);
-    const thinkingEnabled =
-      isModelReasoningCapable(req.modelId, req.provider.models) && budget >= 1024;
+    const modelDef = req.provider.models.find((m) => m.id === req.modelId);
+    const modelParams = req.modelParams ?? modelDef?.params;
+    const profile =
+      req.reasoningProfile ??
+      resolveModelReasoningProfile({
+        modelId: req.modelId,
+        protocol: 'anthropic',
+        modelDef,
+      }).profile;
+    const effort = coerceReasoningEffort(req.generation.reasoningEffort, profile);
+    const activeLevel = profile.levels.find((l) => l.value === effort);
+    const effective = resolveEffectiveParams(req.generation, modelParams, req.conversationParams);
 
-    const payload: Record<string, unknown> = {
+    const budget =
+      effective.thinkingBudget !== undefined
+        ? effective.thinkingBudget
+        : activeLevel?.budgetTokens ?? resolveThinkingBudget(effort);
+    const thinkingEnabled =
+      (profile.strategy === 'anthropic-budget' || profile.strategy === 'openai-effort') &&
+      effort !== 'off' &&
+      budget >= 1024;
+
+    let payload: Record<string, unknown> = {
       model: req.modelId,
       messages: apiMessages,
       stream: true,
@@ -86,18 +109,34 @@ export class AnthropicAdapter implements LLMProviderAdapter {
       payload.system = req.systemPrompt.trim();
     }
 
+    if (effective.stop && effective.stop.length > 0) {
+      payload.stop_sequences = effective.stop;
+    }
+
+    const baseMaxTokens = effective.maxTokens ?? req.generation.maxTokens ?? 8192;
     if (thinkingEnabled) {
       payload.thinking = {
         type: 'enabled',
         budget_tokens: budget,
       };
-      payload.max_tokens = Math.max(req.generation.maxTokens, budget + 1024);
+      payload.max_tokens = Math.max(baseMaxTokens, budget + 1024);
       // Anthropic rejects non-1 temperature and top_p when Extended Thinking is enabled
     } else {
-      payload.max_tokens = req.generation.maxTokens;
-      payload.temperature = req.generation.temperature;
-      payload.top_p = req.generation.topP;
+      payload.max_tokens = baseMaxTokens;
+      if (effective.temperature !== undefined) {
+        payload.temperature = effective.temperature;
+      }
+      const explicitTopPOverride =
+        req.conversationParams?.topP !== undefined || modelParams?.topP !== undefined;
+      if (
+        effective.topP !== undefined &&
+        (effective.temperature === undefined || explicitTopPOverride)
+      ) {
+        payload.top_p = effective.topP;
+      }
     }
+
+    payload = deepMergePayload(payload, effective.extraBody);
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

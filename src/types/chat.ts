@@ -1,6 +1,27 @@
 export type ProtocolType = 'openai-chat' | 'openai-responses' | 'gemini' | 'anthropic';
 
-export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high';
+export type ReasoningEffort =
+  | 'off'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
+  | 'auto';
+
+export interface CustomModelParams {
+  temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
+  seed?: number;
+  stop?: string[];
+  thinkingBudget?: number;
+  reasoningProfileId?: string;
+  extraBody?: Record<string, unknown>;
+}
 
 export type ContentPart =
   | { type: 'text'; text: string }
@@ -42,6 +63,7 @@ export interface Conversation {
   providerId?: string;
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
+  customParams?: CustomModelParams;
   systemPromptPresetId?: string;
   customSystemPrompt?: string;
   enableRenderPrompt?: boolean;
@@ -62,6 +84,7 @@ export interface ModelDefinition {
   name: string;
   capabilities: ModelCapabilities;
   contextLength?: number;
+  params?: CustomModelParams;
 }
 
 export interface ProviderConfig {

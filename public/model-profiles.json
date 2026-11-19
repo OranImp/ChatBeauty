@@ -1,0 +1,66 @@
+{
+  "version": "2026.11",
+  "updatedAt": "2026-11-19",
+  "rules": [
+    {
+      "pattern": "^gpt-5[._-](1|2|3|4|pro)|^gpt-5\\.(1|2|3|4)|^o3-pro",
+      "profileId": "openai-gpt5-xhigh",
+      "note": "OpenAI GPT-5.1 / 5.2+ & o3-pro (none/minimal/low/medium/high/xhigh)"
+    },
+    {
+      "pattern": "^gpt-5($|[-._])",
+      "profileId": "openai-gpt5",
+      "note": "OpenAI GPT-5 (minimal/low/medium/high)"
+    },
+    {
+      "pattern": "^o[134]($|[-._])",
+      "profileId": "openai-o-series",
+      "note": "OpenAI o1 / o3 / o4 (low/medium/high)"
+    },
+    {
+      "pattern": "^gemini-3(\\.\\d+)?-.*flash",
+      "profileId": "gemini-3-flash",
+      "note": "Gemini 3 / 3.1 Flash (minimal/low/medium/high thinkingLevel)"
+    },
+    {
+      "pattern": "^gemini-3(\\.\\d+)?",
+      "profileId": "gemini-3-pro",
+      "note": "Gemini 3 / 3.1 Pro (low/medium/high thinkingLevel)"
+    },
+    {
+      "pattern": "^gemini-2\\.5-pro",
+      "profileId": "gemini-2.5-pro",
+      "note": "Gemini 2.5 Pro (dynamic/budget thinking)"
+    },
+    {
+      "pattern": "^gemini-2\\.5",
+      "profileId": "gemini-2.5-flash",
+      "note": "Gemini 2.5 Flash / Lite (off/dynamic/budget thinking)"
+    },
+    {
+      "pattern": "^claude-(3[-.]7|sonnet-4|opus-4|haiku-4[-.]5|4[-.]?[0-9])",
+      "profileId": "claude-extended",
+      "note": "Claude 3.7 / 4 / 4.5 / 4.6 Extended Thinking"
+    },
+    {
+      "pattern": "(deepseek-reasoner|deepseek-r1|\\bqwq\\b|grok-4)",
+      "profileId": "deepseek-fixed",
+      "note": "Built-in fixed reasoning models"
+    },
+    {
+      "pattern": "grok-3-mini",
+      "profileId": "grok-mini",
+      "note": "xAI Grok 3 Mini"
+    },
+    {
+      "pattern": "(qwen3|glm-4\\.[5-9]|glm-5|doubao-seed|kimi-k2-thinking|thinking)",
+      "profileId": "compat-toggle",
+      "note": "Hybrid toggle thinking models"
+    },
+    {
+      "pattern": "^(gpt-4|gpt-3\\.5|gemini-2\\.0|gemini-1\\.5|claude-3-5-haiku|claude-3-5-sonnet|deepseek-chat|deepseek-v3$)",
+      "profileId": "none",
+      "note": "Standard chat models without thinking slider"
+    }
+  ]
+}

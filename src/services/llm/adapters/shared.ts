@@ -1,22 +1,141 @@
 import type {
   ContentPart,
+  CustomModelParams,
   Message,
   ModelCapabilities,
   ModelDefinition,
   ReasoningEffort,
 } from '@/types/chat';
+import type { GenerationSettings } from '@/types/settings';
+import { resolveModelReasoningProfile } from '@/services/llm/modelProfiles';
 
 export function resolveThinkingBudget(effort: ReasoningEffort): number {
   switch (effort) {
     case 'off':
       return 0;
+    case 'minimal':
+      return 1024;
     case 'low':
       return 2048;
     case 'medium':
-      return 6144;
+      return 8192;
     case 'high':
-      return 12288;
+      return 16384;
+    case 'xhigh':
+      return 24576;
+    case 'max':
+      return 32768;
+    case 'auto':
+      return -1;
   }
+}
+
+const UNSAFE_MERGE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+}
+
+/**
+ * Recursively merges extra payload fields onto an adapter request payload while
+ * guarding against prototype pollution keys.
+ */
+export function deepMergePayload(
+  base: Record<string, unknown>,
+  extra?: Record<string, unknown>
+): Record<string, unknown> {
+  if (!extra || !isPlainObject(extra)) return base;
+  const out: Record<string, unknown> = { ...base };
+  for (const [key, val] of Object.entries(extra)) {
+    if (UNSAFE_MERGE_KEYS.has(key) || val === undefined) continue;
+    const existing = out[key];
+    if (isPlainObject(existing) && isPlainObject(val)) {
+      out[key] = deepMergePayload(existing, val);
+    } else {
+      out[key] = val;
+    }
+  }
+  return out;
+}
+
+export interface ResolvedEffectiveParams {
+  temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
+  seed?: number;
+  stop?: string[];
+  thinkingBudget?: number;
+  extraBody?: Record<string, unknown>;
+}
+
+/**
+ * Resolves effective generation parameters by layering:
+ *   global generation (gated by enabledParams) -> per-model params -> per-conversation params.
+ */
+export function resolveEffectiveParams(
+  globalGen: GenerationSettings,
+  modelParams?: CustomModelParams,
+  convParams?: CustomModelParams
+): ResolvedEffectiveParams {
+  const enabled = globalGen.enabledParams ?? {
+    temperature: true,
+    topP: true,
+    maxTokens: true,
+    presencePenalty: false,
+    frequencyPenalty: false,
+  };
+
+  const temperature =
+    convParams?.temperature ??
+    modelParams?.temperature ??
+    (enabled.temperature !== false ? globalGen.temperature : undefined);
+
+  const topP =
+    convParams?.topP ??
+    modelParams?.topP ??
+    (enabled.topP !== false ? globalGen.topP : undefined);
+
+  const maxTokens =
+    convParams?.maxTokens ??
+    modelParams?.maxTokens ??
+    (enabled.maxTokens !== false ? globalGen.maxTokens : undefined);
+
+  const presencePenalty =
+    convParams?.presencePenalty ??
+    modelParams?.presencePenalty ??
+    (enabled.presencePenalty ? globalGen.presencePenalty : undefined);
+
+  const frequencyPenalty =
+    convParams?.frequencyPenalty ??
+    modelParams?.frequencyPenalty ??
+    (enabled.frequencyPenalty ? globalGen.frequencyPenalty : undefined);
+
+  const seed = convParams?.seed ?? modelParams?.seed;
+  const stop = convParams?.stop ?? modelParams?.stop;
+  const thinkingBudget = convParams?.thinkingBudget ?? modelParams?.thinkingBudget;
+
+  let mergedExtra: Record<string, unknown> | undefined;
+  if (globalGen.extraBody) mergedExtra = deepMergePayload({}, globalGen.extraBody);
+  if (modelParams?.extraBody) {
+    mergedExtra = deepMergePayload(mergedExtra || {}, modelParams.extraBody);
+  }
+  if (convParams?.extraBody) {
+    mergedExtra = deepMergePayload(mergedExtra || {}, convParams.extraBody);
+  }
+
+  return {
+    temperature,
+    topP,
+    maxTokens,
+    presencePenalty,
+    frequencyPenalty,
+    seed,
+    stop,
+    thinkingBudget,
+    extraBody: mergedExtra,
+  };
 }
 
 export function trimBaseUrl(url: string): string {
@@ -46,18 +165,8 @@ export function inferModelCapabilities(modelId: string): ModelCapabilities {
     id.includes('flux') ||
     id.includes('sdxl');
   const isAudio = id.includes('whisper') || id.includes('tts') || id.includes('transcribe');
-  const isReasoning =
-    /^o[134](-|$)/.test(id) ||
-    id.includes('gpt-5') ||
-    id.includes('reasoner') ||
-    id.includes('deepseek-r1') ||
-    id.includes('qwq') ||
-    id.includes('thinking') ||
-    id.includes('gemini-2.5') ||
-    id.includes('gemini-3') ||
-    id.includes('claude-3-7') ||
-    id.includes('claude-sonnet-4') ||
-    id.includes('claude-opus-4');
+  const { profile } = resolveModelReasoningProfile({ modelId });
+  const isReasoning = !isImageGen && !isAudio && profile.strategy !== 'none';
   const isVision =
     !isImageGen &&
     !isAudio &&
@@ -69,6 +178,7 @@ export function inferModelCapabilities(modelId: string): ModelCapabilities {
       id.includes('claude-3') ||
       id.includes('claude-sonnet-4') ||
       id.includes('claude-opus-4') ||
+      id.includes('claude-haiku-4') ||
       id.includes('vision') ||
       id.includes('vl'));
 

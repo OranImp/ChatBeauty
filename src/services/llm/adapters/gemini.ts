@@ -3,14 +3,19 @@ import type { ChatStreamCallbacks, ChatStreamRequest, LLMProviderAdapter } from 
 import { SSEParser } from '@/services/llm/sseParser';
 import { simpleRequest, streamRequest } from '@/services/transport/streamHttp';
 import {
+  deepMergePayload,
   extractDataUrlParts,
   extractTextFromParts,
-  isModelReasoningCapable,
+  resolveEffectiveParams,
   resolveThinkingBudget,
   sliceContextMessages,
   toModelDefinition,
   trimBaseUrl,
 } from './shared';
+import {
+  coerceReasoningEffort,
+  resolveModelReasoningProfile,
+} from '@/services/llm/modelProfiles';
 
 function normalizeGeminiModel(modelId: string): string {
   return modelId.replace(/^models\//, '');
@@ -65,21 +70,56 @@ export class GeminiAdapter implements LLMProviderAdapter {
       }
     }
 
-    const generationConfig: Record<string, unknown> = {
-      temperature: req.generation.temperature,
-      topP: req.generation.topP,
-      maxOutputTokens: req.generation.maxTokens,
-    };
+    const modelDef = req.provider.models.find((m) => m.id === req.modelId);
+    const modelParams = req.modelParams ?? modelDef?.params;
+    const profile =
+      req.reasoningProfile ??
+      resolveModelReasoningProfile({
+        modelId: req.modelId,
+        protocol: 'gemini',
+        modelDef,
+      }).profile;
+    const effort = coerceReasoningEffort(req.generation.reasoningEffort, profile);
+    const activeLevel = profile.levels.find((l) => l.value === effort);
+    const effective = resolveEffectiveParams(req.generation, modelParams, req.conversationParams);
 
-    const thinkingBudget = resolveThinkingBudget(req.generation.reasoningEffort);
-    if (isModelReasoningCapable(req.modelId, req.provider.models) && thinkingBudget > 0) {
+    const generationConfig: Record<string, unknown> = {};
+    if (effective.temperature !== undefined) generationConfig.temperature = effective.temperature;
+    if (effective.topP !== undefined) generationConfig.topP = effective.topP;
+    if (effective.maxTokens !== undefined) generationConfig.maxOutputTokens = effective.maxTokens;
+    if (effective.presencePenalty !== undefined) {
+      generationConfig.presencePenalty = effective.presencePenalty;
+    }
+    if (effective.frequencyPenalty !== undefined) {
+      generationConfig.frequencyPenalty = effective.frequencyPenalty;
+    }
+    if (effective.seed !== undefined) generationConfig.seed = effective.seed;
+    if (effective.stop && effective.stop.length > 0) generationConfig.stopSequences = effective.stop;
+
+    if (profile.strategy === 'gemini-budget') {
+      const budget =
+        effective.thinkingBudget !== undefined
+          ? effective.thinkingBudget
+          : activeLevel?.budgetTokens ?? resolveThinkingBudget(effort);
+      if (budget === 0) {
+        generationConfig.thinkingConfig = {
+          includeThoughts: false,
+          thinkingBudget: 0,
+        };
+      } else {
+        generationConfig.thinkingConfig = {
+          includeThoughts: true,
+          thinkingBudget: budget,
+        };
+      }
+    } else if (profile.strategy === 'gemini-level') {
       generationConfig.thinkingConfig = {
         includeThoughts: true,
-        thinkingBudget,
+        thinkingLevel: activeLevel?.apiValue ?? effort,
       };
     }
 
-    const payload: Record<string, unknown> = {
+    let payload: Record<string, unknown> = {
       contents,
       generationConfig,
     };
@@ -89,6 +129,8 @@ export class GeminiAdapter implements LLMProviderAdapter {
         parts: [{ text: req.systemPrompt.trim() }],
       };
     }
+
+    payload = deepMergePayload(payload, effective.extraBody);
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

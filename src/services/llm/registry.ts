@@ -40,8 +40,10 @@ export const PROTOCOL_TEMPLATES: Record<ProtocolType, ProtocolTemplate> = {
     suggestedModels: [
       toModelDefinition('gpt-4o', 'GPT-4o'),
       toModelDefinition('gpt-4.1', 'GPT-4.1'),
+      toModelDefinition('gpt-5.2', 'GPT-5.2'),
       toModelDefinition('deepseek-chat', 'DeepSeek Chat'),
       toModelDefinition('deepseek-reasoner', 'DeepSeek R1 (Reasoner)'),
+      toModelDefinition('qwen3-235b-a22b', 'Qwen3 235B'),
     ],
   },
   'openai-responses': {
@@ -53,6 +55,7 @@ export const PROTOCOL_TEMPLATES: Record<ProtocolType, ProtocolTemplate> = {
     placeholderModel: 'gpt-5',
     description: 'OpenAI 新一代 Responses 接口，原生支持推理摘要与 Effort 调节',
     suggestedModels: [
+      toModelDefinition('gpt-5.2', 'GPT-5.2'),
       toModelDefinition('gpt-5', 'GPT-5'),
       toModelDefinition('o3', 'o3'),
       toModelDefinition('o4-mini', 'o4-mini'),
@@ -70,6 +73,8 @@ export const PROTOCOL_TEMPLATES: Record<ProtocolType, ProtocolTemplate> = {
     suggestedModels: [
       toModelDefinition('gemini-2.5-pro', 'Gemini 2.5 Pro'),
       toModelDefinition('gemini-2.5-flash', 'Gemini 2.5 Flash'),
+      toModelDefinition('gemini-3-flash', 'Gemini 3 Flash'),
+      toModelDefinition('gemini-3-pro', 'Gemini 3 Pro'),
       toModelDefinition('gemini-2.0-flash', 'Gemini 2.0 Flash'),
     ],
   },
@@ -82,6 +87,7 @@ export const PROTOCOL_TEMPLATES: Record<ProtocolType, ProtocolTemplate> = {
     placeholderModel: 'claude-sonnet-4-20250514',
     description: '原生支持 Claude Extended Thinking 深度思考块与精确流式输出',
     suggestedModels: [
+      toModelDefinition('claude-sonnet-4-5', 'Claude Sonnet 4.5'),
       toModelDefinition('claude-sonnet-4-20250514', 'Claude Sonnet 4'),
       toModelDefinition('claude-3-7-sonnet-20250219', 'Claude 3.7 Sonnet'),
       toModelDefinition('claude-3-5-haiku-20241022', 'Claude 3.5 Haiku'),
