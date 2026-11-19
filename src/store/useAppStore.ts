@@ -30,6 +30,43 @@ function uid(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+const deletedConvIds = new Set<string>();
+
+function resolveValidProviderAndModel(
+  conv: Conversation | undefined,
+  providers: ProviderConfig[],
+  activeProviderId: string | null,
+  activeModelId: string | null
+): { provider: ProviderConfig | undefined; modelId: string } {
+  const convProv = conv?.providerId ? providers.find((p) => p.id === conv.providerId) : undefined;
+  const activeProv = activeProviderId
+    ? providers.find((p) => p.id === activeProviderId)
+    : undefined;
+  const provider =
+    convProv ?? activeProv ?? providers.find((p) => p.enabled) ?? providers[0];
+
+  if (!provider) {
+    return { provider: undefined, modelId: '' };
+  }
+
+  let candidateModel = '';
+  if (convProv && conv?.modelId) {
+    candidateModel = conv.modelId;
+  } else if (!conv?.providerId && activeProv && activeProv.id === provider.id && activeModelId) {
+    candidateModel = activeModelId;
+  } else if (conv?.modelId && provider.models.some((m) => m.id === conv.modelId)) {
+    candidateModel = conv.modelId;
+  }
+
+  const modelId =
+    candidateModel ||
+    provider.defaultModel ||
+    provider.models[0]?.id ||
+    PROTOCOL_TEMPLATES[provider.protocol].placeholderModel;
+
+  return { provider, modelId };
+}
+
 interface AppState {
   ready: boolean;
   conversations: Conversation[];
@@ -47,6 +84,7 @@ interface AppState {
   activeModelId: string | null;
 
   streamingMessageId: string | null;
+  streamingByConv: Record<string, string>;
   abortControllers: Record<string, AbortController>;
 
   // Actions
@@ -138,17 +176,15 @@ export const useAppStore = create<AppState>((set, get) => {
     };
 
     await db.messages.put(initialAssistant);
+    const controller = new AbortController();
     set((s) => ({
       streamingMessageId: assistantMsgId,
+      streamingByConv: { ...s.streamingByConv, [conversation.id]: assistantMsgId },
+      abortControllers: { ...s.abortControllers, [conversation.id]: controller },
       messagesByConv: {
         ...s.messagesByConv,
         [conversation.id]: [...(s.messagesByConv[conversation.id] || []), initialAssistant],
       },
-    }));
-
-    const controller = new AbortController();
-    set((s) => ({
-      abortControllers: { ...s.abortControllers, [conversation.id]: controller },
     }));
 
     // Build effective system prompt
@@ -173,7 +209,13 @@ export const useAppStore = create<AppState>((set, get) => {
     let usage: Message['usage'] | undefined;
     let lastFlush = 0;
 
+    const isConvDeleted = () =>
+      deletedConvIds.has(conversation.id) ||
+      !get().conversations.some((c) => c.id === conversation.id);
+
     const syncAssistantMessage = (status: Message['status'], error?: string, forceDb = false) => {
+      if (isConvDeleted()) return;
+
       const parts: Message['parts'] = [];
       if (reasoningText) {
         parts.push({
@@ -271,16 +313,24 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     } finally {
       const updatedAt = Date.now();
-      await db.conversations.update(conversation.id, { updatedAt });
+      const deleted = isConvDeleted();
+      if (!deleted) {
+        await db.conversations.update(conversation.id, { updatedAt });
+      }
       set((s) => {
         const nextControllers = { ...s.abortControllers };
         delete nextControllers[conversation.id];
+        const nextStreamingByConv = { ...s.streamingByConv };
+        delete nextStreamingByConv[conversation.id];
         return {
           streamingMessageId: s.streamingMessageId === assistantMsgId ? null : s.streamingMessageId,
+          streamingByConv: nextStreamingByConv,
           abortControllers: nextControllers,
-          conversations: s.conversations
-            .map((c) => (c.id === conversation.id ? { ...c, updatedAt } : c))
-            .sort((a, b) => b.updatedAt - a.updatedAt),
+          conversations: deleted
+            ? s.conversations
+            : s.conversations
+                .map((c) => (c.id === conversation.id ? { ...c, updatedAt } : c))
+                .sort((a, b) => b.updatedAt - a.updatedAt),
         };
       });
     }
@@ -301,6 +351,7 @@ export const useAppStore = create<AppState>((set, get) => {
     activeProviderId: null,
     activeModelId: null,
     streamingMessageId: null,
+    streamingByConv: {},
     abortControllers: {},
 
     initApp: async () => {
@@ -343,7 +394,8 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     reloadFromDatabase: async () => {
-      set({ messagesByConv: {} });
+      Object.values(get().abortControllers).forEach((ctrl) => ctrl.abort());
+      set({ messagesByConv: {}, streamingMessageId: null, streamingByConv: {}, abortControllers: {} });
       await get().initApp();
     },
 
@@ -372,11 +424,17 @@ export const useAppStore = create<AppState>((set, get) => {
 
     selectConversation: async (id) => {
       await setKv(KV_KEYS.ACTIVE_CONVERSATION, id);
-      const conv = get().conversations.find((c) => c.id === id);
+      const state = get();
+      const conv = state.conversations.find((c) => c.id === id);
+      const { provider, modelId } = resolveValidProviderAndModel(
+        conv,
+        state.providers,
+        state.activeProviderId,
+        state.activeModelId
+      );
       set({
         activeConversationId: id,
-        ...(conv?.providerId ? { activeProviderId: conv.providerId } : {}),
-        ...(conv?.modelId ? { activeModelId: conv.modelId } : {}),
+        ...(provider ? { activeProviderId: provider.id, activeModelId: modelId } : {}),
       });
       if (!get().messagesByConv[id]) {
         await loadMessagesFor(id);
@@ -402,6 +460,7 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     deleteConversation: async (id) => {
+      deletedConvIds.add(id);
       get().stopStreaming(id);
       await db.transaction('rw', [db.conversations, db.messages], async () => {
         await db.messages.where('conversationId').equals(id).delete();
@@ -418,10 +477,13 @@ export const useAppStore = create<AppState>((set, get) => {
       set((s) => {
         const nextMap = { ...s.messagesByConv };
         delete nextMap[id];
+        const nextStreamingByConv = { ...s.streamingByConv };
+        delete nextStreamingByConv[id];
         return {
           conversations: remaining,
           activeConversationId: nextActive,
           messagesByConv: nextMap,
+          streamingByConv: nextStreamingByConv,
         };
       });
 
@@ -431,10 +493,10 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     updateConversationConfig: async (id, patch) => {
-      await db.conversations.update(id, patch);
       set((s) => ({
         conversations: s.conversations.map((c) => (c.id === id ? { ...c, ...patch } : c)),
       }));
+      await db.conversations.update(id, patch);
     },
 
     sendMessage: async (text) => {
@@ -447,22 +509,18 @@ export const useAppStore = create<AppState>((set, get) => {
         conv = await state.createConversation('新对话');
         state = get();
       }
+      if (state.abortControllers[conv.id]) return;
 
-      const provider =
-        state.providers.find((p) => p.id === (conv.providerId || state.activeProviderId)) ??
-        state.providers.find((p) => p.enabled) ??
-        state.providers[0];
+      const { provider, modelId } = resolveValidProviderAndModel(
+        conv,
+        state.providers,
+        state.activeProviderId,
+        state.activeModelId
+      );
 
       if (!provider || !provider.apiKey.trim()) {
         throw new Error('NO_PROVIDER_CONFIGURED');
       }
-
-      const modelId =
-        conv.modelId ||
-        state.activeModelId ||
-        provider.defaultModel ||
-        provider.models[0]?.id ||
-        PROTOCOL_TEMPLATES[provider.protocol].placeholderModel;
 
       const existing = state.messagesByConv[conv.id] || (await loadMessagesFor(conv.id));
       const now = Date.now();
@@ -521,7 +579,18 @@ export const useAppStore = create<AppState>((set, get) => {
       const convId = state.activeConversationId;
       if (!convId) return;
       const conv = state.conversations.find((c) => c.id === convId);
-      if (!conv) return;
+      if (!conv || state.abortControllers[convId]) return;
+
+      const { provider, modelId } = resolveValidProviderAndModel(
+        conv,
+        state.providers,
+        state.activeProviderId,
+        state.activeModelId
+      );
+      if (!provider || !provider.apiKey.trim()) {
+        throw new Error('NO_PROVIDER_CONFIGURED');
+      }
+      if (!modelId) throw new Error('请先选择模型');
 
       const msgs = state.messagesByConv[convId] || [];
       const targetIdx = msgs.findIndex((m) => m.id === assistantMessageId);
@@ -538,16 +607,6 @@ export const useAppStore = create<AppState>((set, get) => {
         },
       }));
 
-      const provider =
-        state.providers.find((p) => p.id === (conv.providerId || state.activeProviderId)) ??
-        state.providers[0];
-      if (!provider || !provider.apiKey.trim()) {
-        throw new Error('NO_PROVIDER_CONFIGURED');
-      }
-      const modelId =
-        conv.modelId || state.activeModelId || provider.defaultModel || provider.models[0]?.id;
-      if (!modelId) throw new Error('请先选择模型');
-
       await runAssistantStream(conv, historyBefore, provider, modelId);
     },
 
@@ -558,7 +617,18 @@ export const useAppStore = create<AppState>((set, get) => {
       const convId = state.activeConversationId;
       if (!convId) return;
       const conv = state.conversations.find((c) => c.id === convId);
-      if (!conv) return;
+      if (!conv || state.abortControllers[convId]) return;
+
+      const { provider, modelId } = resolveValidProviderAndModel(
+        conv,
+        state.providers,
+        state.activeProviderId,
+        state.activeModelId
+      );
+      if (!provider || !provider.apiKey.trim()) {
+        throw new Error('NO_PROVIDER_CONFIGURED');
+      }
+      if (!modelId) throw new Error('请先选择模型');
 
       const msgs = state.messagesByConv[convId] || [];
       const targetIdx = msgs.findIndex((m) => m.id === userMessageId);
@@ -583,16 +653,6 @@ export const useAppStore = create<AppState>((set, get) => {
           [convId]: nextHistory,
         },
       }));
-
-      const provider =
-        state.providers.find((p) => p.id === (conv.providerId || state.activeProviderId)) ??
-        state.providers[0];
-      if (!provider || !provider.apiKey.trim()) {
-        throw new Error('NO_PROVIDER_CONFIGURED');
-      }
-      const modelId =
-        conv.modelId || state.activeModelId || provider.defaultModel || provider.models[0]?.id;
-      if (!modelId) throw new Error('请先选择模型');
 
       await runAssistantStream(conv, nextHistory, provider, modelId);
     },
@@ -723,7 +783,12 @@ export const useAppStore = create<AppState>((set, get) => {
               status: 'done',
             },
           ],
-          generation: { ...get().generation, maxTokens: 64, reasoningBudgetTokens: 0 },
+          generation: {
+            ...get().generation,
+            maxTokens: 256,
+            reasoningEffort: 'off',
+            reasoningBudgetTokens: 0,
+          },
         },
         {
           onTextDelta: (d) => {
@@ -766,42 +831,57 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     updatePromptSettings: async (patch) => {
-      const next = { ...get().promptSettings, ...patch };
+      let next!: PromptSettings;
+      set((s) => {
+        next = { ...s.promptSettings, ...patch };
+        return { promptSettings: next };
+      });
       await setKv(KV_KEYS.PROMPT, next);
-      set({ promptSettings: next });
     },
 
     updateAppearance: async (patch) => {
-      const next = { ...get().appearance, ...patch };
+      let next!: AppearanceSettings;
+      set((s) => {
+        next = { ...s.appearance, ...patch };
+        return { appearance: next };
+      });
       await setKv(KV_KEYS.APPEARANCE, next);
-      set({ appearance: next });
     },
 
     updateGeneration: async (patch) => {
-      const next = { ...get().generation, ...patch };
+      let next!: GenerationSettings;
+      set((s) => {
+        next = { ...s.generation, ...patch };
+        return { generation: next };
+      });
       await setKv(KV_KEYS.GENERATION, next);
-      set({ generation: next });
     },
 
     updateWebDav: async (patch) => {
-      const next = { ...get().webdav, ...patch };
+      let next!: WebDavSyncSettings;
+      set((s) => {
+        next = { ...s.webdav, ...patch };
+        return { webdav: next };
+      });
       await setKv(KV_KEYS.WEBDAV, next);
-      set({ webdav: next });
     },
 
     updateModelProfileSync: async (patch) => {
-      const next = { ...get().modelProfileSync, ...patch };
+      let next!: ModelProfileSyncSettings;
+      set((s) => {
+        next = { ...s.modelProfileSync, ...patch };
+        return { modelProfileSync: next };
+      });
       await setKv(KV_KEYS.MODEL_PROFILES, next);
-      set({ modelProfileSync: next });
     },
 
     saveCustomModelProfileRules: async (rules) => {
-      const next: ModelProfileSyncSettings = {
-        ...get().modelProfileSync,
-        customRules: rules,
-      };
+      let next!: ModelProfileSyncSettings;
+      set((s) => {
+        next = { ...s.modelProfileSync, customRules: rules };
+        return { modelProfileSync: next };
+      });
       await setKv(KV_KEYS.MODEL_PROFILES, next);
-      set({ modelProfileSync: next });
     },
 
     syncRemoteModelProfiles: async (urlOverride) => {

@@ -27,7 +27,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
     activeConversationId,
     providers,
     appearance,
-    streamingMessageId,
+    abortControllers,
+    streamingByConv,
     sendMessage,
     stopStreaming,
     regenerateMessage,
@@ -44,7 +45,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
   const activeConv = conversations.find((c) => c.id === activeConversationId);
   const messages = activeConv ? messagesByConv[activeConv.id] || [] : [];
   const isStreaming = Boolean(
-    streamingMessageId && messages.some((m) => m.id === streamingMessageId)
+    activeConv && (abortControllers[activeConv.id] || streamingByConv[activeConv.id])
   );
   const hasConfiguredProvider = providers.some((p) => p.apiKey.trim().length > 0);
 
@@ -102,99 +103,106 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
         </div>
       )}
 
-      {/* Scrollbar-free Message Stream */}
-      <div
-        ref={scrollRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto no-scrollbar px-4 sm:px-6 pt-3 pb-6 scroll-smooth"
-      >
-        <div className="mx-auto w-full" style={{ maxWidth: 'var(--chat-max-width)' }}>
-          {messages.length === 0 ? (
-            <div className="min-h-[60vh] flex flex-col items-center justify-center text-center py-10 space-y-6">
-              <div className="space-y-2.5">
-                <h1
-                  className="cb-fade-up font-editorial text-3xl sm:text-[34px] font-medium tracking-tight text-fg"
-                  style={{ '--stagger-i': 0 } as React.CSSProperties}
-                >
-                  有什么可以帮你的？
-                </h1>
-                <p
-                  className="cb-fade-up text-sm text-muted max-w-md mx-auto"
-                  style={{ '--stagger-i': 1 } as React.CSSProperties}
-                >
-                  支持多步数学推导、化学式、矢量图解与交互原理实验。
-                </p>
-              </div>
-
-              {!hasConfiguredProvider && (
-                <button
-                  type="button"
-                  onClick={() => onOpenSettings('providers')}
-                  style={{ '--stagger-i': 2 } as React.CSSProperties}
-                  className="cb-fade-up px-4 py-2.5 rounded-2xl bg-accent text-accentfg text-sm font-medium shadow-md hover:opacity-95 active:scale-95 transition"
-                >
-                  添加模型供应商
-                </button>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-2xl text-left">
-                {STARTER_PROMPTS.map((prompt, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => void dispatchSend(prompt)}
-                    style={{ '--stagger-i': idx + 2 } as React.CSSProperties}
-                    className="cb-fade-up p-3.5 rounded-2xl border border-borderc bg-surface/55 hover:bg-elevated hover:border-fg/25 hover:-translate-y-0.5 active:scale-[0.99] transition-all duration-200 text-xs sm:text-[13px] text-fg/90 leading-relaxed"
-                  >
-                    {prompt}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            messages.map((msg) => (
-              <MessageItem
-                key={msg.id}
-                message={msg}
-                theme={theme}
-                appearance={appearance}
-                onInspect={onInspect}
-                onRegenerate={(id) =>
-                  void regenerateMessage(id).catch((e) => {
-                    if (e instanceof Error && e.message === 'NO_PROVIDER_CONFIGURED') {
-                      onOpenSettings('providers');
-                    }
-                  })
-                }
-                onEditResend={(id, newText) =>
-                  void editAndResend(id, newText).catch((e) => {
-                    if (e instanceof Error && e.message === 'NO_PROVIDER_CONFIGURED') {
-                      onOpenSettings('providers');
-                    }
-                  })
-                }
-                onDelete={(id) => void deleteMessage(id)}
-              />
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* Animated Scroll-to-bottom circular button */}
-      {scrollBtnPresence.mounted && (
-        <button
-          type="button"
-          onClick={() => scrollToBottom('smooth')}
-          className={`absolute bottom-[114px] left-1/2 -translate-x-1/2 z-20 w-9 h-9 rounded-full border border-borderc bg-elevated/90 backdrop-blur-md text-fg shadow-lg flex items-center justify-center hover:bg-surface active:scale-95 transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-            scrollBtnPresence.visible
-              ? 'opacity-100 translate-y-0 scale-100'
-              : 'opacity-0 translate-y-3 scale-90 pointer-events-none'
-          }`}
-          aria-label="滚动到底部"
+      {/* Message viewport wrapper so scroll button tracks composer height automatically */}
+      <div className="relative flex-1 min-h-0 flex flex-col">
+        {/* Scrollbar-free Message Stream */}
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto no-scrollbar px-4 sm:px-6 pt-3 pb-6 scroll-smooth"
         >
-          <ArrowDown className="w-4 h-4" />
-        </button>
-      )}
+          <div className="mx-auto w-full" style={{ maxWidth: 'var(--chat-max-width)' }}>
+            {messages.length === 0 ? (
+              <div className="min-h-[60vh] flex flex-col items-center justify-center text-center py-10 space-y-6">
+                <div className="space-y-2.5">
+                  <h1
+                    className="cb-fade-up font-editorial text-3xl sm:text-[34px] font-medium tracking-tight text-fg"
+                    style={{ '--stagger-i': 0 } as React.CSSProperties}
+                  >
+                    有什么可以帮你的？
+                  </h1>
+                  <p
+                    className="cb-fade-up text-sm text-muted max-w-md mx-auto"
+                    style={{ '--stagger-i': 1 } as React.CSSProperties}
+                  >
+                    支持多步数学推导、化学式、矢量图解与交互原理实验。
+                  </p>
+                </div>
+
+                {!hasConfiguredProvider && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenSettings('providers')}
+                    style={{ '--stagger-i': 2 } as React.CSSProperties}
+                    className="cb-fade-up px-4 py-2.5 rounded-2xl bg-accent text-accentfg text-sm font-medium shadow-md hover:opacity-95 active:scale-95 transition"
+                  >
+                    添加模型供应商
+                  </button>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-2xl text-left">
+                  {STARTER_PROMPTS.map((prompt, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => void dispatchSend(prompt)}
+                      style={{ '--stagger-i': idx + 2 } as React.CSSProperties}
+                      className="cb-fade-up p-3.5 rounded-2xl border border-borderc bg-surface/55 hover:bg-elevated hover:border-fg/25 hover:-translate-y-0.5 active:scale-[0.99] transition-all duration-200 text-xs sm:text-[13px] text-fg/90 leading-relaxed"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              messages.map((msg) => (
+                <MessageItem
+                  key={msg.id}
+                  message={msg}
+                  theme={theme}
+                  appearance={appearance}
+                  onInspect={onInspect}
+                  onRegenerate={(id) =>
+                    void regenerateMessage(id).catch((e) => {
+                      if (e instanceof Error && e.message === 'NO_PROVIDER_CONFIGURED') {
+                        onOpenSettings('providers');
+                      } else if (e instanceof Error) {
+                        setErrorBanner(e.message);
+                      }
+                    })
+                  }
+                  onEditResend={(id, newText) =>
+                    void editAndResend(id, newText).catch((e) => {
+                      if (e instanceof Error && e.message === 'NO_PROVIDER_CONFIGURED') {
+                        onOpenSettings('providers');
+                      } else if (e instanceof Error) {
+                        setErrorBanner(e.message);
+                      }
+                    })
+                  }
+                  onDelete={(id) => void deleteMessage(id)}
+                />
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Animated Scroll-to-bottom circular button */}
+        {scrollBtnPresence.mounted && (
+          <button
+            type="button"
+            onClick={() => scrollToBottom('smooth')}
+            className={`absolute bottom-3 left-1/2 -translate-x-1/2 z-20 w-9 h-9 rounded-full border border-borderc bg-elevated/90 backdrop-blur-md text-fg shadow-lg flex items-center justify-center hover:bg-surface active:scale-95 transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              scrollBtnPresence.visible
+                ? 'opacity-100 translate-y-0 scale-100'
+                : 'opacity-0 translate-y-3 scale-90 pointer-events-none'
+            }`}
+            aria-label="滚动到底部"
+          >
+            <ArrowDown className="w-4 h-4" />
+          </button>
+        )}
+      </div>
 
       <ChatInput
         onSend={(t) => void dispatchSend(t)}

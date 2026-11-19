@@ -67,6 +67,11 @@ interface NativeStreamPlugin {
     headers: Record<string, string>;
     body?: string;
   }): Promise<SimpleHttpResponse>;
+  saveAndShareFile(options: {
+    filename: string;
+    base64: string;
+    mimeType?: string;
+  }): Promise<void>;
   addListener(
     eventName: 'streamChunk',
     listenerFunc: (data: { requestId: string; chunk: string }) => void
@@ -128,8 +133,14 @@ export async function streamRequest(options: StreamHttpOptions): Promise<void> {
       };
 
       const offChunk = bridge.onStreamChunk((data) => {
-        if (data.requestId === requestId) {
+        if (data.requestId !== requestId || settled) return;
+        try {
           onChunk(data.chunk);
+        } catch (err) {
+          settled = true;
+          cleanup();
+          void bridge.abortStream(requestId);
+          reject(err instanceof Error ? err : new Error(String(err)));
         }
       });
 
@@ -192,8 +203,14 @@ export async function streamRequest(options: StreamHttpOptions): Promise<void> {
 
       Promise.all([
         NativeStream.addListener('streamChunk', (data) => {
-          if (data.requestId === requestId) {
+          if (data.requestId !== requestId || settled) return;
+          try {
             onChunk(data.chunk);
+          } catch (err) {
+            settled = true;
+            cleanup();
+            void NativeStream.abortStream({ requestId });
+            reject(err instanceof Error ? err : new Error(String(err)));
           }
         }),
         NativeStream.addListener('streamEnd', (data) => {
@@ -298,4 +315,13 @@ export async function simpleRequest(options: SimpleHttpOptions): Promise<SimpleH
     headers: respHeaders,
     body: text,
   };
+}
+
+export async function saveNativeFile(options: {
+  filename: string;
+  base64: string;
+  mimeType?: string;
+}): Promise<void> {
+  if (getRuntimeEnvironment() !== 'capacitor') return;
+  await NativeStream.saveAndShareFile(options);
 }

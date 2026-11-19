@@ -45,6 +45,22 @@ function createWindow(): void {
     return { action: 'deny' };
   });
 
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const devBase =
+      !app.isPackaged && process.env.VITE_DEV_SERVER_URL
+        ? process.env.VITE_DEV_SERVER_URL
+        : !app.isPackaged && process.argv.includes('--dev')
+          ? 'http://localhost:5173'
+          : null;
+    if (devBase && url.startsWith(devBase)) return;
+    if (url.startsWith('file://') && /\/dist\/index\.html([?#]|$)/i.test(url)) return;
+
+    event.preventDefault();
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      void shell.openExternal(url);
+    }
+  });
+
   if (!app.isPackaged && process.env.VITE_DEV_SERVER_URL) {
     void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else if (!app.isPackaged && process.argv.includes('--dev')) {

@@ -172,6 +172,7 @@ export function inferModelCapabilities(modelId: string): ModelCapabilities {
     !isAudio &&
     (id.includes('gpt-4') ||
       id.includes('gpt-5') ||
+      id.includes('gpt-6') ||
       id.includes('o3') ||
       id.includes('o4') ||
       id.includes('gemini') ||
@@ -179,6 +180,19 @@ export function inferModelCapabilities(modelId: string): ModelCapabilities {
       id.includes('claude-sonnet-4') ||
       id.includes('claude-opus-4') ||
       id.includes('claude-haiku-4') ||
+      id.includes('claude-sonnet-5') ||
+      id.includes('claude-opus-5') ||
+      id.includes('claude-haiku-5') ||
+      id.includes('claude-5') ||
+      id.includes('deepseek-flash') ||
+      id.includes('qwen3.5') ||
+      id.includes('qwen3.8') ||
+      id.includes('glm-5') ||
+      id.includes('kimi-k2.5') ||
+      id.includes('kimi-k3') ||
+      id.includes('k3.1') ||
+      id.includes('grok-4') ||
+      id.includes('doubao-seed-2') ||
       id.includes('vision') ||
       id.includes('vl'));
 
@@ -215,4 +229,26 @@ export function extractDataUrlParts(dataUrl: string): { mimeType: string; base64
   const match = /^data:([^;]+);base64,(.+)$/s.exec(dataUrl);
   if (!match) return null;
   return { mimeType: match[1], base64: match[2] };
+}
+
+export function parseHttpHeadersJson(raw: string): Record<string, string> {
+  const trimmed = raw.trim();
+  if (!trimmed) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error('自定义 Headers JSON 格式无效');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('自定义 Headers 必须为键值对 JSON 对象');
+  }
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof v !== 'string') {
+      throw new Error(`Header "${k}" 的值必须为字符串`);
+    }
+    out[k] = v;
+  }
+  return out;
 }

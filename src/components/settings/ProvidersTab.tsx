@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { PROTOCOL_TEMPLATES } from '@/services/llm/registry';
-import { toModelDefinition } from '@/services/llm/adapters/shared';
+import { parseHttpHeadersJson, toModelDefinition } from '@/services/llm/adapters/shared';
 import type {
   CustomModelParams,
   ModelDefinition,
@@ -150,14 +150,15 @@ export const ProvidersTab: React.FC = () => {
 
   const handleSave = async () => {
     if (!draft) return;
-    let parsedHeaders: Record<string, string> = {};
-    if (headersText.trim()) {
-      try {
-        parsedHeaders = JSON.parse(headersText) as Record<string, string>;
-      } catch {
-        setStatusMsg({ ok: false, text: '自定义 Headers JSON 格式无效' });
-        return;
-      }
+    let parsedHeaders: Record<string, string>;
+    try {
+      parsedHeaders = parseHttpHeadersJson(headersText);
+    } catch (err) {
+      setStatusMsg({
+        ok: false,
+        text: err instanceof Error ? err.message : '自定义 Headers JSON 格式无效',
+      });
+      return;
     }
     const pendingModelErr = Object.values(modelExtraErr).find(Boolean);
     if (pendingModelErr) {
@@ -186,20 +187,31 @@ export const ProvidersTab: React.FC = () => {
 
   const handleFetchModels = async () => {
     if (!draft) return;
+    let parsedHeaders: Record<string, string>;
+    try {
+      parsedHeaders = parseHttpHeadersJson(headersText);
+    } catch (err) {
+      setStatusMsg({
+        ok: false,
+        text: err instanceof Error ? err.message : '自定义 Headers JSON 格式无效',
+      });
+      return;
+    }
+    const candidate: ProviderConfig = { ...draft, extraHeaders: parsedHeaders };
     setFetchingModels(true);
     setStatusMsg(null);
     try {
-      const fetched = await fetchProviderModels(draft);
+      const fetched = await fetchProviderModels(candidate);
       if (fetched.length === 0) {
         setStatusMsg({ ok: false, text: '接口未返回模型列表，可手动添加模型 ID' });
       } else {
-        const existingMap = new Map(draft.models.map((m) => [m.id, m]));
+        const existingMap = new Map(candidate.models.map((m) => [m.id, m]));
         const merged = fetched.map((m) => {
           const prev = existingMap.get(m.id);
           return prev?.params ? { ...m, params: prev.params } : m;
         });
-        const nextDefault = draft.defaultModel || merged[0].id;
-        const nextDraft = { ...draft, models: merged, defaultModel: nextDefault };
+        const nextDefault = candidate.defaultModel || merged[0].id;
+        const nextDraft = { ...candidate, models: merged, defaultModel: nextDefault };
         setDraft(nextDraft);
         await saveProvider(nextDraft);
         setStatusMsg({ ok: true, text: `已拉取并保存 ${merged.length} 个可用模型` });
@@ -216,14 +228,25 @@ export const ProvidersTab: React.FC = () => {
 
   const handleTest = async () => {
     if (!draft) return;
+    let parsedHeaders: Record<string, string>;
+    try {
+      parsedHeaders = parseHttpHeadersJson(headersText);
+    } catch (err) {
+      setStatusMsg({
+        ok: false,
+        text: err instanceof Error ? err.message : '自定义 Headers JSON 格式无效',
+      });
+      return;
+    }
+    const candidate: ProviderConfig = { ...draft, extraHeaders: parsedHeaders };
     setTesting(true);
     setStatusMsg(null);
     try {
       const modelToUse =
-        draft.defaultModel ||
-        draft.models[0]?.id ||
-        PROTOCOL_TEMPLATES[draft.protocol].placeholderModel;
-      const reply = await testProviderConnection(draft, modelToUse);
+        candidate.defaultModel ||
+        candidate.models[0]?.id ||
+        PROTOCOL_TEMPLATES[candidate.protocol].placeholderModel;
+      const reply = await testProviderConnection(candidate, modelToUse);
       setStatusMsg({ ok: true, text: `连接成功 (${modelToUse})：${reply.slice(0, 60)}` });
     } catch (err) {
       setStatusMsg({
@@ -542,7 +565,10 @@ export const ProvidersTab: React.FC = () => {
                         type="button"
                         onClick={() => {
                           setDraft({ ...draft, defaultModel: m.id });
-                          void setActiveProviderModel(draft.id, m.id);
+                          const savedProv = providers.find((p) => p.id === draft.id);
+                          if (savedProv?.models.some((x) => x.id === m.id)) {
+                            void setActiveProviderModel(draft.id, m.id);
+                          }
                         }}
                         className="flex-1 text-left flex items-center justify-between min-w-0 gap-2"
                       >
@@ -573,12 +599,17 @@ export const ProvidersTab: React.FC = () => {
 
                       <button
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
+                          const remaining = draft.models.filter((x) => x.id !== m.id);
                           setDraft({
                             ...draft,
-                            models: draft.models.filter((x) => x.id !== m.id),
-                          })
-                        }
+                            models: remaining,
+                            defaultModel:
+                              draft.defaultModel === m.id
+                                ? remaining[0]?.id ?? ''
+                                : draft.defaultModel,
+                          });
+                        }}
                         className="p-1 text-muted hover:text-rose-400 shrink-0"
                         title="删除模型"
                       >

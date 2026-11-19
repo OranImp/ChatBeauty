@@ -1,5 +1,5 @@
 ﻿!macro CB_CHECK_APP_RUNNING
-  nsExec::Exec '"$SYSDIR\cmd.exe" /C tasklist /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /FO CSV /NH | "$SYSDIR\findstr.exe" /B /I /C:"\"${APP_EXECUTABLE_FILENAME}\""'
+  nsExec::Exec '"$SYSDIR\cmd.exe" /C tasklist /FI "USERNAME eq %USERNAME%" /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /FO CSV /NH | "$SYSDIR\findstr.exe" /B /I /C:"\"${APP_EXECUTABLE_FILENAME}\""'
   Pop $R0
   ${If} $R0 == 0
     ${IfNot} ${Silent}
@@ -10,23 +10,23 @@
       Sleep 500
     ${EndIf}
 
-    nsExec::Exec '"$SYSDIR\taskkill.exe" /IM "${APP_EXECUTABLE_FILENAME}"'
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /FI "USERNAME eq %USERNAME%" /IM "${APP_EXECUTABLE_FILENAME}"'
     Pop $R0
     Sleep 800
 
     StrCpy $R1 0
     ${Do}
-      nsExec::Exec '"$SYSDIR\cmd.exe" /C tasklist /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /FO CSV /NH | "$SYSDIR\findstr.exe" /B /I /C:"\"${APP_EXECUTABLE_FILENAME}\""'
+      nsExec::Exec '"$SYSDIR\cmd.exe" /C tasklist /FI "USERNAME eq %USERNAME%" /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /FO CSV /NH | "$SYSDIR\findstr.exe" /B /I /C:"\"${APP_EXECUTABLE_FILENAME}\""'
       Pop $R0
       ${If} $R0 != 0
         ${ExitDo}
       ${EndIf}
 
-      nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM "${APP_EXECUTABLE_FILENAME}"'
+      nsExec::Exec '"$SYSDIR\taskkill.exe" /F /FI "USERNAME eq %USERNAME%" /IM "${APP_EXECUTABLE_FILENAME}"'
       Pop $R0
       Sleep 800
 
-      nsExec::Exec '"$SYSDIR\cmd.exe" /C tasklist /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /FO CSV /NH | "$SYSDIR\findstr.exe" /B /I /C:"\"${APP_EXECUTABLE_FILENAME}\""'
+      nsExec::Exec '"$SYSDIR\cmd.exe" /C tasklist /FI "USERNAME eq %USERNAME%" /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /FO CSV /NH | "$SYSDIR\findstr.exe" /B /I /C:"\"${APP_EXECUTABLE_FILENAME}\""'
       Pop $R0
       ${If} $R0 != 0
         ${ExitDo}
@@ -87,13 +87,15 @@
 !macroend
 
 !macro customUnInit
-  System::Call 'kernel32::CreateMutex(p 0, i 1, t "Local\ChatBeauty_Uninstaller_SingleInstance") ?e'
-  Pop $R0
-  ${If} $R0 == 183
-    ${IfNot} ${Silent}
-      MessageBox MB_OK|MB_ICONEXCLAMATION "ChatBeauty 卸载程序已在运行中，请勿同时打开多个卸载窗口。" /SD IDOK
+  ${IfNot} ${UAC_IsInnerInstance}
+    System::Call 'kernel32::CreateMutex(p 0, i 1, t "Local\ChatBeauty_Uninstaller_SingleInstance") ?e'
+    Pop $R0
+    ${If} $R0 == 183
+      ${IfNot} ${Silent}
+        MessageBox MB_OK|MB_ICONEXCLAMATION "ChatBeauty 卸载程序已在运行中，请勿同时打开多个卸载窗口。" /SD IDOK
+      ${EndIf}
+      Abort
     ${EndIf}
-    Abort
   ${EndIf}
   !insertmacro CB_CHECK_APP_RUNNING
 !macroend

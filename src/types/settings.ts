@@ -9,6 +9,8 @@ export type ReasoningStrategy =
   | 'gemini-budget'
   | 'gemini-level'
   | 'anthropic-budget'
+  | 'anthropic-adaptive'
+  | 'deepseek-v4'
   | 'fixed'
   | 'toggle-effort';
 
@@ -27,6 +29,7 @@ export interface ModelReasoningProfile {
   levels: ReasoningLevelOption[];
   defaultLevel: ReasoningEffort;
   supportsSamplingWhenThinking?: boolean;
+  supportsSamplingWhenOff?: boolean;
 }
 
 export interface ModelProfileRule {

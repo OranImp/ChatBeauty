@@ -6,12 +6,13 @@
 
 ## 核心特性
 
-### 1. 多厂商原生协议 & 零 CORS 流式调用
-- **OpenAI Chat Completions** (`/chat/completions`)：支持标准流式输出及 DeepSeek R1 等 `reasoning_content` 思考过程。
+### 1. 多厂商原生协议、2026 前沿模型预设与零 CORS 流式调用
+- **OpenAI Chat Completions** (`/chat/completions`)：支持 GPT-6 / GPT-5.4 / o 系列 `max_completion_tokens` 与 `reasoning_effort`，兼容 DeepSeek V4/V4.1 (`thinking` + `reasoning_effort`)、Qwen3.5/3.8、GLM-5、Kimi K3.1、Grok 4.7、OpenRouter、SiliconFlow 及各类中转站。
 - **OpenAI Responses API** (`/responses`)：原生解析 `output_text.delta`、`reasoning_summary_text.delta` 与推理强度（`reasoning.effort`）。
-- **Google Gemini API** (`streamGenerateContent?alt=sse`)：原生支持 `systemInstruction` 与 Gemini Thinking 思考块。
-- **Anthropic Messages API** (`/v1/messages`)：原生支持 Extended Thinking（`thinking_delta`）与精确流式输出。
-- **零跨域限制**：桌面端通过 Electron 主进程 IPC 转发，Android 端通过原生 Java `NativeStreamPlugin` 直接发起 `HttpURLConnection` 流式请求，兼容各类自定义 Base URL 与中转站。
+- **Google Gemini API** (`streamGenerateContent?alt=sse`)：原生支持 Gemini 4 / 3.8 / 3.1 `thinkingLevel` 与 Gemini 2.5 `thinkingBudget` 预算思考、`systemInstruction` 及 `totalThoughtTokens` 统计。
+- **Anthropic Messages API** (`/v1/messages`)：原生支持 Claude 4.6 / 4.7 / 4.8 / 5.5 自适应思考（`thinking.type: "adaptive"` + `output_config.effort`）与 3.7~4.5 `budget_tokens` 扩展思考，自动规避采样参数冲突。
+- **自动推理强度分配与自定义参数**：内置 20 套推理系列与 21 条匹配规则，切换模型实时平滑映射可用思考档位（支持规则 JSON 热更新与单模型覆盖），并提供全局 / 单模型 / 单会话三层参数与 `extraBody` 深度合并。
+- **零跨域限制**：桌面端通过 Electron 主进程 IPC 转发，Android 端通过原生 Java `NativeStreamPlugin` 直接发起 `HttpURLConnection` 流式请求并支持原生分享导出。
 - **多模态接口预留**：消息数据模型与适配器接口从底层采用多模态 Block 结构，已预留识图（Vision）、生图（ImageGen）、语音转写/合成（STT/TTS）接口契约。
 
 ### 2. ChatGPT 网页级学术渲染引擎

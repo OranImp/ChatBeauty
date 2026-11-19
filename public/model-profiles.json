@@ -1,11 +1,21 @@
 {
-  "version": "2026.11",
+  "version": "2026.11.2",
   "updatedAt": "2026-11-19",
   "rules": [
     {
-      "pattern": "^gpt-5[._-](1|2|3|4|pro)|^gpt-5\\.(1|2|3|4)|^o3-pro",
+      "pattern": "^gpt-6(\\.\\d+)?[-._]?astra",
+      "profileId": "openai-gpt6-astra",
+      "note": "OpenAI GPT-6 Astra flagship (low/medium/high/xhigh/max)"
+    },
+    {
+      "pattern": "^gpt-6($|[-._])",
+      "profileId": "openai-gpt6-sol",
+      "note": "OpenAI GPT-6 Sol / Luna (none/minimal/low/medium/high/xhigh/max)"
+    },
+    {
+      "pattern": "^gpt-5[._-]([1-9]|pro)|^gpt-5\\.[1-9]|^o3-pro",
       "profileId": "openai-gpt5-xhigh",
-      "note": "OpenAI GPT-5.1 / 5.2+ & o3-pro (none/minimal/low/medium/high/xhigh)"
+      "note": "OpenAI GPT-5.1 ~ 5.4 / Codex & o3-pro (none/minimal/low/medium/high/xhigh)"
     },
     {
       "pattern": "^gpt-5($|[-._])",
@@ -16,6 +26,16 @@
       "pattern": "^o[134]($|[-._])",
       "profileId": "openai-o-series",
       "note": "OpenAI o1 / o3 / o4 (low/medium/high)"
+    },
+    {
+      "pattern": "^gemini-4[-._]?(hydrogen|flash)|^gemini-3\\.[5-9][-._]?flash",
+      "profileId": "gemini-4-fast",
+      "note": "Gemini 4 Hydrogen / 3.8 Flash (minimal/low/medium/high/xhigh thinkingLevel)"
+    },
+    {
+      "pattern": "^gemini-4($|[-._])",
+      "profileId": "gemini-4-flagship",
+      "note": "Gemini 4 Carbon / Neon / Argon (low/medium/high/xhigh thinkingLevel)"
     },
     {
       "pattern": "^gemini-3(\\.\\d+)?-.*flash",
@@ -38,29 +58,54 @@
       "note": "Gemini 2.5 Flash / Lite (off/dynamic/budget thinking)"
     },
     {
-      "pattern": "^claude-(3[-.]7|sonnet-4|opus-4|haiku-4[-.]5|4[-.]?[0-9])",
-      "profileId": "claude-extended",
-      "note": "Claude 3.7 / 4 / 4.5 / 4.6 Extended Thinking"
+      "pattern": "^claude-(opus|sonnet|haiku)-5|^claude-5|^claude-(opus|sonnet)-4[-.]([789])",
+      "profileId": "claude-adaptive-5",
+      "note": "Claude 4.7 / 4.8 / 5.5 Adaptive Thinking + output_config.effort"
     },
     {
-      "pattern": "(deepseek-reasoner|deepseek-r1|\\bqwq\\b|grok-4)",
-      "profileId": "deepseek-fixed",
-      "note": "Built-in fixed reasoning models"
+      "pattern": "^claude-(opus|sonnet)-4[-.]6",
+      "profileId": "claude-adaptive-46",
+      "note": "Claude 4.6 Adaptive Thinking + output_config.effort"
+    },
+    {
+      "pattern": "^claude-(3[-.]7|sonnet-4|opus-4|haiku-4[-.]5|4[-.]?[0-5])",
+      "profileId": "claude-extended",
+      "note": "Claude 3.7 / 4.0 ~ 4.5 Extended Thinking (budget_tokens)"
+    },
+    {
+      "pattern": "^(deepseek-v4|deepseek-flash)",
+      "profileId": "deepseek-v4",
+      "note": "DeepSeek V4 / V4.1 unified thinking (thinking.type + reasoning_effort)"
+    },
+    {
+      "pattern": "grok-4[\\w.-]*non-reasoning",
+      "profileId": "none",
+      "note": "xAI Grok 4 Non-Reasoning"
+    },
+    {
+      "pattern": "^grok-4($|[-._])",
+      "profileId": "grok-4",
+      "note": "xAI Grok 4 / 4.7 tunable reasoning (low/medium/high/xhigh)"
     },
     {
       "pattern": "grok-3-mini",
       "profileId": "grok-mini",
-      "note": "xAI Grok 3 Mini"
+      "note": "xAI Grok 3 Mini (low/high)"
     },
     {
-      "pattern": "(qwen3|glm-4\\.[5-9]|glm-5|doubao-seed|kimi-k2-thinking|thinking)",
-      "profileId": "compat-toggle",
-      "note": "Hybrid toggle thinking models"
+      "pattern": "(deepseek-reasoner|deepseek-r1|\\bqwq\\b|kimi-k3|^k3(\\.\\d+)?($|[-._]))",
+      "profileId": "deepseek-fixed",
+      "note": "Built-in fixed reasoning models"
     },
     {
       "pattern": "^(gpt-4|gpt-3\\.5|gemini-2\\.0|gemini-1\\.5|claude-3-5-haiku|claude-3-5-sonnet|deepseek-chat|deepseek-v3$)",
       "profileId": "none",
-      "note": "Standard chat models without thinking slider"
+      "note": "Non-reasoning legacy chat models"
+    },
+    {
+      "pattern": "(qwen3|glm-4\\.[5-9]|glm-5|doubao-seed|kimi-k2\\.5|kimi-k2-thinking|thinking)",
+      "profileId": "compat-toggle",
+      "note": "Hybrid toggle thinking models"
     }
   ]
 }

@@ -1,5 +1,10 @@
 package com.chatbeauty.app;
 
+import android.content.Intent;
+import android.net.Uri;
+import android.util.Base64;
+import androidx.core.content.FileProvider;
+
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -7,6 +12,8 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -47,6 +54,7 @@ public class NativeStreamPlugin extends Plugin {
 
         executor.execute(() -> {
             HttpURLConnection conn = null;
+            boolean opened = false;
             try {
                 URL url = new URL(urlStr);
                 conn = (HttpURLConnection) url.openConnection();
@@ -92,6 +100,7 @@ public class NativeStreamPlugin extends Plugin {
                 JSObject openResult = new JSObject();
                 openResult.put("status", status);
                 call.resolve(openResult);
+                opened = true;
 
                 InputStream stream = conn.getInputStream();
                 try (InputStreamReader reader = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
@@ -115,8 +124,7 @@ public class NativeStreamPlugin extends Plugin {
             } catch (Exception e) {
                 if (!aborted.get()) {
                     String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-                    if (!call.isSaved()) {
-                        // Call not yet resolved
+                    if (!opened) {
                         call.reject(msg);
                     } else {
                         JSObject errPayload = new JSObject();
@@ -226,6 +234,56 @@ public class NativeStreamPlugin extends Plugin {
                 if (conn != null) {
                     conn.disconnect();
                 }
+            }
+        });
+    }
+
+    @PluginMethod
+    public void saveAndShareFile(PluginCall call) {
+        String rawName = call.getString("filename");
+        String base64 = call.getString("base64");
+        String mimeType = call.getString("mimeType", "application/octet-stream");
+
+        if (rawName == null || base64 == null) {
+            call.reject("Missing filename or base64 data");
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                String safeName = new File(rawName).getName();
+                if (safeName.isEmpty() || ".".equals(safeName) || "..".equals(safeName)) {
+                    safeName = "chatbeauty-export.bin";
+                }
+                byte[] data = Base64.decode(base64, Base64.DEFAULT);
+                File outFile = new File(getContext().getCacheDir(), safeName);
+                try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                    fos.write(data);
+                    fos.flush();
+                }
+
+                Uri uri = FileProvider.getUriForFile(
+                        getContext(),
+                        getContext().getPackageName() + ".fileprovider",
+                        outFile
+                );
+
+                Intent shareIntent = new Intent(Intent.ACTION_SEND);
+                shareIntent.setType(mimeType);
+                shareIntent.putExtra(Intent.EXTRA_STREAM, uri);
+                shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+                Intent chooser = Intent.createChooser(shareIntent, safeName);
+                chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+
+                if (getActivity() != null) {
+                    getActivity().runOnUiThread(() -> getActivity().startActivity(chooser));
+                } else {
+                    getContext().startActivity(chooser);
+                }
+                call.resolve();
+            } catch (Exception e) {
+                call.reject(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
             }
         });
     }

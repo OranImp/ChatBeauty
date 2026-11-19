@@ -9,13 +9,24 @@ export interface SSEEvent {
  */
 export class SSEParser {
   private buffer = '';
+  private pendingCR = false;
   private currentEvent = 'message';
   private currentId: string | undefined;
   private dataLines: string[] = [];
 
   feed(chunk: string): SSEEvent[] {
     if (!chunk) return [];
-    this.buffer += chunk.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    let normalized = chunk;
+    if (this.pendingCR) {
+      this.pendingCR = false;
+      if (normalized.startsWith('\n')) {
+        normalized = normalized.slice(1);
+      }
+    }
+    if (normalized.endsWith('\r')) {
+      this.pendingCR = true;
+    }
+    this.buffer += normalized.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
     const events: SSEEvent[] = [];
     let newlineIndex = this.buffer.indexOf('\n');

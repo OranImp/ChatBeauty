@@ -216,16 +216,20 @@ export const MarkdownBlock: React.FC<MarkdownBlockProps> = memo(
         td: ({ children }: { children?: React.ReactNode }) => (
           <td className="px-3.5 py-2 border-t border-borderc text-fg/90">{children}</td>
         ),
-        a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
-          <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-accent underline underline-offset-4 decoration-accent/50 hover:decoration-accent"
-          >
-            {children}
-          </a>
-        ),
+        a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
+          const safeHref =
+            href && /^(https?:|mailto:|#)/i.test(href.trim()) ? href : undefined;
+          return (
+            <a
+              href={safeHref}
+              target={safeHref && !safeHref.startsWith('#') ? '_blank' : undefined}
+              rel="noopener noreferrer"
+              className="text-accent underline underline-offset-4 decoration-accent/50 hover:decoration-accent"
+            >
+              {children}
+            </a>
+          );
+        },
         hr: () => <hr className="my-5 border-borderc" />,
       }),
       [theme, appearance, isStreaming, onInspect]
@@ -235,7 +239,18 @@ export const MarkdownBlock: React.FC<MarkdownBlockProps> = memo(
       <div className="cb-markdown" onClick={handleContainerClick}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkMath]}
-          rehypePlugins={[[rehypeKatex, { strict: false, trust: true }]]}
+          rehypePlugins={[
+            [
+              rehypeKatex,
+              {
+                strict: false,
+                trust: (ctx: { command?: string; url?: string }) =>
+                  ctx.command === '\\href' &&
+                  typeof ctx.url === 'string' &&
+                  /^https?:\/\//i.test(ctx.url.trim()),
+              },
+            ],
+          ]}
           components={components}
         >
           {content}

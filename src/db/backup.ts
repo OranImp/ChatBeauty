@@ -88,10 +88,26 @@ export async function importFullBackup(
         if (data.settings.appearance) await setKv(KV_KEYS.APPEARANCE, data.settings.appearance);
         if (data.settings.generation) await setKv(KV_KEYS.GENERATION, data.settings.generation);
         if (data.settings.prompt) await setKv(KV_KEYS.PROMPT, data.settings.prompt);
-        if (data.settings.webdav) await setKv(KV_KEYS.WEBDAV, data.settings.webdav);
+        if (data.settings.webdav) {
+          const currentWebdav = await getKv<WebDavSyncSettings>(
+            KV_KEYS.WEBDAV,
+            DEFAULT_WEBDAV_SETTINGS
+          );
+          if (mode === 'replace' || !currentWebdav.endpoint.trim()) {
+            await setKv(KV_KEYS.WEBDAV, data.settings.webdav);
+          }
+        }
         if (data.settings.modelProfiles) {
           await setKv(KV_KEYS.MODEL_PROFILES, data.settings.modelProfiles);
         }
+      }
+
+      if (mode === 'replace') {
+        await Promise.all([
+          setKv(KV_KEYS.ACTIVE_CONVERSATION, null),
+          setKv(KV_KEYS.ACTIVE_PROVIDER, null),
+          setKv(KV_KEYS.ACTIVE_MODEL, null),
+        ]);
       }
     }
   );

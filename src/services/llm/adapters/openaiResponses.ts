@@ -93,19 +93,25 @@ export class OpenAIResponsesAdapter implements LLMProviderAdapter {
       payload.instructions = req.systemPrompt.trim();
     }
 
-    if (profile.strategy === 'openai-effort' || profile.strategy === 'toggle-effort') {
+    if (
+      profile.strategy === 'openai-effort' ||
+      profile.strategy === 'toggle-effort' ||
+      profile.strategy === 'deepseek-v4'
+    ) {
       if (effort !== 'off') {
         payload.reasoning = {
           effort: activeLevel?.apiValue ?? effort,
           summary: 'auto',
         };
-      } else if (activeLevel?.apiValue === 'none') {
+      } else if (profile.strategy !== 'deepseek-v4' && activeLevel?.apiValue === 'none') {
         payload.reasoning = { effort: 'none' };
       }
     }
 
     const thinkingActive = profile.strategy !== 'none' && effort !== 'off';
-    const allowSampling = profile.supportsSamplingWhenThinking !== false || !thinkingActive;
+    const allowSampling = thinkingActive
+      ? profile.supportsSamplingWhenThinking !== false
+      : profile.supportsSamplingWhenOff !== false;
     if (allowSampling) {
       if (effective.temperature !== undefined) payload.temperature = effective.temperature;
       if (effective.topP !== undefined) payload.top_p = effective.topP;
@@ -177,7 +183,11 @@ export class OpenAIResponsesAdapter implements LLMProviderAdapter {
           (parsed.response as { error?: { message?: string } } | undefined)?.error) as
           | { message?: string }
           | undefined;
-        throw new Error(err?.message || 'OpenAI Responses API 返回错误');
+        const msg =
+          (typeof parsed.message === 'string' && parsed.message) ||
+          err?.message ||
+          'OpenAI Responses API 返回错误';
+        throw new Error(msg);
       }
     };
 

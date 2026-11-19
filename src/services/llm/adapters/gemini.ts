@@ -83,16 +83,23 @@ export class GeminiAdapter implements LLMProviderAdapter {
     const activeLevel = profile.levels.find((l) => l.value === effort);
     const effective = resolveEffectiveParams(req.generation, modelParams, req.conversationParams);
 
+    const thinkingActive = profile.strategy !== 'none' && effort !== 'off';
+    const allowSampling = thinkingActive
+      ? profile.supportsSamplingWhenThinking !== false
+      : profile.supportsSamplingWhenOff !== false;
+
     const generationConfig: Record<string, unknown> = {};
-    if (effective.temperature !== undefined) generationConfig.temperature = effective.temperature;
-    if (effective.topP !== undefined) generationConfig.topP = effective.topP;
+    if (allowSampling) {
+      if (effective.temperature !== undefined) generationConfig.temperature = effective.temperature;
+      if (effective.topP !== undefined) generationConfig.topP = effective.topP;
+      if (effective.presencePenalty !== undefined) {
+        generationConfig.presencePenalty = effective.presencePenalty;
+      }
+      if (effective.frequencyPenalty !== undefined) {
+        generationConfig.frequencyPenalty = effective.frequencyPenalty;
+      }
+    }
     if (effective.maxTokens !== undefined) generationConfig.maxOutputTokens = effective.maxTokens;
-    if (effective.presencePenalty !== undefined) {
-      generationConfig.presencePenalty = effective.presencePenalty;
-    }
-    if (effective.frequencyPenalty !== undefined) {
-      generationConfig.frequencyPenalty = effective.frequencyPenalty;
-    }
     if (effective.seed !== undefined) generationConfig.seed = effective.seed;
     if (effective.stop && effective.stop.length > 0) generationConfig.stopSequences = effective.stop;
 
@@ -179,6 +186,7 @@ export class GeminiAdapter implements LLMProviderAdapter {
             promptTokenCount?: number;
             candidatesTokenCount?: number;
             thoughtsTokenCount?: number;
+            totalThoughtTokens?: number;
             totalTokenCount?: number;
           }
         | undefined;
@@ -186,7 +194,7 @@ export class GeminiAdapter implements LLMProviderAdapter {
         callbacks.onUsage?.({
           inputTokens: usage.promptTokenCount,
           outputTokens: usage.candidatesTokenCount,
-          reasoningTokens: usage.thoughtsTokenCount,
+          reasoningTokens: usage.thoughtsTokenCount ?? usage.totalThoughtTokens,
           totalTokens: usage.totalTokenCount,
         });
       }

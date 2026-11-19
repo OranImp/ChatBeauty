@@ -134,6 +134,16 @@ export async function loadInitialState(): Promise<{
   activeModelId: string | null;
 }> {
   await ensureDatabaseSeeded();
+
+  // Reconcile any messages left in 'streaming' state by an unexpected crash or reload
+  const staleStreaming = await db.messages.filter((m) => m.status === 'streaming').toArray();
+  if (staleStreaming.length > 0) {
+    const now = Date.now();
+    await db.messages.bulkPut(
+      staleStreaming.map((m) => ({ ...m, status: 'aborted' as const, updatedAt: now }))
+    );
+  }
+
   const [
     conversations,
     providers,

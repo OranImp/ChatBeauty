@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { preprocessLatex } from '@/components/renderer/latexPreprocessor';
+import { splitMarkdownBlocks } from '@/components/renderer/blockSplitter';
 
 describe('preprocessLatex', () => {
   it('converts \\[...\\] and \\(...\\) to $$ and $ delimiters', () => {
@@ -48,5 +49,20 @@ describe('preprocessLatex', () => {
     const src = 'Step 1:\n$$\nC_{out} = C_1 + C_2';
     const out = preprocessLatex(src, true);
     expect(out.endsWith('\n$$')).toBe(true);
+  });
+
+  it('does not corrupt \\[spacing] inside existing $$...$$ blocks and keeps indented list math intact', () => {
+    const src = '$$\n\\begin{aligned}\na &= b \\\\[6pt]\nc &= d\n\\end{aligned}\n\\] trailing $$';
+    const out = preprocessLatex(src);
+    expect(out.match(/\$\$/g)?.length).toBe(2);
+
+    const listMd = [
+      '1. First item:',
+      '   $$',
+      '   E = mc^2',
+      '   $$',
+      '2. Second item',
+    ].join('\n');
+    expect(splitMarkdownBlocks(listMd)).toHaveLength(1);
   });
 });

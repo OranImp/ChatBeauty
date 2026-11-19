@@ -80,7 +80,7 @@ export class OpenAIChatAdapter implements LLMProviderAdapter {
     const effective = resolveEffectiveParams(req.generation, modelParams, req.conversationParams);
 
     const modelLower = req.modelId.toLowerCase();
-    const usesMaxCompletionTokens = /(^|\/)(o[134]($|[-._])|gpt-5($|[-._]))/.test(modelLower);
+    const usesMaxCompletionTokens = /(^|\/)(o[134]($|[-._])|gpt-[56]($|[-._]))/.test(modelLower);
 
     let payload: Record<string, unknown> = {
       model: req.modelId,
@@ -98,7 +98,9 @@ export class OpenAIChatAdapter implements LLMProviderAdapter {
     }
 
     const thinkingActive = profile.strategy !== 'none' && effort !== 'off';
-    const allowSampling = profile.supportsSamplingWhenThinking !== false || !thinkingActive;
+    const allowSampling = thinkingActive
+      ? profile.supportsSamplingWhenThinking !== false
+      : profile.supportsSamplingWhenOff !== false;
     if (allowSampling) {
       if (effective.temperature !== undefined) payload.temperature = effective.temperature;
       if (effective.topP !== undefined) payload.top_p = effective.topP;
@@ -113,14 +115,29 @@ export class OpenAIChatAdapter implements LLMProviderAdapter {
     if (effective.seed !== undefined) payload.seed = effective.seed;
     if (effective.stop && effective.stop.length > 0) payload.stop = effective.stop;
 
-    if (profile.strategy === 'openai-effort' || profile.strategy === 'toggle-effort') {
+    if (profile.strategy === 'deepseek-v4') {
+      if (effort === 'off') {
+        payload.thinking = { type: 'disabled' };
+      } else {
+        payload.thinking = { type: 'enabled' };
+        payload.reasoning_effort = activeLevel?.apiValue ?? effort;
+      }
+    } else if (profile.strategy === 'openai-effort') {
       if (effort !== 'off' || activeLevel?.apiValue === 'none') {
         payload.reasoning_effort = activeLevel?.apiValue ?? effort;
-      } else if (
-        profile.strategy === 'toggle-effort' &&
-        /(qwen3|glm|doubao)/.test(modelLower)
-      ) {
-        payload.enable_thinking = false;
+      }
+    } else if (profile.strategy === 'toggle-effort') {
+      if (effort === 'off') {
+        if (/(glm|doubao)/.test(modelLower)) {
+          payload.thinking = { type: 'disabled' };
+        } else if (/qwen3/.test(modelLower)) {
+          payload.enable_thinking = false;
+        }
+      } else {
+        payload.reasoning_effort = activeLevel?.apiValue ?? effort;
+        if (/glm/.test(modelLower)) {
+          payload.thinking = { type: 'enabled' };
+        }
       }
     }
 

@@ -1,4 +1,6 @@
 import DOMPurify from 'dompurify';
+import { Capacitor } from '@capacitor/core';
+import { saveNativeFile } from '@/services/transport/streamHttp';
 
 export type ResolvedTheme = 'oled' | 'dark' | 'light';
 
@@ -18,7 +20,7 @@ function normColor(val: string | null): string {
 export function sanitizeAndHarmonizeSvg(
   rawSvg: string,
   theme: ResolvedTheme
-): { html: string; caption?: string; width: number; height: number } {
+): { html: string; caption?: string; width: number; height: number } | null {
   const clean = DOMPurify.sanitize(rawSvg, {
     USE_PROFILES: { svg: true, svgFilters: true },
     FORBID_TAGS: ['script', 'iframe', 'object', 'embed'],
@@ -31,9 +33,12 @@ export function sanitizeAndHarmonizeSvg(
 
   const parser = new DOMParser();
   const doc = parser.parseFromString(clean, 'image/svg+xml');
+  if (doc.querySelector('parsererror')) {
+    return null;
+  }
   const svg = doc.querySelector('svg');
   if (!svg) {
-    return { html: clean, width: 640, height: 340 };
+    return null;
   }
 
   let caption: string | undefined;
@@ -108,7 +113,37 @@ export function sanitizeAndHarmonizeSvg(
   };
 }
 
+async function blobToBase64(blob: Blob): Promise<string> {
+  const buf = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
 export function triggerDownload(filename: string, dataUrlOrBlob: string | Blob): void {
+  if (typeof window !== 'undefined' && Capacitor.isNativePlatform()) {
+    void (async () => {
+      if (typeof dataUrlOrBlob === 'string') {
+        const match = /^data:([^;]+);base64,(.+)$/s.exec(dataUrlOrBlob);
+        if (match) {
+          await saveNativeFile({ filename, mimeType: match[1], base64: match[2] });
+        }
+      } else {
+        const base64 = await blobToBase64(dataUrlOrBlob);
+        await saveNativeFile({
+          filename,
+          mimeType: dataUrlOrBlob.type || 'application/octet-stream',
+          base64,
+        });
+      }
+    })();
+    return;
+  }
+
   const url =
     typeof dataUrlOrBlob === 'string' ? dataUrlOrBlob : URL.createObjectURL(dataUrlOrBlob);
   const a = document.createElement('a');

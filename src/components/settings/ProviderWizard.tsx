@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { PROTOCOL_TEMPLATES } from '@/services/llm/registry';
-import { toModelDefinition } from '@/services/llm/adapters/shared';
+import { parseHttpHeadersJson, toModelDefinition } from '@/services/llm/adapters/shared';
 import type { ProtocolType, ProviderConfig } from '@/types/chat';
 
 interface ProviderWizardProps {
@@ -66,14 +66,15 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
   };
 
   const buildCandidate = (): ProviderConfig | null => {
-    let parsedHeaders: Record<string, string> = {};
-    if (headersText.trim()) {
-      try {
-        parsedHeaders = JSON.parse(headersText) as Record<string, string>;
-      } catch {
-        setStatusMsg({ ok: false, text: '自定义 Headers JSON 格式无效' });
-        return null;
-      }
+    let parsedHeaders: Record<string, string>;
+    try {
+      parsedHeaders = parseHttpHeadersJson(headersText);
+    } catch (err) {
+      setStatusMsg({
+        ok: false,
+        text: err instanceof Error ? err.message : '自定义 Headers JSON 格式无效',
+      });
+      return null;
     }
     const tpl = PROTOCOL_TEMPLATES[draft.protocol];
     return {
@@ -406,12 +407,15 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
                   </button>
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      const remaining = draft.models.filter((x) => x.id !== m.id);
                       setDraft({
                         ...draft,
-                        models: draft.models.filter((x) => x.id !== m.id),
-                      })
-                    }
+                        models: remaining,
+                        defaultModel:
+                          draft.defaultModel === m.id ? remaining[0]?.id ?? '' : draft.defaultModel,
+                      });
+                    }}
                     className="p-1 text-muted hover:text-rose-400 shrink-0"
                     title="移除模型"
                   >

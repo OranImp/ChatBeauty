@@ -19,6 +19,9 @@ import {
 
 function buildAnthropicEndpoint(baseUrl: string, suffix: string): string {
   const clean = trimBaseUrl(baseUrl || 'https://api.anthropic.com/v1');
+  if (clean.endsWith('/messages')) {
+    return suffix === '/messages' ? clean : clean.replace(/\/messages$/, suffix);
+  }
   if (clean.endsWith(suffix)) return clean;
   if (clean.endsWith('/v1')) return `${clean}${suffix}`;
   return `${clean}/v1${suffix}`;
@@ -90,15 +93,6 @@ export class AnthropicAdapter implements LLMProviderAdapter {
     const activeLevel = profile.levels.find((l) => l.value === effort);
     const effective = resolveEffectiveParams(req.generation, modelParams, req.conversationParams);
 
-    const budget =
-      effective.thinkingBudget !== undefined
-        ? effective.thinkingBudget
-        : activeLevel?.budgetTokens ?? resolveThinkingBudget(effort);
-    const thinkingEnabled =
-      (profile.strategy === 'anthropic-budget' || profile.strategy === 'openai-effort') &&
-      effort !== 'off' &&
-      budget >= 1024;
-
     let payload: Record<string, unknown> = {
       model: req.modelId,
       messages: apiMessages,
@@ -114,24 +108,62 @@ export class AnthropicAdapter implements LLMProviderAdapter {
     }
 
     const baseMaxTokens = effective.maxTokens ?? req.generation.maxTokens ?? 8192;
-    if (thinkingEnabled) {
-      payload.thinking = {
-        type: 'enabled',
-        budget_tokens: budget,
-      };
-      payload.max_tokens = Math.max(baseMaxTokens, budget + 1024);
-      // Anthropic rejects non-1 temperature and top_p when Extended Thinking is enabled
-    } else {
-      payload.max_tokens = baseMaxTokens;
-      if (effective.temperature !== undefined) {
-        payload.temperature = effective.temperature;
+    let allowSampling = profile.supportsSamplingWhenOff !== false;
+
+    if (profile.strategy === 'anthropic-adaptive') {
+      if (effort !== 'off') {
+        payload.thinking = { type: 'adaptive' };
+        payload.output_config = { effort: activeLevel?.apiValue ?? effort };
+        payload.max_tokens = Math.max(baseMaxTokens, 8192);
+        allowSampling = false;
+      } else {
+        payload.max_tokens = baseMaxTokens;
       }
+    } else {
+      const budget =
+        effective.thinkingBudget !== undefined
+          ? effective.thinkingBudget
+          : activeLevel?.budgetTokens ?? resolveThinkingBudget(effort);
+      const thinkingEnabled =
+        (profile.strategy === 'anthropic-budget' || profile.strategy === 'openai-effort') &&
+        effort !== 'off' &&
+        budget >= 1024;
+
+      if (thinkingEnabled) {
+        payload.thinking = {
+          type: 'enabled',
+          budget_tokens: budget,
+        };
+        payload.max_tokens = Math.max(baseMaxTokens, budget + 1024);
+        // Anthropic rejects non-1 temperature and top_p when Extended Thinking is enabled
+        allowSampling = false;
+      } else {
+        payload.max_tokens = baseMaxTokens;
+      }
+    }
+
+    if (allowSampling) {
       const explicitTopPOverride =
         req.conversationParams?.topP !== undefined || modelParams?.topP !== undefined;
-      if (
-        effective.topP !== undefined &&
-        (effective.temperature === undefined || explicitTopPOverride)
-      ) {
+      const topPLayer =
+        req.conversationParams?.topP !== undefined
+          ? 2
+          : modelParams?.topP !== undefined
+            ? 1
+            : 0;
+      const tempLayer =
+        req.conversationParams?.temperature !== undefined
+          ? 2
+          : modelParams?.temperature !== undefined
+            ? 1
+            : 0;
+
+      // Anthropic Claude 4+ rejects requests specifying both temperature and top_p.
+      if (effective.topP !== undefined && explicitTopPOverride && topPLayer > tempLayer) {
+        payload.top_p = effective.topP;
+      } else if (effective.temperature !== undefined) {
+        payload.temperature = effective.temperature;
+      } else if (effective.topP !== undefined) {
         payload.top_p = effective.topP;
       }
     }

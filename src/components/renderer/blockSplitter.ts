@@ -64,7 +64,9 @@ export function splitMarkdownBlocks(markdown: string): string[] {
       current.push(line);
       if (trimmed.endsWith('$$') && trimmed.length >= 2) {
         inMathBlock = false;
-        flush();
+        if (!line.startsWith(' ') && !line.startsWith('\t')) {
+          flush();
+        }
       }
     }
   }

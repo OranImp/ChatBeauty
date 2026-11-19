@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import type { CustomModelParams } from '@/types/chat';
+import { DEFAULT_GENERATION_SETTINGS } from '@/types/settings';
 import { PROTOCOL_TEMPLATES } from '@/services/llm/registry';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { SmoothSlider } from '@/components/ui/SmoothSlider';
@@ -117,7 +118,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   useEffect(() => {
     if (activeMenu === 'params') {
-      const src = activeConv?.customParams?.extraBody;
+      const src = activeConv ? activeConv.customParams?.extraBody : generation.extraBody;
       setExtraJsonText(src && Object.keys(src).length > 0 ? JSON.stringify(src, null, 2) : '{}');
       setExtraJsonError(null);
     }
@@ -167,6 +168,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         void updateConversationConfig(activeConv.id, {
           customParams: Object.keys(next).length > 0 ? next : undefined,
         });
+      } else {
+        void updateGeneration({ extraBody: undefined });
       }
       return;
     }
@@ -188,6 +191,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     setExtraJsonError(null);
     if (activeConv) {
       void updateConversationConfig(activeConv.id, { customParams: undefined });
+    } else {
+      void updateGeneration({
+        temperature: DEFAULT_GENERATION_SETTINGS.temperature,
+        topP: DEFAULT_GENERATION_SETTINGS.topP,
+        maxTokens: DEFAULT_GENERATION_SETTINGS.maxTokens,
+        extraBody: undefined,
+      });
     }
   };
 
@@ -234,12 +244,18 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       reasoningProfile.strategy === 'anthropic-budget') &&
     effectiveReasoning !== 'off';
 
+  const samplingAutoOmitted =
+    (reasoningProfile.strategy !== 'none' &&
+      effectiveReasoning !== 'off' &&
+      reasoningProfile.supportsSamplingWhenThinking === false) ||
+    (effectiveReasoning === 'off' && reasoningProfile.supportsSamplingWhenOff === false);
+
   const popoverPanelWidth =
     renderedMenu === 'model' || renderedMenu === 'params'
-      ? 'left-0 w-72 sm:w-80'
+      ? 'left-0 w-72 sm:w-80 max-w-[calc(100vw-24px)]'
       : renderedMenu === 'reasoning'
-        ? 'left-12 sm:left-24 w-72'
-        : 'left-0 w-72';
+        ? 'left-0 sm:left-24 w-72 max-w-[calc(100vw-24px)]'
+        : 'left-0 w-72 max-w-[calc(100vw-24px)]';
 
   let modelRowIdx = 0;
 
@@ -265,7 +281,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         {/* Animated Popover Menu (Plus / Model / Reasoning / Custom Params) */}
         {menuPresence.mounted && renderedMenu && (
           <div
-            className={`absolute ${popoverPanelWidth} bottom-[106px] z-30 rounded-2xl border border-borderc bg-elevated/95 backdrop-blur-xl shadow-2xl text-xs origin-bottom-left transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+            className={`absolute ${popoverPanelWidth} bottom-full mb-2 z-30 rounded-2xl border border-borderc bg-elevated/95 backdrop-blur-xl shadow-2xl text-xs origin-bottom-left transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
               menuPresence.visible
                 ? 'opacity-100 translate-y-0 scale-100'
                 : 'opacity-0 translate-y-2.5 scale-[0.96] pointer-events-none'
@@ -609,6 +625,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                       />
                     </label>
                   )}
+
+                  {samplingAutoOmitted && (
+                    <p className="text-[11px] text-muted leading-snug">
+                      当前模型/思考模式会自动省略 Temperature 与 Top-P 以防请求报错。
+                    </p>
+                  )}
                 </div>
 
                 <div
@@ -669,7 +691,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => toggleMenu('model')}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border bg-bg/55 hover:bg-elevated active:scale-95 text-xs font-mono text-fg max-w-[125px] sm:max-w-[200px] transition ${
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border bg-bg/55 hover:bg-elevated active:scale-95 text-xs font-mono text-fg min-w-0 max-w-[120px] sm:max-w-[175px] lg:max-w-[210px] transition ${
                   activeMenu === 'model' ? 'border-fg/30 bg-elevated' : 'border-borderc'
                 }`}
                 title="切换模型"
@@ -735,7 +757,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             {/* Right controls: Shortcut hint + Reserved Mic + Accent Send/Stop */}
             <div className="flex items-center gap-1.5 shrink-0">
               {appearance.sendOnEnter && (
-                <span className="hidden md:inline text-[11px] font-mono text-muted/60 pr-1 select-none">
+                <span className="hidden lg:inline text-[11px] font-mono text-muted/60 pr-1 select-none">
                   Enter 发送
                 </span>
               )}

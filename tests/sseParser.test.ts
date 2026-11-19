@@ -30,4 +30,13 @@ describe('SSEParser', () => {
       { event: 'message', data: '[DONE]' },
     ]);
   });
+
+  it('does not split an event when \\r\\n crosses a chunk boundary', () => {
+    const parser = new SSEParser();
+    const first = parser.feed('event: delta\r');
+    expect(first).toHaveLength(0);
+
+    const second = parser.feed('\ndata: ok\r\n\r\n');
+    expect(second).toEqual([{ event: 'delta', data: 'ok' }]);
+  });
 });

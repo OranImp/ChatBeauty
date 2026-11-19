@@ -60,7 +60,8 @@ export function preprocessLatex(input: string, isStreaming = false): string {
   // 2. Protect inline code spans (`...`, ``...``)
   text = text.replace(/(`+)([^`\n]*?)\1/g, (match) => hold(match));
 
-  // 3. Protect escaped dollars (`\$`) temporarily? Leave `\$` as-is so remark-math treats it literally.
+  // 3. Protect existing $$...$$ blocks before normalizing \[...\] or bare environments
+  text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match) => hold(match));
 
   // 4. Convert \[ ... \] display math to $$\n...\n$$
   text = text.replace(/\\\[([\s\S]*?)\\\]/g, (_match, inner: string) => {
@@ -77,7 +78,6 @@ export function preprocessLatex(input: string, isStreaming = false): string {
   });
 
   // 6. Wrap bare top-level \begin{align}...\end{align} etc. when not already inside $$...$$
-  // First temporarily protect existing $$...$$ blocks so we don't double-wrap environments inside them
   text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match) => hold(match));
 
   const envRegex = new RegExp(

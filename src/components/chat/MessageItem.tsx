@@ -84,7 +84,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
         )}
 
         {!editing && (
-          <div className="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition text-muted">
+          <div className="flex items-center gap-1 mt-1 opacity-85 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100 transition text-muted">
             <button
               type="button"
               onClick={() => void handleCopy()}
