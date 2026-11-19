@@ -300,8 +300,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           </div>
         )}
 
-        {/* ChatGPT-aligned Scrollbar-free Composer */}
-        <div className="rounded-[26px] border border-borderc bg-surface/95 backdrop-blur-xl px-3.5 pt-3 pb-2.5 shadow-[0_8px_30px_rgba(0,0,0,0.35)]">
+        {/* ChatGPT x Claude Code Scrollbar-free Composer */}
+        <div className="rounded-[24px] border border-borderc focus-within:border-fg/25 bg-surface/95 backdrop-blur-xl px-3.5 pt-3 pb-2.5 shadow-[0_8px_30px_rgba(0,0,0,0.32)] transition-colors">
           <textarea
             ref={textareaRef}
             rows={1}
@@ -313,12 +313,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           />
 
           <div className="flex items-center justify-between gap-2 mt-2 pt-1">
-            {/* Left controls: +, Model Pill, Reasoning Pill */}
+            {/* Left controls: +, Monospace Model Pill, Reasoning Pill */}
             <div className="flex items-center gap-1.5 min-w-0">
               <button
                 type="button"
                 onClick={() => setActiveMenu((m) => (m === 'plus' ? null : 'plus'))}
-                className="w-8 h-8 rounded-full flex items-center justify-center text-muted hover:text-fg hover:bg-white/10 shrink-0 transition"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-muted hover:text-fg hover:bg-fg/10 shrink-0 transition"
                 aria-label="更多能力与提示词"
               >
                 <Plus className="w-[18px] h-[18px]" />
@@ -327,7 +327,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveMenu((m) => (m === 'model' ? null : 'model'))}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-borderc bg-bg/50 hover:bg-elevated text-xs text-fg max-w-[140px] sm:max-w-[200px] transition"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-borderc bg-bg/55 hover:bg-elevated text-xs font-mono text-fg max-w-[140px] sm:max-w-[210px] transition"
                 title="切换模型"
               >
                 <span className="truncate">{currentModelId || '选择模型'}</span>
@@ -337,20 +337,26 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveMenu((m) => (m === 'reasoning' ? null : 'reasoning'))}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-borderc bg-bg/50 hover:bg-elevated text-xs text-muted hover:text-fg shrink-0 transition"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-borderc bg-bg/55 hover:bg-elevated text-xs text-muted hover:text-fg shrink-0 transition"
                 title="设置推理强度"
               >
-                <span>推理 {reasoningLabel}</span>
+                <span>推理</span>
+                <span className="font-mono text-fg/90">{reasoningLabel}</span>
                 <ChevronDown className="w-3 h-3 opacity-75 shrink-0" />
               </button>
             </div>
 
-            {/* Right controls: Reserved Mic + Monochrome Send/Stop */}
-            <div className="flex items-center gap-1 shrink-0">
+            {/* Right controls: Shortcut hint + Reserved Mic + Accent Send/Stop */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {appearance.sendOnEnter && (
+                <span className="hidden md:inline text-[11px] font-mono text-muted/60 pr-1 select-none">
+                  Enter 发送
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => showReservedNotice('语音输入 / TTS 合成接口已在底层预留')}
-                className="w-8 h-8 rounded-full flex items-center justify-center text-muted hover:text-fg hover:bg-white/10 transition"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-muted hover:text-fg hover:bg-fg/10 transition"
                 title="语音接口（已预留）"
               >
                 <Mic className="w-[17px] h-[17px]" />

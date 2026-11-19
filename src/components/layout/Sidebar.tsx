@@ -34,12 +34,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
     conversations,
     activeConversationId,
     providers,
+    activeProviderId,
+    activeModelId,
     createConversation,
     selectConversation,
     renameConversation,
     togglePinConversation,
     deleteConversation,
   } = useAppStore();
+
+  const currentProvider = providers.find((p) => p.id === activeProviderId);
+  const resolvedModelId = activeModelId || currentProvider?.defaultModel || '';
 
   const [query, setQuery] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -77,12 +82,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           void selectConversation(conv.id);
           onCloseMobile();
         }}
-        className={`group flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer transition ${
+        className={`group flex items-center gap-2 px-2.5 py-2 rounded-xl cursor-pointer transition ${
           active
             ? 'bg-elevated text-fg'
-            : 'text-muted hover:text-fg hover:bg-white/[0.04]'
+            : 'text-muted hover:text-fg hover:bg-fg/[0.04]'
         }`}
       >
+        {active && <span className="w-[2.5px] h-4 rounded-full bg-accent shrink-0" />}
         {editingId === conv.id ? (
           <div
             className="flex-1 flex items-center gap-1 min-w-0"
@@ -152,25 +158,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const innerContent = (
     <div className="flex flex-col h-full bg-surface/95 md:bg-surface/65 border-r border-borderc select-none">
-      {/* Brand + Actions */}
+      {/* Compact Header */}
       <div className="flex items-center justify-between px-3.5 pt-3 pb-2 safe-top">
         <span className="font-semibold tracking-tight text-sm text-fg">ChatBeauty</span>
         <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={() => {
-              void createConversation('新对话');
-              onCloseMobile();
-            }}
-            className="p-2 rounded-xl text-muted hover:text-fg hover:bg-white/10 transition"
-            title="新建对话"
-          >
-            <SquarePen className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
             onClick={onCollapseDesktop}
-            className="hidden md:flex p-2 rounded-xl text-muted hover:text-fg hover:bg-white/10 transition"
+            className="hidden md:flex p-1.5 rounded-lg text-muted hover:text-fg hover:bg-fg/10 transition"
             title="收起侧边栏"
           >
             <PanelLeftClose className="w-4 h-4" />
@@ -178,7 +173,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={onCloseMobile}
-            className="md:hidden p-2 rounded-xl text-muted hover:text-fg hover:bg-white/10 transition"
+            className="md:hidden p-1.5 rounded-lg text-muted hover:text-fg hover:bg-fg/10 transition"
             title="关闭"
           >
             <X className="w-4 h-4" />
@@ -186,8 +181,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Search */}
-      <div className="px-3 pb-2">
+      {/* New Chat Button (Claude Code Workspace Action) */}
+      <div className="px-3 pb-2 space-y-2">
+        <button
+          type="button"
+          onClick={() => {
+            void createConversation('新对话');
+            onCloseMobile();
+          }}
+          className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-borderc bg-bg/55 hover:bg-elevated text-xs text-fg font-medium transition"
+        >
+          <span className="flex items-center gap-2">
+            <SquarePen className="w-3.5 h-3.5 text-muted" />
+            <span>新建对话</span>
+          </span>
+          <span className="hidden md:inline font-mono text-[10px] text-muted/75">Ctrl+N</span>
+        </button>
+
+        {/* Search */}
         <div className="relative">
           <Search className="w-3.5 h-3.5 text-muted absolute left-3 top-1/2 -translate-y-1/2" />
           <input
@@ -196,8 +207,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="搜索对话"
-            className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-bg/70 border border-borderc text-xs text-fg placeholder:text-muted focus:outline-none focus:border-fg/35"
+            className="w-full pl-8 pr-14 py-1.5 rounded-xl bg-bg/65 border border-borderc text-xs text-fg placeholder:text-muted focus:outline-none focus:border-fg/35"
           />
+          <span className="hidden md:inline pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 font-mono text-[10px] text-muted/65">
+            Ctrl+K
+          </span>
         </div>
       </div>
 
@@ -225,7 +239,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
       </div>
 
-      {/* Footer Settings */}
+      {/* Footer Status & Settings */}
       <div className="p-3 border-t border-borderc safe-bottom">
         <button
           type="button"
@@ -233,13 +247,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onOpenSettings('providers');
             onCloseMobile();
           }}
-          className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-bg/60 hover:bg-elevated border border-borderc text-xs transition"
+          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-bg/60 hover:bg-elevated border border-borderc text-xs transition"
         >
-          <span className="flex items-center gap-2 text-fg font-medium">
+          <span className="flex items-center gap-2 text-fg font-medium shrink-0">
             <Settings className="w-3.5 h-3.5 text-muted" />
             <span>设置</span>
           </span>
-          <span className="text-[11px] text-muted">{providers.length} 个供应商</span>
+          <span className="text-[11px] font-mono text-muted truncate">
+            {resolvedModelId || `${providers.length} 个供应商`}
+          </span>
         </button>
       </div>
     </div>

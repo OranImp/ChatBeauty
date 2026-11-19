@@ -2,6 +2,7 @@ import React, { useEffect, useId, useMemo, useState } from 'react';
 import { Check, Code2, Copy, Maximize2, Play, RotateCcw } from 'lucide-react';
 import type { ResolvedTheme } from './svgUtils';
 import type { LightboxPayload } from './LightboxModal';
+import { getChartPalette } from './chartPalette';
 
 interface SandboxArtifactCardProps {
   code: string;
@@ -19,17 +20,26 @@ function buildInjectedDocument(
   accent: string
 ): string {
   const isLight = theme === 'light';
+  const palette = getChartPalette(theme);
   const themeStyle = `<style>
     :root {
-      --bg: ${theme === 'oled' ? '#000000' : theme === 'dark' ? '#141416' : '#ffffff'};
-      --surface: ${isLight ? '#f4f4f5' : '#18181b'};
-      --fg: ${isLight ? '#18181b' : '#f4f4f5'};
-      --muted: ${isLight ? '#71717a' : '#a1a1aa'};
+      --bg: ${theme === 'oled' ? '#000000' : theme === 'dark' ? '#171615' : '#faf9f5'};
+      --surface: ${theme === 'oled' ? '#141312' : theme === 'dark' ? '#21201e' : '#f2f0e9'};
+      --fg: ${isLight ? '#1f1e1c' : theme === 'oled' ? '#f2f0eb' : '#eceae4'};
+      --muted: ${isLight ? '#6f6a62' : theme === 'oled' ? '#9b968e' : '#9c968c'};
       --accent: ${accent};
-      --border: ${isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.12)'};
+      --border: ${isLight ? 'rgba(31,30,28,0.12)' : 'rgba(236,234,228,0.12)'};
+      --chart-1: ${palette[0]};
+      --chart-2: ${palette[1]};
+      --chart-3: ${palette[2]};
+      --chart-4: ${palette[3]};
+      --chart-5: ${palette[4]};
+      --chart-6: ${palette[5] ?? palette[0]};
+      --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei UI', sans-serif;
+      --font-mono: ui-monospace, 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
       color-scheme: ${isLight ? 'light' : 'dark'};
     }
-    html, body { color: var(--fg); background: transparent; }
+    html, body { color: var(--fg); background: transparent; font-family: var(--font-sans); }
     input[type='range'] {
       -webkit-appearance: none;
       appearance: none;
@@ -128,7 +138,7 @@ export const SandboxArtifactCard: React.FC<SandboxArtifactCardProps> = ({
   return (
     <div className="my-4 rounded-2xl border border-borderc bg-surface/40 overflow-hidden">
       <div className="flex items-center justify-between px-3.5 py-2 border-b border-borderc bg-surface/60">
-        <span className="text-[11px] font-medium tracking-wide text-muted uppercase">
+        <span className="text-[11px] font-mono font-medium tracking-wide text-muted uppercase">
           交互沙盒预览
         </span>
         <div className="flex items-center gap-1">

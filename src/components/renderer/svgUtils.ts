@@ -135,8 +135,8 @@ export async function exportSvgToPng(
   const vb = (svg.getAttribute('viewBox') || '0 0 640 340').split(/[\s,]+/).map(Number);
   const w = vb[2] > 0 ? vb[2] : 640;
   const h = vb[3] > 0 ? vb[3] : 340;
-  const fg = theme === 'light' ? '#18181b' : '#f4f4f5';
-  const bg = theme === 'oled' ? '#000000' : theme === 'dark' ? '#141416' : '#ffffff';
+  const fg = theme === 'light' ? '#1f1e1c' : '#eceae4';
+  const bg = theme === 'oled' ? '#000000' : theme === 'dark' ? '#171615' : '#faf9f5';
 
   const exportSvg = svg.cloneNode(true) as SVGSVGElement;
   exportSvg.setAttribute('width', String(w * 2));

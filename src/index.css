@@ -4,65 +4,87 @@
 
 :root,
 [data-theme='oled'] {
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'HarmonyOS Sans SC',
+    'PingFang SC', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+  --font-serif: 'Newsreader', 'LXGW WenKai', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC',
+    Georgia, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
   --bg-rgb: 0 0 0;
-  --surface-rgb: 20 20 22;
-  --elevated-rgb: 31 31 34;
-  --fg-rgb: 244 244 245;
-  --muted-rgb: 156 163 175;
-  --accent-rgb: 237 237 237;
-  --accent-fg-rgb: 10 10 10;
+  --surface-rgb: 20 19 18;
+  --elevated-rgb: 32 31 29;
+  --fg-rgb: 242 240 235;
+  --muted-rgb: 155 150 142;
+  --accent-rgb: 217 119 87;
+  --accent-fg-rgb: 255 255 255;
   --bg: #000000;
-  --surface: #141416;
-  --surface-elevated: #1f1f22;
-  --fg: #f4f4f5;
-  --muted: #9ca3af;
-  --border: rgba(255, 255, 255, 0.08);
-  --accent: #ededed;
-  --accent-fg: #0a0a0a;
+  --surface: #141312;
+  --surface-elevated: #201f1d;
+  --fg: #f2f0eb;
+  --muted: #9b968e;
+  --border: rgba(242, 240, 235, 0.09);
+  --accent: #d97757;
+  --accent-fg: #ffffff;
+  --chart-1: #d9825b;
+  --chart-2: #6fb39c;
+  --chart-3: #d9b566;
+  --chart-4: #8fa6cb;
+  --chart-5: #c48fa8;
+  --chart-6: #a8a29e;
   --chat-font-size: 16px;
   --chat-line-height: 1.72;
   --math-scale: 1.06;
   --chat-max-width: 780px;
-  --chat-font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC',
-    'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif;
+  --chat-font-family: var(--font-sans);
   color-scheme: dark;
 }
 
 [data-theme='dark'] {
-  --bg-rgb: 23 23 23;
-  --surface-rgb: 33 33 33;
-  --elevated-rgb: 43 43 43;
-  --fg-rgb: 244 244 245;
-  --muted-rgb: 161 161 170;
-  --accent-rgb: 237 237 237;
-  --accent-fg-rgb: 10 10 10;
-  --bg: #171717;
-  --surface: #212121;
-  --surface-elevated: #2b2b2b;
-  --fg: #f4f4f5;
-  --muted: #a1a1aa;
-  --border: rgba(255, 255, 255, 0.08);
-  --accent: #ededed;
-  --accent-fg: #0a0a0a;
+  --bg-rgb: 23 22 21;
+  --surface-rgb: 33 32 30;
+  --elevated-rgb: 43 41 38;
+  --fg-rgb: 236 234 228;
+  --muted-rgb: 156 150 140;
+  --accent-rgb: 217 119 87;
+  --accent-fg-rgb: 255 255 255;
+  --bg: #171615;
+  --surface: #21201e;
+  --surface-elevated: #2b2926;
+  --fg: #eceae4;
+  --muted: #9c968c;
+  --border: rgba(236, 234, 228, 0.09);
+  --accent: #d97757;
+  --accent-fg: #ffffff;
+  --chart-1: #d9825b;
+  --chart-2: #6fb39c;
+  --chart-3: #d9b566;
+  --chart-4: #8fa6cb;
+  --chart-5: #c48fa8;
+  --chart-6: #a8a29e;
   color-scheme: dark;
 }
 
 [data-theme='light'] {
-  --bg-rgb: 255 255 255;
-  --surface-rgb: 244 244 245;
+  --bg-rgb: 250 249 245;
+  --surface-rgb: 242 240 233;
   --elevated-rgb: 255 255 255;
-  --fg-rgb: 24 24 27;
-  --muted-rgb: 113 113 122;
-  --accent-rgb: 24 24 27;
+  --fg-rgb: 31 30 28;
+  --muted-rgb: 111 106 98;
+  --accent-rgb: 194 93 54;
   --accent-fg-rgb: 255 255 255;
-  --bg: #ffffff;
-  --surface: #f4f4f5;
+  --bg: #faf9f5;
+  --surface: #f2f0e9;
   --surface-elevated: #ffffff;
-  --fg: #18181b;
-  --muted: #71717a;
-  --border: rgba(0, 0, 0, 0.08);
-  --accent: #18181b;
+  --fg: #1f1e1c;
+  --muted: #6f6a62;
+  --border: rgba(31, 30, 28, 0.09);
+  --accent: #c25d36;
   --accent-fg: #ffffff;
+  --chart-1: #c25d36;
+  --chart-2: #3d7f6a;
+  --chart-3: #a87d24;
+  --chart-4: #4f6d9a;
+  --chart-5: #9b5978;
+  --chart-6: #57534e;
   color-scheme: light;
 }
 
@@ -101,6 +123,10 @@ body,
 
 .no-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+.font-editorial {
+  font-family: var(--font-serif);
 }
 
 /* Custom ultra-thin scrollbars */
@@ -243,11 +269,11 @@ body,
   padding: 14px 16px !important;
   background: transparent !important;
   overflow-x: visible;
-  font-family: ui-monospace, 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .cb-code-container code {
-  font-family: ui-monospace, 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .cb-code-wrap pre.shiki,

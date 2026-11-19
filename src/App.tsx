@@ -15,15 +15,15 @@ function resolveFontFamily(
   customName: string
 ): string {
   if (kind === 'serif') {
-    return `'Noto Serif SC', 'Songti SC', Georgia, Cambria, 'Times New Roman', serif`;
+    return `'Newsreader', 'LXGW WenKai', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', Georgia, serif`;
   }
   if (kind === 'mono') {
-    return `ui-monospace, 'JetBrains Mono', 'Cascadia Code', Consolas, monospace`;
+    return `'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace`;
   }
   if (kind === 'custom' && customName.trim()) {
     return customName.trim();
   }
-  return `-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif`;
+  return `'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'HarmonyOS Sans SC', 'PingFang SC', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif`;
 }
 
 function parseHexRgb(hex: string): { r: number; g: number; b: number } | null {
@@ -80,7 +80,7 @@ export const App: React.FC = () => {
 
   const resolvedTheme: ResolvedTheme = useMemo(() => {
     if (appearance.theme === 'system') {
-      return systemPrefersLight ? 'light' : 'oled';
+      return systemPrefersLight ? 'light' : 'dark';
     }
     return appearance.theme;
   }, [appearance.theme, systemPrefersLight]);
@@ -91,10 +91,10 @@ export const App: React.FC = () => {
     root.setAttribute('data-theme', resolvedTheme);
     root.classList.toggle('dark', resolvedTheme !== 'light');
 
-    const rawAccent = (appearance.accentColor || '#ededed').trim();
+    const rawAccent = (appearance.accentColor || '#d97757').trim();
     const effectiveAccent =
       resolvedTheme === 'light' && rawAccent.toLowerCase() === '#ededed'
-        ? '#18181b'
+        ? '#1f1e1c'
         : rawAccent;
     const accentFg = getContrastFg(effectiveAccent);
     const accentRgb = parseHexRgb(effectiveAccent);
@@ -131,7 +131,7 @@ export const App: React.FC = () => {
     // Native Android StatusBar sync
     if (Capacitor.isNativePlatform()) {
       const bgColor =
-        resolvedTheme === 'oled' ? '#000000' : resolvedTheme === 'dark' ? '#171717' : '#ffffff';
+        resolvedTheme === 'oled' ? '#000000' : resolvedTheme === 'dark' ? '#171615' : '#faf9f5';
       void StatusBar.setBackgroundColor({ color: bgColor }).catch(() => undefined);
       void StatusBar.setStyle({
         style: resolvedTheme === 'light' ? Style.Light : Style.Dark,

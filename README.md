@@ -16,18 +16,20 @@
 
 ### 2. ChatGPT 网页级学术渲染引擎
 - **公式排版（KaTeX + mhchem）**：自动规范 `$...$`、`$$...$$`、`\( ... \)`、`\[ ... \]` 与裸 `\begin{aligned}`/`\begin{cases}`，支持化学方程式 `\ce{...}`，流式输出不闪烁，点击任意公式可放大查看并一键复制 LaTeX 源码。
-- **矢量原理图（内联 SVG 图卡）**：模型输出 `svg` 代码块经 DOMPurify 安全清洗并自动适配 OLED 纯黑/暗色/亮色主题配色，支持点击全屏缩放拖拽、导出 SVG 与 2x 高清 PNG。
-- **流程图与函数图表**：内置 **Mermaid**（流程图/时序图/状态图/思维导图）与离线 **ECharts**（数学函数曲线/数据对比图）。
-- **交互式原理沙盒**：支持 `html-preview` / `interactive` 自包含 HTML/Canvas/JS 在安全隔离 `<iframe sandbox="allow-scripts">` 中实时交互运行。
+- **矢量原理图（内联 SVG 图卡）**：模型输出 `svg` 代码块经 DOMPurify 安全清洗并自动适配主题配色，关键通路支持克制的低饱和区分色与图例，支持点击全屏缩放拖拽、导出 SVG 与 2x 高清 PNG。
+- **流程图与函数图表**：内置 **Mermaid**（流程图/时序图/状态图/思维导图）与离线 **ECharts**（多曲线低饱和配色 + 图例自适应的数学函数与对比图）。
+- **交互式原理沙盒**：支持 `html-preview` / `interactive` 自包含 HTML/Canvas/JS 在安全隔离 `<iframe sandbox="allow-scripts">` 中实时交互运行，内置连续无分段丝滑滑块。
 - **阅读增强**：思考过程折叠卡片、Shiki 专业代码高亮、GitHub 风格 Callouts（`[!TIP]` / `[!IMPORTANT]` / `[!WARNING]`）与可复制表格。
 
 ### 3. 可编辑双层提示词系统
-- **全局视觉与学术渲染增强协议**：独立开关与可实时编辑，教导模型规范输出公式与 SVG 原理图。
+- **全局视觉与学术渲染增强协议**：独立开关与可实时编辑，教导模型规范输出公式、低饱和多色图表、图例与 SVG 原理图。
 - **多套学习人设预设**：内置「深度理工学习导师」「可视化直觉大师」「全栈工程与算法导师」等预设，支持自由修改、新建与按会话切换。
 
-### 4. 极简美学与高度自定义
-- **界面主题**：OLED 纯黑（默认）、柔和深灰、极简亮色、跟随系统，支持自定义强调色与全局 CSS 注入。
+### 4. 极简美学（ChatGPT × Claude Code 融合 UI）与高度自定义
+- **界面主题**：暖炭黑（Claude 风格默认）、OLED 纯黑、暖纸白（柔和羊皮纸亮色）、跟随系统，支持陶土暖橙 / 极简黑白 / 青瓷绿等强调色与全局 CSS 注入。
+- **内置免费开源字体**：离线内嵌 SIL OFL 1.1 开源字体（`Inter`、`Newsreader`、`JetBrains Mono`），中文优雅衔接系统字体。
 - **排版校准**：正文字号、行高、KaTeX 公式独立缩放比例、正文最大栏宽、字体风格自由调节。
+- **桌面端交互与安装加固**：应用及安装程序均支持单实例互斥锁；Windows 安装程序启动及安装前自动检测 `ChatBeauty.exe` 运行状态，自动生成开始菜单快捷方式与桌面快捷方式。
 - **本地优先 + WebDAV 预留**：全部数据存储在本地 IndexedDB，支持全量 JSON 导入/导出、单会话 Markdown/HTML 导出，并预留 WebDAV 跨端同步接口。
 
 ---
@@ -64,3 +66,14 @@ pnpm cap:sync
 2. 在 `windows-latest` 构建 `ChatBeauty-Setup-<version>.exe` 与 `ChatBeauty-Portable-<version>.exe`
 3. 在 `ubuntu-latest`（JDK 21）构建已签名的 `ChatBeauty-Android-<version>.apk`
 4. 自动发布到 GitHub Releases
+
+---
+
+## 开源协议与字体致谢
+
+- 本项目基于 [MIT License](LICENSE) 开源发布。
+- 内置离线开源字体（均为 SIL Open Font License 1.1）：
+  - [Inter](https://github.com/rsms/inter)（正文与界面无衬线字体）
+  - [Newsreader](https://github.com/productiontype/newsreader)（社论与欢迎页衬线字体）
+  - [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono)（代码与技术标签等宽字体）
+- 数学公式排版基于 [KaTeX](https://katex.org/)（MIT License）。

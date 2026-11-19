@@ -8,6 +8,7 @@ files:
   - dist-electron/**/*.cjs
   - build/icon.png
   - build/icon.ico
+  - LICENSE
   - package.json
 asar: true
 win:
@@ -22,7 +23,20 @@ win:
         - x64
 nsis:
   oneClick: false
+  perMachine: false
   allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: ChatBeauty
+  menuCategory: ChatBeauty
+  license: LICENSE
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  include: build/installer.nsh
+  language: "2052"
+  installerLanguages:
+    - zh_CN
+    - en_US
   artifactName: ChatBeauty-Setup-${version}.${ext}
 portable:
   artifactName: ChatBeauty-Portable-${version}.${ext}

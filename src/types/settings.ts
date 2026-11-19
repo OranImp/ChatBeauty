@@ -56,8 +56,8 @@ export interface AppBackupV1 {
 }
 
 export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
-  theme: 'oled',
-  accentColor: '#ededed',
+  theme: 'dark',
+  accentColor: '#d97757',
   fontFamily: 'system',
   customFontName: '',
   fontSize: 16,

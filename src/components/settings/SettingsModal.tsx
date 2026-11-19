@@ -86,6 +86,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {activeTab === 'appearance' && <AppearanceTab />}
           {activeTab === 'data' && <DataSyncTab />}
         </div>
+
+        {/* Subtle License & Font Attribution Footer */}
+        <div className="px-5 py-2 border-t border-borderc bg-surface/25 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted font-mono shrink-0">
+          <span>ChatBeauty v0.3.0 · MIT License</span>
+          <span className="truncate">Inter / Newsreader / JetBrains Mono (SIL OFL)</span>
+        </div>
       </div>
     </div>
   );

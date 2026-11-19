@@ -109,8 +109,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
         <div className="mx-auto w-full" style={{ maxWidth: 'var(--chat-max-width)' }}>
           {messages.length === 0 ? (
             <div className="min-h-[60vh] flex flex-col items-center justify-center text-center py-10 space-y-6">
-              <div className="space-y-2">
-                <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-fg">
+              <div className="space-y-2.5">
+                <h1 className="font-editorial text-3xl sm:text-[34px] font-medium tracking-tight text-fg">
                   有什么可以帮你的？
                 </h1>
                 <p className="text-sm text-muted max-w-md mx-auto">

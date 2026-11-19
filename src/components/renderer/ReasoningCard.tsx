@@ -27,30 +27,37 @@ export const ReasoningCard: React.FC<ReasoningCardProps> = ({
   if (!text.trim() && !isStreaming) return null;
 
   const durationText =
-    durationMs && durationMs > 0 ? ` ${(durationMs / 1000).toFixed(1)} 秒` : '';
+    durationMs && durationMs > 0 ? `${(durationMs / 1000).toFixed(1)}s` : '';
 
   return (
     <div className="mb-3 rounded-2xl border border-borderc bg-surface/40 overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between px-3.5 py-2.5 text-xs text-muted hover:text-fg hover:bg-white/[0.03] transition"
+        className="w-full flex items-center justify-between px-3.5 py-2.5 text-xs text-muted hover:text-fg hover:bg-fg/[0.03] transition"
       >
-        <span className={`font-medium ${isStreaming ? 'animate-pulse text-fg' : ''}`}>
-          {isStreaming ? '正在思考' : `已思考${durationText}`}
+        <span className="flex items-center gap-2 font-medium">
+          <span className={isStreaming ? 'animate-pulse text-fg' : ''}>
+            {isStreaming ? '正在思考' : '思考过程'}
+          </span>
+          {!isStreaming && durationText && (
+            <span className="font-mono text-[11px] text-muted/80 tabular-nums">{durationText}</span>
+          )}
         </span>
         {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
       </button>
 
       {open && (
-        <div className="px-3.5 pb-3 pt-1 border-t border-borderc text-[13px] text-muted leading-relaxed">
-          <MarkdownBlock
-            content={text}
-            theme={theme}
-            appearance={appearance}
-            isStreaming={isStreaming}
-            onInspect={onInspect}
-          />
+        <div className="px-3.5 pb-3 pt-2 border-t border-borderc text-[13px] text-muted leading-relaxed">
+          <div className="border-l-2 border-accent/55 pl-3">
+            <MarkdownBlock
+              content={text}
+              theme={theme}
+              appearance={appearance}
+              isStreaming={isStreaming}
+              onInspect={onInspect}
+            />
+          </div>
         </div>
       )}
     </div>

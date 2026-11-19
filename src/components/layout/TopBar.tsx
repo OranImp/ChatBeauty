@@ -25,11 +25,19 @@ export const TopBar: React.FC<TopBarProps> = ({
     conversations,
     messagesByConv,
     activeConversationId,
+    providers,
+    activeProviderId,
+    activeModelId,
     createConversation,
   } = useAppStore();
 
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const activeConv = conversations.find((c) => c.id === activeConversationId);
+  const currentProvider = providers.find(
+    (p) => p.id === (activeConv?.providerId || activeProviderId)
+  );
+  const headerModelId =
+    activeConv?.modelId || activeModelId || currentProvider?.defaultModel || '';
 
   const handleExportMd = () => {
     if (!activeConv) return;
@@ -106,7 +114,17 @@ export const TopBar: React.FC<TopBarProps> = ({
           </span>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
+          {headerModelId && (
+            <button
+              type="button"
+              onClick={() => onOpenSettings('providers')}
+              className="hidden lg:flex items-center px-2.5 py-1 rounded-lg border border-borderc bg-surface/60 hover:bg-elevated text-[11px] font-mono text-muted hover:text-fg max-w-[200px] truncate transition"
+              title="管理模型与接口"
+            >
+              <span className="truncate">{headerModelId}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void createConversation('新对话')}

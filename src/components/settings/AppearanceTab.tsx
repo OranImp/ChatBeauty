@@ -6,18 +6,18 @@ import { SmoothSlider } from '@/components/ui/SmoothSlider';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 
 const ACCENT_PRESETS = [
+  { hex: '#d97757', label: '陶土暖橙' },
   { hex: '#ededed', label: '极简黑白' },
-  { hex: '#d4c5a9', label: '暖沙金' },
-  { hex: '#9ec5ab', label: '鼠尾草' },
-  { hex: '#b7d35b', label: '暖青柠' },
-  { hex: '#d99b78', label: '陶土橘' },
-  { hex: '#b8b0cc', label: '烟灰紫' },
+  { hex: '#6fb39c', label: '青瓷绿' },
+  { hex: '#c9b18a', label: '暖沙金' },
+  { hex: '#d4a94e', label: '暖麦金' },
+  { hex: '#b87c96', label: '干枯玫瑰' },
 ];
 
 const THEMES: Array<{ id: ThemeMode; name: string; desc: string }> = [
-  { id: 'oled', name: 'OLED 纯黑', desc: '深邃极简纯黑' },
-  { id: 'dark', name: '柔和深灰', desc: '中性石墨暗色' },
-  { id: 'light', name: '极简亮色', desc: '纸张质感白底' },
+  { id: 'dark', name: '暖炭黑', desc: 'Claude 风格深邃暖灰' },
+  { id: 'oled', name: 'OLED 纯黑', desc: 'AMOLED 纯黑省电' },
+  { id: 'light', name: '暖纸白', desc: '柔和羊皮纸亮色' },
   { id: 'system', name: '跟随系统', desc: '自动切换深浅' },
 ];
 
@@ -171,9 +171,9 @@ export const AppearanceTab: React.FC = () => {
               }
               className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc text-fg"
             >
-              <option value="system">现代无衬线（系统默认）</option>
-              <option value="serif">学术衬线体（论文风）</option>
-              <option value="mono">等宽极客风</option>
+              <option value="system">现代无衬线（Inter + 系统中文）</option>
+              <option value="serif">社论衬线体（Newsreader + 学术中文）</option>
+              <option value="mono">等宽代码体（JetBrains Mono）</option>
               <option value="custom">自定义字体名称</option>
             </select>
           </label>

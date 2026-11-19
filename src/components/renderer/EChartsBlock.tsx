@@ -1,6 +1,37 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Code2, Copy, Image as ImageIcon } from 'lucide-react';
 import { triggerDownload, type ResolvedTheme } from './svgUtils';
+import { getChartChromeTokens, getChartPalette } from './chartPalette';
+
+function isPlainRecord(val: unknown): val is Record<string, unknown> {
+  return Boolean(val) && typeof val === 'object' && !Array.isArray(val);
+}
+
+function withMutedSplitLine(
+  axis: unknown,
+  gridLine: string,
+  mutedFg: string
+): unknown {
+  if (Array.isArray(axis)) {
+    return axis.map((item) => withMutedSplitLine(item, gridLine, mutedFg));
+  }
+  if (!isPlainRecord(axis)) return axis;
+  const axisLabel = isPlainRecord(axis.axisLabel)
+    ? { color: mutedFg, ...axis.axisLabel }
+    : { color: mutedFg };
+  const axisLine = isPlainRecord(axis.axisLine)
+    ? axis.axisLine
+    : { lineStyle: { color: gridLine } };
+  const splitLine = isPlainRecord(axis.splitLine)
+    ? axis.splitLine
+    : { lineStyle: { color: gridLine } };
+  return {
+    ...axis,
+    axisLabel,
+    axisLine,
+    splitLine,
+  };
+}
 
 interface EChartsBlockProps {
   code: string;
@@ -42,16 +73,67 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({ code, theme, isStrea
         );
         chartRef.current = chart;
 
-        const fg = theme === 'light' ? '#18181b' : '#e4e4e7';
-        const palette =
-          theme === 'light'
-            ? ['#18181b', '#71717a', '#8c7a5b', '#4d7c63', '#b86843']
-            : ['#e4e4e7', '#a1a1aa', '#d4c5a9', '#9ec5ab', '#d99b78'];
+        const palette = getChartPalette(theme);
+        const { fg, mutedFg, gridLine, tooltipBg, tooltipBorder } = getChartChromeTokens(theme);
+
+        const mergedTitle = isPlainRecord(option.title)
+          ? {
+              ...option.title,
+              textStyle: {
+                color: fg,
+                fontSize: 13,
+                fontWeight: 600,
+                ...(isPlainRecord(option.title.textStyle) ? option.title.textStyle : {}),
+              },
+            }
+          : option.title;
+
+        const multiSeries = Array.isArray(option.series) && option.series.length > 1;
+        const mergedLegend = isPlainRecord(option.legend)
+          ? {
+              ...option.legend,
+              textStyle: {
+                color: mutedFg,
+                fontSize: 12,
+                ...(isPlainRecord(option.legend.textStyle) ? option.legend.textStyle : {}),
+              },
+            }
+          : multiSeries && option.legend === undefined
+            ? {
+                bottom: 4,
+                textStyle: { color: mutedFg, fontSize: 12 },
+              }
+            : option.legend;
+
+        const mergedTooltip = isPlainRecord(option.tooltip)
+          ? {
+              backgroundColor: tooltipBg,
+              borderColor: tooltipBorder,
+              textStyle: { color: fg, fontSize: 12 },
+              ...option.tooltip,
+            }
+          : option.tooltip;
+
+        const mergedGrid =
+          option.grid === undefined
+            ? { top: 48, bottom: 46, left: 46, right: 20, containLabel: true }
+            : option.grid;
+
         const mergedOption: Record<string, unknown> = {
           backgroundColor: 'transparent',
           color: palette,
-          textStyle: { color: fg },
+          textStyle: { color: fg, fontFamily: "'Inter', 'Microsoft YaHei UI', sans-serif" },
           ...option,
+          ...(mergedTitle !== undefined ? { title: mergedTitle } : {}),
+          ...(mergedLegend !== undefined ? { legend: mergedLegend } : {}),
+          ...(mergedTooltip !== undefined ? { tooltip: mergedTooltip } : {}),
+          grid: mergedGrid,
+          ...(option.xAxis !== undefined
+            ? { xAxis: withMutedSplitLine(option.xAxis, gridLine, mutedFg) }
+            : {}),
+          ...(option.yAxis !== undefined
+            ? { yAxis: withMutedSplitLine(option.yAxis, gridLine, mutedFg) }
+            : {}),
         };
         chart.setOption(mergedOption);
         setError(null);
@@ -88,7 +170,7 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({ code, theme, isStrea
 
   const handleExportPng = () => {
     if (!chartRef.current) return;
-    const bg = theme === 'oled' ? '#000000' : theme === 'dark' ? '#141416' : '#ffffff';
+    const bg = theme === 'oled' ? '#000000' : theme === 'dark' ? '#171615' : '#faf9f5';
     const dataUrl = chartRef.current.getDataURL({
       type: 'png',
       pixelRatio: 2,
@@ -100,7 +182,7 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({ code, theme, isStrea
   return (
     <div className="my-4 rounded-2xl border border-borderc bg-surface/40 overflow-hidden">
       <div className="flex items-center justify-between px-3.5 py-2 border-b border-borderc bg-surface/60">
-        <span className="text-[11px] font-medium tracking-wide text-muted uppercase">
+        <span className="text-[11px] font-mono font-medium tracking-wide text-muted uppercase">
           ECharts 数据/函数图
         </span>
         <div className="flex items-center gap-1">

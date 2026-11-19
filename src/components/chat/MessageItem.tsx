@@ -179,7 +179,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           </div>
 
           {(message.modelId || message.usage?.totalTokens) && (
-            <div className="text-[11px] text-muted/75 tabular-nums flex items-center gap-2">
+            <div className="text-[11px] font-mono text-muted/75 tabular-nums flex items-center gap-2">
               {message.modelId && <span>{message.modelId}</span>}
               {message.usage?.totalTokens && (
                 <span>

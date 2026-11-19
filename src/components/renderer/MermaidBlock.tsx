@@ -39,18 +39,31 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
             theme === 'light'
               ? {
                   background: 'transparent',
-                  primaryColor: '#f1f5f9',
-                  primaryBorderColor: '#64748b',
-                  lineColor: '#334155',
+                  primaryColor: '#f2f0e9',
+                  primaryTextColor: '#1f1e1c',
+                  primaryBorderColor: '#c25d36',
+                  secondaryColor: '#e7efe9',
+                  secondaryTextColor: '#1f1e1c',
+                  secondaryBorderColor: '#3d7f6a',
+                  tertiaryColor: '#f6efe0',
+                  tertiaryTextColor: '#1f1e1c',
+                  tertiaryBorderColor: '#a87d24',
+                  lineColor: '#6f6a62',
+                  edgeLabelBackground: '#faf9f5',
                 }
               : {
                   background: 'transparent',
-                  primaryColor: '#18181b',
-                  primaryTextColor: '#f4f4f5',
-                  primaryBorderColor: '#52525b',
-                  lineColor: '#a1a1aa',
-                  secondaryColor: '#27272a',
-                  tertiaryColor: '#141416',
+                  primaryColor: '#21201e',
+                  primaryTextColor: '#eceae4',
+                  primaryBorderColor: '#d9825b',
+                  secondaryColor: '#1d2623',
+                  secondaryTextColor: '#eceae4',
+                  secondaryBorderColor: '#6fb39c',
+                  tertiaryColor: '#28251f',
+                  tertiaryTextColor: '#eceae4',
+                  tertiaryBorderColor: '#d9b566',
+                  lineColor: '#9c968c',
+                  edgeLabelBackground: '#171615',
                 },
         });
 
@@ -85,7 +98,7 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
   return (
     <div className="my-4 rounded-2xl border border-borderc bg-surface/40 overflow-hidden">
       <div className="flex items-center justify-between px-3.5 py-2 border-b border-borderc bg-surface/60">
-        <span className="text-[11px] font-medium tracking-wide text-muted uppercase">
+        <span className="text-[11px] font-mono font-medium tracking-wide text-muted uppercase">
           Mermaid 图表
         </span>
         <div className="flex items-center gap-1">

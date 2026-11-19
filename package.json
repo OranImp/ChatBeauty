@@ -1,6 +1,7 @@
 {
   "name": "chatbeauty",
-  "version": "0.2.0",
+  "version": "0.3.0",
+  "license": "MIT",
   "author": "OranImp",
   "description": "Minimalist cross-platform AI chat client with ChatGPT-grade mathematical, SVG, Mermaid, ECharts, and interactive rendering.",
   "private": true,
@@ -23,6 +24,9 @@
     "@capacitor/core": "^7.6.10",
     "@capacitor/keyboard": "^7.0.1",
     "@capacitor/status-bar": "^7.0.1",
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/newsreader": "^5.3.0",
     "dexie": "^4.0.11",
     "dompurify": "^3.2.4",
     "echarts": "^5.6.0",
