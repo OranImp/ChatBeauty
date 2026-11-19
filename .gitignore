@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dist-electron/
+release/
+android/app/build/
+android/.gradle/
+android/build/
+android/local.properties
+android/app/src/main/assets/public/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.env
+.env.*
+.DS_Store
+Thumbs.db
