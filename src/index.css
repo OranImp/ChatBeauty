@@ -1,0 +1,234 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root,
+[data-theme='oled'] {
+  --bg: #000000;
+  --surface: #111114;
+  --surface-elevated: #1c1c21;
+  --fg: #f4f4f5;
+  --muted: #9ca3af;
+  --border: rgba(255, 255, 255, 0.11);
+  --accent: #38bdf8;
+  --chat-font-size: 16px;
+  --chat-line-height: 1.72;
+  --math-scale: 1.06;
+  --chat-max-width: 780px;
+  --chat-font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC',
+    'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif;
+  color-scheme: dark;
+}
+
+[data-theme='dark'] {
+  --bg: #141416;
+  --surface: #1c1c20;
+  --surface-elevated: #26262c;
+  --fg: #f4f4f5;
+  --muted: #a1a1aa;
+  --border: rgba(255, 255, 255, 0.09);
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --bg: #ffffff;
+  --surface: #f5f5f7;
+  --surface-elevated: #ffffff;
+  --fg: #18181b;
+  --muted: #71717a;
+  --border: rgba(0, 0, 0, 0.09);
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg);
+  color: var(--fg);
+  font-family: var(--chat-font-family);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.safe-top {
+  padding-top: max(env(safe-area-inset-top), 8px);
+}
+
+.safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom), 10px);
+}
+
+/* Custom ultra-thin scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.22);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.4);
+}
+
+/* ChatGPT-web-grade Markdown & KaTeX typography */
+.cb-markdown {
+  font-size: var(--chat-font-size);
+  line-height: var(--chat-line-height);
+  color: var(--fg);
+  word-break: break-word;
+}
+
+.cb-markdown > *:first-child {
+  margin-top: 0;
+}
+
+.cb-markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.cb-markdown p {
+  margin: 0.72em 0;
+}
+
+.cb-markdown h1,
+.cb-markdown h2,
+.cb-markdown h3,
+.cb-markdown h4 {
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+
+.cb-markdown h1 {
+  font-size: 1.48em;
+  margin: 1.1em 0 0.55em;
+}
+
+.cb-markdown h2 {
+  font-size: 1.26em;
+  margin: 1.05em 0 0.48em;
+}
+
+.cb-markdown h3 {
+  font-size: 1.12em;
+  margin: 0.95em 0 0.42em;
+}
+
+.cb-markdown h4 {
+  font-size: 1.02em;
+  margin: 0.85em 0 0.35em;
+}
+
+.cb-markdown ul,
+.cb-markdown ol {
+  margin: 0.65em 0;
+  padding-left: 1.55em;
+}
+
+.cb-markdown ul {
+  list-style-type: disc;
+}
+
+.cb-markdown ol {
+  list-style-type: decimal;
+}
+
+.cb-markdown li {
+  margin: 0.32em 0;
+}
+
+.cb-markdown li > p {
+  margin: 0.25em 0;
+}
+
+.cb-markdown strong {
+  font-weight: 650;
+  color: var(--fg);
+}
+
+/* KaTeX mathematical typography calibration */
+.cb-markdown .katex {
+  font-size: calc(1.06em * var(--math-scale));
+  line-height: 1.25;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background-color 0.15s ease;
+}
+
+.cb-markdown p .katex,
+.cb-markdown li .katex,
+.cb-markdown td .katex {
+  padding: 0.04em 0.18em;
+}
+
+.cb-markdown .katex:hover {
+  background-color: rgba(56, 189, 248, 0.12);
+}
+
+.cb-markdown .katex-display {
+  margin: 1.15em 0;
+  padding: 0.4em 0.25em;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-align: center;
+  -webkit-overflow-scrolling: touch;
+}
+
+.cb-markdown .katex-display > .katex {
+  display: inline-block;
+  font-size: calc(1.14em * var(--math-scale));
+  padding: 0.25em 0.45em;
+}
+
+/* Shiki code blocks */
+.cb-code-container pre.shiki {
+  margin: 0 !important;
+  padding: 14px 16px !important;
+  background: transparent !important;
+  overflow-x: visible;
+  font-family: ui-monospace, 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+}
+
+.cb-code-container code {
+  font-family: ui-monospace, 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+}
+
+.cb-code-wrap pre.shiki,
+.cb-code-wrap pre {
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+}
+
+.cb-code-lines code {
+  counter-reset: step;
+  counter-increment: step 0;
+}
+
+.cb-code-lines code .line::before {
+  content: counter(step);
+  counter-increment: step;
+  width: 2rem;
+  margin-right: 1rem;
+  display: inline-block;
+  text-align: right;
+  color: rgba(148, 163, 184, 0.45);
+  user-select: none;
+}
