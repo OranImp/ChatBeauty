@@ -12,13 +12,13 @@ fs.mkdirSync(publicDir, { recursive: true });
 const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0b0d12"/>
-      <stop offset="100%" stop-color="#020305"/>
+      <stop offset="0%" stop-color="#141416"/>
+      <stop offset="100%" stop-color="#050506"/>
     </linearGradient>
     <linearGradient id="accent" x1="0.15" y1="0.15" x2="0.85" y2="0.85">
-      <stop offset="0%" stop-color="#38bdf8"/>
-      <stop offset="55%" stop-color="#60a5fa"/>
-      <stop offset="100%" stop-color="#34d399"/>
+      <stop offset="0%" stop-color="#f4f4f5"/>
+      <stop offset="55%" stop-color="#d4d4d8"/>
+      <stop offset="100%" stop-color="#a1a1aa"/>
     </linearGradient>
   </defs>
   <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#bg)" stroke="rgba(255,255,255,0.12)" stroke-width="8"/>
@@ -26,7 +26,7 @@ const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512
         fill="none" stroke="url(#accent)" stroke-width="24" stroke-linejoin="round" stroke-linecap="round"/>
   <path d="M214 216 h84 m-58 0 l30 62 m-4 -62 l-32 62"
         fill="none" stroke="#f8fafc" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="332" cy="196" r="11" fill="#34d399"/>
+  <circle cx="332" cy="196" r="11" fill="#f4f4f5"/>
 </svg>
 `;
 
@@ -137,9 +137,9 @@ function renderIconRgba(size) {
       const accentMask = 1 - smoothstep(-1.2, 1.2, dAccent);
 
       const acT = Math.max(0, Math.min(1, (px - 130) / 252));
-      const ar = mix(56, 52, acT);
-      const ag = mix(189, 211, acT);
-      const ab = mix(248, 153, acT);
+      const ar = mix(244, 168, acT);
+      const ag = mix(244, 168, acT);
+      const ab = mix(245, 174, acT);
 
       r = mix(r, ar, accentMask);
       g = mix(g, ag, accentMask);
@@ -156,12 +156,12 @@ function renderIconRgba(size) {
       g = mix(g, 250, glyphMask);
       b = mix(b, 252, glyphMask);
 
-      // Emerald sparkle dot
+      // Monochrome accent dot
       const dDot = Math.hypot(px - 332, py - 196) - 12;
       const dotMask = 1 - smoothstep(-1.2, 1.2, dDot);
-      r = mix(r, 52, dotMask);
-      g = mix(g, 211, dotMask);
-      b = mix(b, 153, dotMask);
+      r = mix(r, 244, dotMask);
+      g = mix(g, 244, dotMask);
+      b = mix(b, 245, dotMask);
 
       const idx = (y * size + x) * 4;
       buf[idx] = Math.round(Math.max(0, Math.min(255, r)));

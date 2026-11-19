@@ -53,7 +53,12 @@ interface AppState {
     patch: Partial<
       Pick<
         Conversation,
-        'providerId' | 'modelId' | 'systemPromptPresetId' | 'customSystemPrompt' | 'enableRenderPrompt'
+        | 'providerId'
+        | 'modelId'
+        | 'reasoningEffort'
+        | 'systemPromptPresetId'
+        | 'customSystemPrompt'
+        | 'enableRenderPrompt'
       >
     >
   ) => Promise<void>;
@@ -194,13 +199,17 @@ export const useAppStore = create<AppState>((set, get) => {
 
     try {
       const adapter = getProviderAdapter(provider.protocol);
+      const effectiveReasoning = conversation.reasoningEffort ?? state.generation.reasoningEffort;
       await adapter.chatStream(
         {
           provider,
           modelId,
           systemPrompt,
           messages: historyBeforeReply,
-          generation: state.generation,
+          generation: {
+            ...state.generation,
+            reasoningEffort: effectiveReasoning,
+          },
         },
         {
           onReasoningDelta: (delta) => {

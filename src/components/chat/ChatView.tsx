@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowDown, KeyRound, Sparkles } from 'lucide-react';
+import { ArrowDown } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import type { ResolvedTheme } from '@/components/renderer/svgUtils';
 import type { LightboxPayload } from '@/components/renderer/LightboxModal';
@@ -16,7 +16,7 @@ const STARTER_PROMPTS = [
   '请分步推导傅里叶变换的直觉意义，并用 SVG 绘制时域与频域对照图',
   '用两个半加器和一个或门设计一位全加器，写出布尔代数推导并画电路图',
   '推导吉布斯自由能 ΔG = ΔH - TΔS 判断反应自发性的条件，并举化学反应例子',
-  '用 html-preview 做一个可调参数的牛顿摆或简谐振动合成交互演示',
+  '用 html-preview 做一个可调参数的简谐振动合成交互演示',
 ];
 
 export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSettings }) => {
@@ -77,7 +77,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
       await sendMessage(text);
     } catch (err) {
       if (err instanceof Error && err.message === 'NO_PROVIDER_CONFIGURED') {
-        setErrorBanner('尚未配置可用的模型 API Key，请先在设置中添加 OpenAI / Gemini / Anthropic 接口。');
+        setErrorBanner('尚未配置可用的模型 API Key，请先在设置中添加模型供应商。');
         onOpenSettings('providers');
       } else {
         setErrorBanner(err instanceof Error ? err.message : '发送失败');
@@ -88,37 +88,33 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
   return (
     <div className="flex-1 flex flex-col min-h-0 relative">
       {errorBanner && (
-        <div className="mx-4 mt-2 px-3.5 py-2 rounded-xl border border-amber-500/40 bg-amber-500/10 text-xs text-amber-200 flex items-center justify-between gap-2">
+        <div className="mx-4 mt-2 px-3.5 py-2 rounded-xl border border-amber-500/35 bg-amber-500/10 text-xs text-amber-200 flex items-center justify-between gap-2">
           <span>{errorBanner}</span>
           <button
             type="button"
             onClick={() => setErrorBanner(null)}
-            className="text-amber-300 underline shrink-0"
+            className="text-amber-200 underline shrink-0"
           >
             关闭
           </button>
         </div>
       )}
 
-      {/* Message Stream */}
+      {/* Scrollbar-free Message Stream */}
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-4 sm:px-6 pt-3 pb-6 scroll-smooth"
+        className="flex-1 overflow-y-auto no-scrollbar px-4 sm:px-6 pt-3 pb-6 scroll-smooth"
       >
         <div className="mx-auto w-full" style={{ maxWidth: 'var(--chat-max-width)' }}>
           {messages.length === 0 ? (
-            <div className="min-h-[62vh] flex flex-col items-center justify-center text-center py-10 space-y-6">
-              <div className="space-y-2.5">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-borderc bg-surface text-xs text-muted">
-                  <Sparkles className="w-3.5 h-3.5 text-accent" />
-                  <span>ChatGPT 级公式与原理图渲染已就绪</span>
-                </div>
+            <div className="min-h-[60vh] flex flex-col items-center justify-center text-center py-10 space-y-6">
+              <div className="space-y-2">
                 <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-fg">
-                  今天想学点什么？
+                  有什么可以帮你的？
                 </h1>
                 <p className="text-sm text-muted max-w-md mx-auto">
-                  支持 OpenAI Chat / Responses、Gemini 与 Anthropic，内置学术排版协议、KaTeX、矢量 SVG 图解与交互沙盒。
+                  支持多步数学推导、化学式、矢量图解与交互原理实验。
                 </p>
               </div>
 
@@ -126,10 +122,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
                 <button
                   type="button"
                   onClick={() => onOpenSettings('providers')}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-accent text-black text-sm font-medium shadow-lg active:scale-95 transition"
+                  className="px-4 py-2.5 rounded-2xl bg-accent text-accentfg text-sm font-medium shadow-md active:scale-95 transition"
                 >
-                  <KeyRound className="w-4 h-4" />
-                  <span>先配置 API 接口与密钥</span>
+                  添加模型供应商
                 </button>
               )}
 
@@ -139,7 +134,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
                     key={idx}
                     type="button"
                     onClick={() => void dispatchSend(prompt)}
-                    className="p-3.5 rounded-2xl border border-borderc bg-surface/60 hover:bg-elevated hover:border-accent/40 transition text-xs sm:text-[13px] text-fg/90 leading-relaxed"
+                    className="p-3.5 rounded-2xl border border-borderc bg-surface/55 hover:bg-elevated hover:border-fg/25 transition text-xs sm:text-[13px] text-fg/90 leading-relaxed"
                   >
                     {prompt}
                   </button>
@@ -175,12 +170,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
         </div>
       </div>
 
-      {/* Scroll-to-bottom circular button (as seen in screenshot) */}
+      {/* Scroll-to-bottom circular button */}
       {showScrollBottom && (
         <button
           type="button"
           onClick={() => scrollToBottom('smooth')}
-          className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 w-9 h-9 rounded-full border border-borderc bg-elevated/90 backdrop-blur-md text-fg shadow-lg flex items-center justify-center hover:bg-surface active:scale-95 transition"
+          className="absolute bottom-[114px] left-1/2 -translate-x-1/2 z-20 w-9 h-9 rounded-full border border-borderc bg-elevated/90 backdrop-blur-md text-fg shadow-lg flex items-center justify-center hover:bg-surface active:scale-95 transition"
           aria-label="滚动到底部"
         >
           <ArrowDown className="w-4 h-4" />

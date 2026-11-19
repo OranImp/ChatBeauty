@@ -75,10 +75,12 @@ export class OpenAIResponsesAdapter implements LLMProviderAdapter {
     }
 
     if (reasoningCapable) {
-      payload.reasoning = {
-        effort: req.generation.reasoningEffort,
-        summary: 'auto',
-      };
+      if (req.generation.reasoningEffort !== 'off') {
+        payload.reasoning = {
+          effort: req.generation.reasoningEffort,
+          summary: 'auto',
+        };
+      }
     } else {
       payload.temperature = req.generation.temperature;
       payload.top_p = req.generation.topP;

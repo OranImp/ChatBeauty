@@ -250,7 +250,7 @@ describe('LLM Protocol Adapters', () => {
     const payload = JSON.parse(callArg.body) as Record<string, unknown>;
     expect(callArg.url).toBe('https://api.anthropic.com/v1/messages');
     expect(payload.temperature).toBeUndefined();
-    expect(payload.thinking).toEqual({ type: 'enabled', budget_tokens: 4096 });
+    expect(payload.thinking).toEqual({ type: 'enabled', budget_tokens: 6144 });
     expect(reasoning).toBe('先分析');
     expect(text).toBe('结论');
     expect(usage).toEqual({
@@ -258,5 +258,95 @@ describe('LLM Protocol Adapters', () => {
       outputTokens: 7,
       totalTokens: 25,
     });
+  });
+
+  it('respects reasoningEffort: off across Responses, Gemini, and Anthropic adapters', async () => {
+    mockStreamRequest.mockImplementation(async (opts: { onChunk: (c: string) => void }) => {
+      opts.onChunk('data: [DONE]\n\n');
+    });
+
+    const offGen = { ...DEFAULT_GENERATION_SETTINGS, reasoningEffort: 'off' as const };
+
+    await getProviderAdapter('openai-responses').chatStream(
+      {
+        provider: {
+          id: 'p2',
+          name: 'OpenAI',
+          protocol: 'openai-responses',
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'sk-resp',
+          defaultModel: 'o3',
+          models: [],
+          enabled: true,
+          createdAt: 1,
+        },
+        modelId: 'o3',
+        systemPrompt: '',
+        messages: userMessages,
+        generation: offGen,
+      },
+      { onReasoningDelta: () => {}, onTextDelta: () => {} },
+      new AbortController().signal
+    );
+
+    const respPayload = JSON.parse(
+      (mockStreamRequest.mock.calls[0][0] as { body: string }).body
+    ) as Record<string, unknown>;
+    expect(respPayload.reasoning).toBeUndefined();
+
+    await getProviderAdapter('gemini').chatStream(
+      {
+        provider: {
+          id: 'p3',
+          name: 'Gemini',
+          protocol: 'gemini',
+          baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+          apiKey: 'AIzaTest',
+          defaultModel: 'gemini-2.5-pro',
+          models: [],
+          enabled: true,
+          createdAt: 1,
+        },
+        modelId: 'gemini-2.5-pro',
+        systemPrompt: '',
+        messages: userMessages,
+        generation: offGen,
+      },
+      { onReasoningDelta: () => {}, onTextDelta: () => {} },
+      new AbortController().signal
+    );
+
+    const gemPayload = JSON.parse(
+      (mockStreamRequest.mock.calls[1][0] as { body: string }).body
+    ) as { generationConfig: Record<string, unknown> };
+    expect(gemPayload.generationConfig.thinkingConfig).toBeUndefined();
+
+    await getProviderAdapter('anthropic').chatStream(
+      {
+        provider: {
+          id: 'p4',
+          name: 'Anthropic',
+          protocol: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          apiKey: 'sk-ant',
+          defaultModel: 'claude-sonnet-4-20250514',
+          models: [],
+          enabled: true,
+          createdAt: 1,
+        },
+        modelId: 'claude-sonnet-4-20250514',
+        systemPrompt: '',
+        messages: userMessages,
+        generation: offGen,
+      },
+      { onReasoningDelta: () => {}, onTextDelta: () => {} },
+      new AbortController().signal
+    );
+
+    const antPayload = JSON.parse(
+      (mockStreamRequest.mock.calls[2][0] as { body: string }).body
+    ) as Record<string, unknown>;
+    expect(antPayload.thinking).toBeUndefined();
+    expect(antPayload.temperature).toBe(0.7);
   });
 });

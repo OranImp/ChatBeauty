@@ -1,5 +1,4 @@
 import React from 'react';
-import { AlertCircle, AlertTriangle, Info, Lightbulb, ShieldAlert } from 'lucide-react';
 
 export type CalloutKind = 'NOTE' | 'TIP' | 'IMPORTANT' | 'WARNING' | 'CAUTION';
 
@@ -9,44 +8,38 @@ const CALLOUT_META: Record<
     label: string;
     borderClass: string;
     bgClass: string;
-    textClass: string;
-    Icon: React.FC<{ className?: string }>;
+    labelClass: string;
   }
 > = {
   NOTE: {
-    label: '说明 · NOTE',
-    borderClass: 'border-sky-500/40',
-    bgClass: 'bg-sky-500/10',
-    textClass: 'text-sky-400',
-    Icon: Info,
+    label: '说明',
+    borderClass: 'border-borderc border-l-fg/40',
+    bgClass: 'bg-surface/45',
+    labelClass: 'text-fg',
   },
   TIP: {
-    label: '直觉提示 · TIP',
-    borderClass: 'border-emerald-500/40',
-    bgClass: 'bg-emerald-500/10',
-    textClass: 'text-emerald-400',
-    Icon: Lightbulb,
+    label: '提示',
+    borderClass: 'border-borderc border-l-fg/60',
+    bgClass: 'bg-surface/45',
+    labelClass: 'text-fg',
   },
   IMPORTANT: {
-    label: '核心要点 · IMPORTANT',
-    borderClass: 'border-violet-500/40',
-    bgClass: 'bg-violet-500/10',
-    textClass: 'text-violet-400',
-    Icon: AlertCircle,
+    label: '要点',
+    borderClass: 'border-borderc border-l-fg/80',
+    bgClass: 'bg-surface/55',
+    labelClass: 'text-fg',
   },
   WARNING: {
-    label: '易错警告 · WARNING',
-    borderClass: 'border-amber-500/40',
-    bgClass: 'bg-amber-500/10',
-    textClass: 'text-amber-400',
-    Icon: AlertTriangle,
+    label: '注意',
+    borderClass: 'border-amber-500/30 border-l-amber-400/70',
+    bgClass: 'bg-amber-500/[0.05]',
+    labelClass: 'text-amber-300',
   },
   CAUTION: {
-    label: '关键禁忌 · CAUTION',
-    borderClass: 'border-rose-500/40',
-    bgClass: 'bg-rose-500/10',
-    textClass: 'text-rose-400',
-    Icon: ShieldAlert,
+    label: '警告',
+    borderClass: 'border-rose-500/30 border-l-rose-400/70',
+    bgClass: 'bg-rose-500/[0.05]',
+    labelClass: 'text-rose-300',
   },
 };
 
@@ -86,14 +79,12 @@ export const CalloutBlock: React.FC<{ kind: CalloutKind; children: React.ReactNo
   children,
 }) => {
   const meta = CALLOUT_META[kind];
-  const { Icon } = meta;
   return (
     <div
-      className={`my-4 rounded-xl border-l-4 border ${meta.borderClass} ${meta.bgClass} px-4 py-3`}
+      className={`my-4 rounded-xl border-l-[3px] border ${meta.borderClass} ${meta.bgClass} px-4 py-3`}
     >
-      <div className={`flex items-center gap-2 text-xs font-semibold tracking-wide mb-1.5 ${meta.textClass}`}>
-        <Icon className="w-4 h-4 shrink-0" />
-        <span>{meta.label}</span>
+      <div className={`text-xs font-semibold mb-1.5 ${meta.labelClass}`}>
+        {meta.label}
       </div>
       <div className="text-[0.95em] leading-relaxed [&>p:last-child]:mb-0 [&>p:first-child]:mt-0">
         {children}

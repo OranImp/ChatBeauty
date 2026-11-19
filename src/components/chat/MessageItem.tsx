@@ -47,12 +47,12 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     return (
       <div className="group flex flex-col items-end my-4">
         {editing ? (
-          <div className="w-full max-w-[88%] rounded-2xl border border-accent/50 bg-surface p-3 space-y-2">
+          <div className="w-full max-w-[88%] rounded-2xl border border-fg/30 bg-surface p-3 space-y-2">
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               rows={3}
-              className="w-full bg-transparent text-sm text-fg focus:outline-none resize-y"
+              className="w-full bg-transparent text-sm text-fg focus:outline-none resize-none no-scrollbar"
             />
             <div className="flex justify-end gap-2">
               <button
@@ -71,7 +71,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
                   setEditing(false);
                   onEditResend(message.id, draft);
                 }}
-                className="px-3 py-1 rounded-lg text-xs bg-accent text-black font-medium"
+                className="px-3 py-1 rounded-lg text-xs bg-accent text-accentfg font-medium"
               >
                 保存并重新发送
               </button>
@@ -91,7 +91,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               className="p-1.5 rounded-lg hover:bg-surface hover:text-fg transition"
               title="复制"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? <Check className="w-3.5 h-3.5 text-fg" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
             <button
               type="button"
@@ -120,22 +120,8 @@ export const MessageItem: React.FC<MessageItemProps> = ({
 
   return (
     <div className="group my-5">
-      {message.modelId && (
-        <div className="flex items-center gap-2 mb-2 text-[11px] text-muted">
-          <span
-            className={`w-2 h-2 rounded-full ${
-              isStreaming ? 'bg-accent animate-pulse' : 'bg-emerald-400/80'
-            }`}
-          />
-          <span className="font-medium text-fg/80">{message.modelId}</span>
-        </div>
-      )}
-
       {message.parts.length === 0 && isStreaming ? (
-        <div className="flex items-center gap-2 py-2 text-sm text-muted">
-          <span className="inline-block w-2 h-2 rounded-full bg-accent animate-ping" />
-          <span>正在思考与组织内容…</span>
-        </div>
+        <div className="py-2 text-sm text-muted animate-pulse">正在思考与生成</div>
       ) : (
         <MessageRenderer
           parts={message.parts}
@@ -147,7 +133,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
       )}
 
       {message.status === 'error' && (
-        <div className="mt-3 p-3 rounded-xl border border-rose-500/40 bg-rose-500/10 text-xs text-rose-300 flex items-center justify-between gap-3">
+        <div className="mt-3 p-3 rounded-xl border border-rose-500/35 bg-rose-500/10 text-xs text-rose-300 flex items-center justify-between gap-3">
           <span className="break-all">请求失败：{message.error || '未知网络或接口错误'}</span>
           <button
             type="button"
@@ -172,7 +158,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               className="p-1.5 rounded-lg hover:bg-surface hover:text-fg transition"
               title="复制 Markdown"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? <Check className="w-3.5 h-3.5 text-fg" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
             <button
               type="button"
@@ -192,10 +178,15 @@ export const MessageItem: React.FC<MessageItemProps> = ({
             </button>
           </div>
 
-          {message.usage?.totalTokens && (
-            <div className="text-[11px] text-muted/80 tabular-nums">
-              Tokens: {message.usage.inputTokens ?? '-'} → {message.usage.outputTokens ?? '-'} (共{' '}
-              {message.usage.totalTokens})
+          {(message.modelId || message.usage?.totalTokens) && (
+            <div className="text-[11px] text-muted/75 tabular-nums flex items-center gap-2">
+              {message.modelId && <span>{message.modelId}</span>}
+              {message.usage?.totalTokens && (
+                <span>
+                  {message.usage.inputTokens ?? '-'} → {message.usage.outputTokens ?? '-'} (
+                  {message.usage.totalTokens})
+                </span>
+              )}
             </div>
           )}
         </div>

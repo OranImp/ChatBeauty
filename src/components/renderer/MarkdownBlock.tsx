@@ -65,7 +65,7 @@ const TableWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => 
           onClick={() => void handleCopyTsv()}
           className="flex items-center gap-1 text-[11px] text-muted hover:text-fg px-2 py-0.5 rounded transition"
         >
-          {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+          {copied ? <Check className="w-3 h-3 text-fg" /> : <Copy className="w-3 h-3" />}
           <span>{copied ? '已复制表格' : '复制表格'}</span>
         </button>
       </div>

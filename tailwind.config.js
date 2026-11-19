@@ -12,6 +12,7 @@ export default {
         muted: 'var(--muted)',
         borderc: 'var(--border)',
         accent: 'var(--accent)',
+        accentfg: 'var(--accent-fg)',
       },
     },
   },

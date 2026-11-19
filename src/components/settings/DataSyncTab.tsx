@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Cloud, Download, Loader2, Upload, Wifi } from 'lucide-react';
+import { Download, Loader2, Upload, Wifi } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import {
   exportConversationHtml,
@@ -10,6 +10,7 @@ import {
 import { triggerDownload } from '@/components/renderer/svgUtils';
 import { webDavSync } from '@/services/sync/webdavSync';
 import type { AppBackupV1 } from '@/types/settings';
+import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 
 export const DataSyncTab: React.FC = () => {
   const {
@@ -95,8 +96,8 @@ export const DataSyncTab: React.FC = () => {
         <div
           className={`px-3 py-2 rounded-xl border ${
             notice.ok
-              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-              : 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+              ? 'border-borderc bg-surface text-fg'
+              : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
           }`}
         >
           {notice.text}
@@ -114,7 +115,7 @@ export const DataSyncTab: React.FC = () => {
           <button
             type="button"
             onClick={() => void handleExportFull()}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-accent text-black font-semibold"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-accent text-accentfg font-semibold"
           >
             <Download className="w-3.5 h-3.5" />
             <span>导出全量 JSON 备份</span>
@@ -170,19 +171,15 @@ export const DataSyncTab: React.FC = () => {
       {/* Reserved WebDAV Sync Interface */}
       <div className="rounded-2xl border border-borderc bg-surface/40 p-4 space-y-3.5">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 font-semibold text-sm text-fg">
-            <Cloud className="w-4 h-4 text-accent" />
-            <span>WebDAV 跨端同步（预留扩展接口）</span>
-          </div>
-          <label className="flex items-center gap-1.5 cursor-pointer">
+          <div className="font-semibold text-sm text-fg">WebDAV 跨端同步</div>
+          <div className="flex items-center gap-2">
             <span className="text-muted">启用</span>
-            <input
-              type="checkbox"
+            <ToggleSwitch
               checked={webdav.enabled}
-              onChange={(e) => void updateWebDav({ enabled: e.target.checked })}
-              className="accent-sky-400"
+              onChange={(checked) => void updateWebDav({ enabled: checked })}
+              ariaLabel="启用 WebDAV 同步"
             />
-          </label>
+          </div>
         </div>
 
         <p className="text-muted">
@@ -236,7 +233,11 @@ export const DataSyncTab: React.FC = () => {
             onClick={() => void runWebDavAction('test')}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-borderc bg-bg hover:bg-elevated text-fg disabled:opacity-50"
           >
-            {syncBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
+            {syncBusy ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Wifi className="w-3.5 h-3.5" />
+            )}
             <span>测试 WebDAV 连接</span>
           </button>
           <button

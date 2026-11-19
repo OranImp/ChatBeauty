@@ -10,7 +10,7 @@ import {
   type WebDavSyncSettings,
 } from '@/types/settings';
 import { BUILTIN_PROMPT_PRESETS, DEFAULT_PROMPT_SETTINGS } from '@/services/prompts/presets';
-import { createDemoShowcaseData } from '@/components/chat/DemoShowcase';
+import { createDemoShowcaseData, DEMO_CONVERSATION_ID } from '@/components/chat/DemoShowcase';
 
 export interface KvRecord {
   key: string;
@@ -92,6 +92,26 @@ export async function ensureDatabaseSeeded(): Promise<void> {
     const missing = BUILTIN_PROMPT_PRESETS.filter((p) => !existingIds.has(p.id));
     if (missing.length > 0) {
       await db.promptPresets.bulkPut(missing);
+    }
+
+    // Migrate legacy default blue accent to restrained monochrome default
+    const savedAppearance = await getKv<AppearanceSettings>(
+      KV_KEYS.APPEARANCE,
+      DEFAULT_APPEARANCE_SETTINGS
+    );
+    if (savedAppearance.accentColor?.toLowerCase() === '#38bdf8') {
+      await setKv(KV_KEYS.APPEARANCE, {
+        ...savedAppearance,
+        accentColor: DEFAULT_APPEARANCE_SETTINGS.accentColor,
+      });
+    }
+
+    // Refresh built-in showcase conversation if present so symbol-free & continuous-slider demo takes effect
+    const existingDemo = await db.conversations.get(DEMO_CONVERSATION_ID);
+    if (existingDemo?.isDemo) {
+      const demo = createDemoShowcaseData(existingDemo.createdAt + 120000);
+      await db.conversations.put({ ...existingDemo, title: demo.conversation.title });
+      await db.messages.bulkPut(demo.messages);
     }
   }
 }

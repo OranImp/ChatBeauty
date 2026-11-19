@@ -1,4 +1,23 @@
-import type { ContentPart, Message, ModelCapabilities, ModelDefinition } from '@/types/chat';
+import type {
+  ContentPart,
+  Message,
+  ModelCapabilities,
+  ModelDefinition,
+  ReasoningEffort,
+} from '@/types/chat';
+
+export function resolveThinkingBudget(effort: ReasoningEffort): number {
+  switch (effort) {
+    case 'off':
+      return 0;
+    case 'low':
+      return 2048;
+    case 'medium':
+      return 6144;
+    case 'high':
+      return 12288;
+  }
+}
 
 export function trimBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');

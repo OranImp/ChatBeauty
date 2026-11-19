@@ -43,8 +43,13 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({ code, theme, isStrea
         chartRef.current = chart;
 
         const fg = theme === 'light' ? '#18181b' : '#e4e4e7';
+        const palette =
+          theme === 'light'
+            ? ['#18181b', '#71717a', '#8c7a5b', '#4d7c63', '#b86843']
+            : ['#e4e4e7', '#a1a1aa', '#d4c5a9', '#9ec5ab', '#d99b78'];
         const mergedOption: Record<string, unknown> = {
           backgroundColor: 'transparent',
+          color: palette,
           textStyle: { color: fg },
           ...option,
         };
@@ -114,7 +119,7 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({ code, theme, isStrea
             title="复制 JSON 配置"
           >
             {copied ? (
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
+              <Check className="w-3.5 h-3.5 text-fg" />
             ) : (
               <Copy className="w-3.5 h-3.5" />
             )}

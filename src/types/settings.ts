@@ -1,4 +1,4 @@
-import type { Conversation, Message, ProviderConfig } from './chat';
+import type { Conversation, Message, ProviderConfig, ReasoningEffort } from './chat';
 import type { PromptSettings, SystemPromptPreset } from './prompt';
 
 export type ThemeMode = 'oled' | 'dark' | 'light' | 'system';
@@ -23,7 +23,7 @@ export interface GenerationSettings {
   temperature: number;
   topP: number;
   maxTokens: number;
-  reasoningEffort: 'low' | 'medium' | 'high';
+  reasoningEffort: ReasoningEffort;
   reasoningBudgetTokens: number;
   maxContextMessages: number;
 }
@@ -57,7 +57,7 @@ export interface AppBackupV1 {
 
 export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   theme: 'oled',
-  accentColor: '#38bdf8',
+  accentColor: '#ededed',
   fontFamily: 'system',
   customFontName: '',
   fontSize: 16,

@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
+  ArrowLeft,
   Check,
+  ChevronRight,
   Eye,
   EyeOff,
   Loader2,
@@ -13,6 +15,8 @@ import { useAppStore } from '@/store/useAppStore';
 import { PROTOCOL_TEMPLATES } from '@/services/llm/registry';
 import { toModelDefinition } from '@/services/llm/adapters/shared';
 import type { ProtocolType, ProviderConfig } from '@/types/chat';
+import { SmoothSlider } from '@/components/ui/SmoothSlider';
+import { ProviderWizard } from './ProviderWizard';
 
 export const ProvidersTab: React.FC = () => {
   const {
@@ -28,9 +32,7 @@ export const ProvidersTab: React.FC = () => {
     updateGeneration,
   } = useAppStore();
 
-  const [selectedId, setSelectedId] = useState<string | null>(
-    activeProviderId || providers[0]?.id || null
-  );
+  const [view, setView] = useState<'list' | 'wizard' | 'edit'>('list');
   const [draft, setDraft] = useState<ProviderConfig | null>(null);
   const [headersText, setHeadersText] = useState('{}');
   const [showKey, setShowKey] = useState(false);
@@ -39,34 +41,21 @@ export const ProvidersTab: React.FC = () => {
   const [fetchingModels, setFetchingModels] = useState(false);
   const [testing, setTesting] = useState(false);
 
-  useEffect(() => {
-    const target = providers.find((p) => p.id === selectedId) || providers[0] || null;
-    if (target) {
-      setSelectedId(target.id);
-      setDraft(structuredClone(target));
-      setHeadersText(JSON.stringify(target.extraHeaders || {}, null, 2));
-    } else {
-      setDraft(null);
-    }
-  }, [selectedId, providers]);
+  const openEditor = (p: ProviderConfig) => {
+    setDraft(structuredClone(p));
+    setHeadersText(JSON.stringify(p.extraHeaders || {}, null, 2));
+    setShowKey(false);
+    setStatusMsg(null);
+    setView('edit');
+  };
 
-  const createNewProvider = async (protocol: ProtocolType) => {
-    const tpl = PROTOCOL_TEMPLATES[protocol];
-    const created: ProviderConfig = {
-      id: `prov_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name: tpl.defaultName,
-      protocol,
-      baseUrl: tpl.defaultBaseUrl,
-      apiKey: '',
-      defaultModel: tpl.placeholderModel,
-      models: tpl.suggestedModels,
-      extraHeaders: {},
-      enabled: true,
-      createdAt: Date.now(),
-    };
+  const handleWizardComplete = async (created: ProviderConfig) => {
     await saveProvider(created);
-    setSelectedId(created.id);
-    setStatusMsg({ ok: true, text: `已创建 ${tpl.shortLabel} 接口模板，请填写 API Key 后保存` });
+    await setActiveProviderModel(
+      created.id,
+      created.defaultModel || created.models[0]?.id || ''
+    );
+    setView('list');
   };
 
   const handleSave = async () => {
@@ -90,7 +79,7 @@ export const ProvidersTab: React.FC = () => {
     };
     await saveProvider(updated);
     setStatusMsg({ ok: true, text: '接口配置已保存' });
-    setTimeout(() => setStatusMsg(null), 2200);
+    setTimeout(() => setStatusMsg(null), 2000);
   };
 
   const handleFetchModels = async () => {
@@ -102,12 +91,11 @@ export const ProvidersTab: React.FC = () => {
       if (models.length === 0) {
         setStatusMsg({ ok: false, text: '接口未返回模型列表，可手动添加模型 ID' });
       } else {
-        const merged = [...models];
-        const nextDefault = draft.defaultModel || merged[0].id;
-        const nextDraft = { ...draft, models: merged, defaultModel: nextDefault };
+        const nextDefault = draft.defaultModel || models[0].id;
+        const nextDraft = { ...draft, models, defaultModel: nextDefault };
         setDraft(nextDraft);
         await saveProvider(nextDraft);
-        setStatusMsg({ ok: true, text: `已拉取并保存 ${merged.length} 个可用模型` });
+        setStatusMsg({ ok: true, text: `已拉取并保存 ${models.length} 个可用模型` });
       }
     } catch (err) {
       setStatusMsg({
@@ -125,7 +113,9 @@ export const ProvidersTab: React.FC = () => {
     setStatusMsg(null);
     try {
       const modelToUse =
-        draft.defaultModel || draft.models[0]?.id || PROTOCOL_TEMPLATES[draft.protocol].placeholderModel;
+        draft.defaultModel ||
+        draft.models[0]?.id ||
+        PROTOCOL_TEMPLATES[draft.protocol].placeholderModel;
       const reply = await testProviderConnection(draft, modelToUse);
       setStatusMsg({ ok: true, text: `连接成功 (${modelToUse})：${reply.slice(0, 60)}` });
     } catch (err) {
@@ -142,96 +132,63 @@ export const ProvidersTab: React.FC = () => {
     if (!draft) return;
     const id = newModelId.trim();
     if (!id) return;
-    if (draft.models.some((m) => m.id === id)) {
-      setNewModelId('');
-      return;
+    if (!draft.models.some((m) => m.id === id)) {
+      setDraft({
+        ...draft,
+        defaultModel: draft.defaultModel || id,
+        models: [...draft.models, toModelDefinition(id)],
+      });
     }
-    const added = toModelDefinition(id);
-    setDraft({
-      ...draft,
-      defaultModel: draft.defaultModel || id,
-      models: [...draft.models, added],
-    });
     setNewModelId('');
   };
 
-  return (
-    <div className="space-y-6">
-      {/* Quick Add Protocol Bar */}
-      <div className="space-y-2">
-        <div className="text-xs font-semibold text-muted">添加大模型供应商 / 协议接口</div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {(Object.keys(PROTOCOL_TEMPLATES) as ProtocolType[]).map((proto) => {
-            const tpl = PROTOCOL_TEMPLATES[proto];
-            return (
-              <button
-                key={proto}
-                type="button"
-                onClick={() => void createNewProvider(proto)}
-                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-borderc bg-surface hover:bg-elevated hover:border-accent/50 text-xs font-medium text-fg transition"
-              >
-                <Plus className="w-3.5 h-3.5 text-accent" />
-                <span>{tpl.shortLabel}</span>
-              </button>
-            );
-          })}
+  if (view === 'wizard') {
+    return (
+      <ProviderWizard
+        onCancel={() => setView('list')}
+        onComplete={handleWizardComplete}
+      />
+    );
+  }
+
+  if (view === 'edit' && draft) {
+    return (
+      <div className="space-y-4 text-xs">
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => setView('list')}
+            className="flex items-center gap-1.5 text-muted hover:text-fg transition"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>返回供应商列表</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              void deleteProvider(draft.id);
+              setView('list');
+            }}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-muted hover:text-rose-400 hover:bg-white/5 transition"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>删除接口</span>
+          </button>
         </div>
-      </div>
 
-      {/* Configured Providers Selector */}
-      {providers.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {providers.map((p) => {
-            const active = p.id === draft?.id;
-            return (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => setSelectedId(p.id)}
-                className={`px-3 py-1.5 rounded-xl text-xs border transition flex items-center gap-1.5 ${
-                  active
-                    ? 'border-accent bg-accent/15 text-accent font-medium'
-                    : 'border-borderc bg-surface text-muted hover:text-fg'
-                }`}
-              >
-                <span>{p.name}</span>
-                <span className="text-[10px] opacity-70">
-                  {PROTOCOL_TEMPLATES[p.protocol].shortLabel}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Selected Provider Editor */}
-      {draft ? (
-        <div className="rounded-2xl border border-borderc bg-surface/50 p-4 space-y-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-xs text-muted">
-              {PROTOCOL_TEMPLATES[draft.protocol].description}
-            </div>
-            <button
-              type="button"
-              onClick={() => void deleteProvider(draft.id)}
-              className="p-1.5 rounded-lg text-muted hover:text-rose-400 hover:bg-white/5 shrink-0"
-              title="删除此接口"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-          </div>
-
+        <div className="rounded-2xl border border-borderc bg-surface/45 p-4 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="space-y-1 text-xs">
+            <label className="space-y-1">
               <span className="text-muted">配置名称</span>
               <input
                 value={draft.name}
                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc text-fg focus:outline-none focus:border-accent"
+                className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc text-fg focus:outline-none focus:border-fg/40"
               />
             </label>
 
-            <label className="space-y-1 text-xs">
+            <label className="space-y-1">
               <span className="text-muted">调用协议</span>
               <select
                 value={draft.protocol}
@@ -243,7 +200,7 @@ export const ProvidersTab: React.FC = () => {
                     baseUrl: PROTOCOL_TEMPLATES[proto].defaultBaseUrl,
                   });
                 }}
-                className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc text-fg focus:outline-none focus:border-accent"
+                className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc text-fg focus:outline-none focus:border-fg/40"
               >
                 {(Object.keys(PROTOCOL_TEMPLATES) as ProtocolType[]).map((proto) => (
                   <option key={proto} value={proto}>
@@ -254,17 +211,17 @@ export const ProvidersTab: React.FC = () => {
             </label>
           </div>
 
-          <label className="block space-y-1 text-xs">
+          <label className="block space-y-1">
             <span className="text-muted">Base URL（支持任意兼容中转站地址）</span>
             <input
               value={draft.baseUrl}
               onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}
               placeholder={PROTOCOL_TEMPLATES[draft.protocol].defaultBaseUrl}
-              className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc text-fg font-mono text-xs focus:outline-none focus:border-accent"
+              className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc text-fg font-mono focus:outline-none focus:border-fg/40"
             />
           </label>
 
-          <label className="block space-y-1 text-xs">
+          <label className="block space-y-1">
             <span className="text-muted">API Key</span>
             <div className="relative">
               <input
@@ -272,7 +229,7 @@ export const ProvidersTab: React.FC = () => {
                 value={draft.apiKey}
                 onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
                 placeholder="sk-... / AIza... / sk-ant-..."
-                className="w-full pl-3 pr-10 py-2 rounded-xl bg-bg border border-borderc text-fg font-mono text-xs focus:outline-none focus:border-accent"
+                className="w-full pl-3 pr-10 py-2 rounded-xl bg-bg border border-borderc text-fg font-mono focus:outline-none focus:border-fg/40"
               />
               <button
                 type="button"
@@ -284,17 +241,14 @@ export const ProvidersTab: React.FC = () => {
             </div>
           </label>
 
-          {/* Models Section */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-muted">
-                模型列表与能力标记（已预留识图/生图/语音接口）
-              </span>
+              <span className="text-muted">模型列表（可点选作为当前激活模型）</span>
               <button
                 type="button"
                 disabled={fetchingModels}
                 onClick={() => void handleFetchModels()}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-elevated border border-borderc text-xs text-fg hover:border-accent/50 transition disabled:opacity-50"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-elevated border border-borderc text-fg hover:border-fg/35 transition disabled:opacity-50"
               >
                 {fetchingModels ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -316,12 +270,12 @@ export const ProvidersTab: React.FC = () => {
                   }
                 }}
                 placeholder={`手动添加模型 ID，如 ${PROTOCOL_TEMPLATES[draft.protocol].placeholderModel}`}
-                className="flex-1 px-3 py-1.5 rounded-xl bg-bg border border-borderc text-xs text-fg font-mono focus:outline-none focus:border-accent"
+                className="flex-1 px-3 py-1.5 rounded-xl bg-bg border border-borderc text-fg font-mono focus:outline-none focus:border-fg/40"
               />
               <button
                 type="button"
                 onClick={addManualModel}
-                className="px-3 py-1.5 rounded-xl bg-elevated border border-borderc text-xs text-fg hover:border-accent/50"
+                className="px-3 py-1.5 rounded-xl bg-elevated border border-borderc text-fg hover:border-fg/35"
               >
                 添加
               </button>
@@ -334,7 +288,11 @@ export const ProvidersTab: React.FC = () => {
                 return (
                   <div
                     key={m.id}
-                    className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-bg/70 border border-borderc/60 text-xs"
+                    className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl border ${
+                      isActive || isDefault
+                        ? 'bg-elevated border-fg/25 text-fg'
+                        : 'bg-bg/60 border-borderc/60 text-muted'
+                    }`}
                   >
                     <button
                       type="button"
@@ -342,51 +300,32 @@ export const ProvidersTab: React.FC = () => {
                         setDraft({ ...draft, defaultModel: m.id });
                         void setActiveProviderModel(draft.id, m.id);
                       }}
-                      className="flex-1 text-left flex items-center gap-2 min-w-0"
+                      className="flex-1 text-left flex items-center justify-between min-w-0"
                     >
-                      <span
-                        className={`w-2 h-2 rounded-full shrink-0 ${
-                          isActive || isDefault ? 'bg-accent' : 'bg-white/15'
-                        }`}
-                      />
                       <span className="truncate font-mono text-fg">{m.id}</span>
+                      {(isActive || isDefault) && (
+                        <span className="text-[10px] text-muted ml-2 shrink-0">默认</span>
+                      )}
                     </button>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {m.capabilities.reasoning && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300">
-                          推理
-                        </span>
-                      )}
-                      {m.capabilities.vision && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-muted">
-                          识图(预留)
-                        </span>
-                      )}
-                      {m.capabilities.imageGen && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-muted">
-                          生图(预留)
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDraft({
-                            ...draft,
-                            models: draft.models.filter((x) => x.id !== m.id),
-                          })
-                        }
-                        className="p-1 text-muted hover:text-rose-400"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDraft({
+                          ...draft,
+                          models: draft.models.filter((x) => x.id !== m.id),
+                        })
+                      }
+                      className="p-1 text-muted hover:text-rose-400 shrink-0"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
                   </div>
                 );
               })}
             </div>
           </div>
 
-          <details className="text-xs">
+          <details>
             <summary className="cursor-pointer text-muted hover:text-fg">
               高级：自定义请求头 (JSON)
             </summary>
@@ -394,16 +333,16 @@ export const ProvidersTab: React.FC = () => {
               rows={2}
               value={headersText}
               onChange={(e) => setHeadersText(e.target.value)}
-              className="mt-2 w-full px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-accent"
+              className="mt-2 w-full px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-fg focus:outline-none focus:border-fg/40"
             />
           </details>
 
           {statusMsg && (
             <div
-              className={`px-3 py-2 rounded-xl text-xs border ${
+              className={`px-3 py-2 rounded-xl border ${
                 statusMsg.ok
-                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                  : 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+                  ? 'border-borderc bg-surface text-fg'
+                  : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
               }`}
             >
               {statusMsg.text}
@@ -415,44 +354,112 @@ export const ProvidersTab: React.FC = () => {
               type="button"
               disabled={testing}
               onClick={() => void handleTest()}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-borderc bg-bg hover:bg-elevated text-xs text-fg transition disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-borderc bg-bg hover:bg-elevated text-fg transition disabled:opacity-50"
             >
-              {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
+              {testing ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Wifi className="w-3.5 h-3.5" />
+              )}
               <span>测试连接</span>
             </button>
             <button
               type="button"
               onClick={() => void handleSave()}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-black text-xs font-semibold hover:opacity-90 transition"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-accentfg font-semibold hover:opacity-90 transition"
             >
               <Check className="w-3.5 h-3.5" />
               <span>保存配置</span>
             </button>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 text-xs">
+      {/* Header + Single Add Provider CTA */}
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-fg">模型供应商</div>
+          <div className="text-muted mt-0.5">
+            管理 OpenAI Chat / Responses、Gemini 与 Anthropic 接口；模型与推理强度可在对话输入框直接切换。
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setView('wizard')}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-accent text-accentfg font-semibold shrink-0 hover:opacity-90 transition"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          <span>添加供应商</span>
+        </button>
+      </div>
+
+      {/* Configured Providers List */}
+      {providers.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-borderc p-8 text-center space-y-3">
+          <div className="text-muted">尚未添加任何大模型接口</div>
+          <button
+            type="button"
+            onClick={() => setView('wizard')}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-accentfg font-semibold"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>立即配置</span>
+          </button>
+        </div>
       ) : (
-        <div className="rounded-2xl border border-dashed border-borderc p-6 text-center text-xs text-muted">
-          点击上方协议按钮即可添加 OpenAI Chat / Responses、Gemini 或 Anthropic 接口
+        <div className="space-y-2">
+          {providers.map((p) => {
+            const isActive = p.id === activeProviderId;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => openEditor(p)}
+                className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-2xl border border-borderc bg-surface/45 hover:bg-surface transition text-left"
+              >
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-[13px] text-fg truncate">{p.name}</span>
+                    {isActive && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-fg/10 text-fg shrink-0">
+                        当前使用
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-muted truncate">
+                    {PROTOCOL_TEMPLATES[p.protocol].shortLabel} · {p.models.length} 个模型 · 默认{' '}
+                    {p.defaultModel || '未指定'}
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-muted shrink-0" />
+              </button>
+            );
+          })}
         </div>
       )}
 
-      {/* Generation Parameters */}
-      <div className="rounded-2xl border border-borderc bg-surface/40 p-4 space-y-3.5">
-        <div className="text-xs font-semibold text-fg">推理与生成参数</div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+      {/* Collapsible Sampling Parameters (Continuous SmoothSliders) */}
+      <details className="rounded-2xl border border-borderc bg-surface/35 p-4">
+        <summary className="cursor-pointer font-semibold text-fg">
+          高级采样参数（可选调节）
+        </summary>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
           <label className="space-y-1">
             <div className="flex justify-between text-muted">
               <span>Temperature</span>
               <span className="tabular-nums text-fg">{generation.temperature.toFixed(2)}</span>
             </div>
-            <input
-              type="range"
-              min="0"
-              max="2"
-              step="0.05"
+            <SmoothSlider
+              min={0}
+              max={2}
+              decimals={2}
               value={generation.temperature}
-              onChange={(e) => void updateGeneration({ temperature: parseFloat(e.target.value) })}
-              className="w-full accent-sky-400"
+              onChange={(val) => void updateGeneration({ temperature: val })}
+              ariaLabel="Temperature"
             />
           </label>
 
@@ -461,14 +468,13 @@ export const ProvidersTab: React.FC = () => {
               <span>Top-P</span>
               <span className="tabular-nums text-fg">{generation.topP.toFixed(2)}</span>
             </div>
-            <input
-              type="range"
-              min="0.1"
-              max="1"
-              step="0.05"
+            <SmoothSlider
+              min={0.1}
+              max={1}
+              decimals={2}
               value={generation.topP}
-              onChange={(e) => void updateGeneration({ topP: parseFloat(e.target.value) })}
-              className="w-full accent-sky-400"
+              onChange={(val) => void updateGeneration({ topP: val })}
+              ariaLabel="Top-P"
             />
           </label>
 
@@ -477,14 +483,13 @@ export const ProvidersTab: React.FC = () => {
               <span>Max Output Tokens</span>
               <span className="tabular-nums text-fg">{generation.maxTokens}</span>
             </div>
-            <input
-              type="range"
-              min="512"
-              max="32768"
-              step="512"
+            <SmoothSlider
+              min={512}
+              max={32768}
+              decimals={0}
               value={generation.maxTokens}
-              onChange={(e) => void updateGeneration({ maxTokens: parseInt(e.target.value, 10) })}
-              className="w-full accent-sky-400"
+              onChange={(val) => void updateGeneration({ maxTokens: val })}
+              ariaLabel="Max Output Tokens"
             />
           </label>
 
@@ -493,55 +498,17 @@ export const ProvidersTab: React.FC = () => {
               <span>上下文携带消息数</span>
               <span className="tabular-nums text-fg">{generation.maxContextMessages} 条</span>
             </div>
-            <input
-              type="range"
-              min="4"
-              max="64"
-              step="2"
+            <SmoothSlider
+              min={4}
+              max={64}
+              decimals={0}
               value={generation.maxContextMessages}
-              onChange={(e) =>
-                void updateGeneration({ maxContextMessages: parseInt(e.target.value, 10) })
-              }
-              className="w-full accent-sky-400"
-            />
-          </label>
-
-          <label className="space-y-1">
-            <span className="text-muted">Responses API 推理强度</span>
-            <select
-              value={generation.reasoningEffort}
-              onChange={(e) =>
-                void updateGeneration({
-                  reasoningEffort: e.target.value as 'low' | 'medium' | 'high',
-                })
-              }
-              className="w-full px-3 py-1.5 rounded-xl bg-bg border border-borderc text-fg"
-            >
-              <option value="low">Low (快速)</option>
-              <option value="medium">Medium (均衡)</option>
-              <option value="high">High (深度)</option>
-            </select>
-          </label>
-
-          <label className="space-y-1">
-            <div className="flex justify-between text-muted">
-              <span>Claude / Gemini 思考预算 (Tokens)</span>
-              <span className="tabular-nums text-fg">{generation.reasoningBudgetTokens}</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="16384"
-              step="1024"
-              value={generation.reasoningBudgetTokens}
-              onChange={(e) =>
-                void updateGeneration({ reasoningBudgetTokens: parseInt(e.target.value, 10) })
-              }
-              className="w-full accent-sky-400"
+              onChange={(val) => void updateGeneration({ maxContextMessages: val })}
+              ariaLabel="上下文携带消息数"
             />
           </label>
         </div>
-      </div>
+      </details>
     </div>
   );
 };

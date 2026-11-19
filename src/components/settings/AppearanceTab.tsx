@@ -2,11 +2,20 @@ import React from 'react';
 import { RotateCcw } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { DEFAULT_APPEARANCE_SETTINGS, type ThemeMode } from '@/types/settings';
+import { SmoothSlider } from '@/components/ui/SmoothSlider';
+import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 
-const ACCENT_PRESETS = ['#38bdf8', '#34d399', '#a3e635', '#a78bfa', '#f59e0b', '#fb7185'];
+const ACCENT_PRESETS = [
+  { hex: '#ededed', label: '极简黑白' },
+  { hex: '#d4c5a9', label: '暖沙金' },
+  { hex: '#9ec5ab', label: '鼠尾草' },
+  { hex: '#b7d35b', label: '暖青柠' },
+  { hex: '#d99b78', label: '陶土橘' },
+  { hex: '#b8b0cc', label: '烟灰紫' },
+];
 
 const THEMES: Array<{ id: ThemeMode; name: string; desc: string }> = [
-  { id: 'oled', name: 'OLED 纯黑', desc: '深邃护眼极简黑' },
+  { id: 'oled', name: 'OLED 纯黑', desc: '深邃极简纯黑' },
   { id: 'dark', name: '柔和深灰', desc: '中性石墨暗色' },
   { id: 'light', name: '极简亮色', desc: '纸张质感白底' },
   { id: 'system', name: '跟随系统', desc: '自动切换深浅' },
@@ -30,8 +39,8 @@ export const AppearanceTab: React.FC = () => {
                 onClick={() => void updateAppearance({ theme: t.id })}
                 className={`p-3 rounded-2xl border text-left transition ${
                   active
-                    ? 'border-accent bg-accent/10 text-fg'
-                    : 'border-borderc bg-surface/60 text-muted hover:text-fg'
+                    ? 'border-fg/40 bg-elevated text-fg'
+                    : 'border-borderc bg-surface/50 text-muted hover:text-fg'
                 }`}
               >
                 <div className="font-semibold">{t.name}</div>
@@ -46,20 +55,24 @@ export const AppearanceTab: React.FC = () => {
       <div className="space-y-2">
         <div className="font-semibold text-fg">强调色</div>
         <div className="flex flex-wrap items-center gap-2.5">
-          {ACCENT_PRESETS.map((color) => (
-            <button
-              key={color}
-              type="button"
-              onClick={() => void updateAppearance({ accentColor: color })}
-              style={{ backgroundColor: color }}
-              className={`w-7 h-7 rounded-full border-2 transition ${
-                appearance.accentColor.toLowerCase() === color.toLowerCase()
-                  ? 'border-white scale-110 shadow-md'
-                  : 'border-transparent opacity-80 hover:opacity-100'
-              }`}
-              aria-label={color}
-            />
-          ))}
+          {ACCENT_PRESETS.map(({ hex, label }) => {
+            const active = appearance.accentColor.toLowerCase() === hex.toLowerCase();
+            return (
+              <button
+                key={hex}
+                type="button"
+                onClick={() => void updateAppearance({ accentColor: hex })}
+                style={{ backgroundColor: hex }}
+                className={`w-7 h-7 rounded-full border-2 transition ${
+                  active
+                    ? 'border-fg scale-110 shadow-md'
+                    : 'border-borderc opacity-85 hover:opacity-100'
+                }`}
+                title={label}
+                aria-label={label}
+              />
+            );
+          })}
           <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-borderc bg-surface cursor-pointer">
             <span className="text-muted">自定义</span>
             <input
@@ -87,71 +100,65 @@ export const AppearanceTab: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <label className="space-y-1">
+          <div className="space-y-1">
             <div className="flex justify-between text-muted">
               <span>正文字号</span>
-              <span className="tabular-nums text-fg">{appearance.fontSize}px</span>
+              <span className="tabular-nums text-fg">{appearance.fontSize.toFixed(1)}px</span>
             </div>
-            <input
-              type="range"
-              min="13"
-              max="22"
-              step="1"
+            <SmoothSlider
+              min={13}
+              max={22}
+              decimals={1}
               value={appearance.fontSize}
-              onChange={(e) => void updateAppearance({ fontSize: parseInt(e.target.value, 10) })}
-              className="w-full accent-sky-400"
+              onChange={(val) => void updateAppearance({ fontSize: val })}
+              ariaLabel="正文字号"
             />
-          </label>
+          </div>
 
-          <label className="space-y-1">
+          <div className="space-y-1">
             <div className="flex justify-between text-muted">
               <span>公式相对缩放（KaTeX）</span>
               <span className="tabular-nums text-fg">{appearance.mathScale.toFixed(2)}x</span>
             </div>
-            <input
-              type="range"
-              min="0.85"
-              max="1.35"
-              step="0.02"
+            <SmoothSlider
+              min={0.85}
+              max={1.35}
+              decimals={2}
               value={appearance.mathScale}
-              onChange={(e) => void updateAppearance({ mathScale: parseFloat(e.target.value) })}
-              className="w-full accent-sky-400"
+              onChange={(val) => void updateAppearance({ mathScale: val })}
+              ariaLabel="公式相对缩放"
             />
-          </label>
+          </div>
 
-          <label className="space-y-1">
+          <div className="space-y-1">
             <div className="flex justify-between text-muted">
               <span>行高</span>
               <span className="tabular-nums text-fg">{appearance.lineHeight.toFixed(2)}</span>
             </div>
-            <input
-              type="range"
-              min="1.4"
-              max="2.1"
-              step="0.04"
+            <SmoothSlider
+              min={1.4}
+              max={2.1}
+              decimals={2}
               value={appearance.lineHeight}
-              onChange={(e) => void updateAppearance({ lineHeight: parseFloat(e.target.value) })}
-              className="w-full accent-sky-400"
+              onChange={(val) => void updateAppearance({ lineHeight: val })}
+              ariaLabel="行高"
             />
-          </label>
+          </div>
 
-          <label className="space-y-1">
+          <div className="space-y-1">
             <div className="flex justify-between text-muted">
               <span>正文栏最大宽度</span>
               <span className="tabular-nums text-fg">{appearance.contentMaxWidth}px</span>
             </div>
-            <input
-              type="range"
-              min="600"
-              max="1120"
-              step="20"
+            <SmoothSlider
+              min={600}
+              max={1120}
+              decimals={0}
               value={appearance.contentMaxWidth}
-              onChange={(e) =>
-                void updateAppearance({ contentMaxWidth: parseInt(e.target.value, 10) })
-              }
-              className="w-full accent-sky-400"
+              onChange={(val) => void updateAppearance({ contentMaxWidth: val })}
+              ariaLabel="正文栏最大宽度"
             />
-          </label>
+          </div>
 
           <label className="space-y-1">
             <span className="text-muted">正文字体风格</span>
@@ -207,35 +214,32 @@ export const AppearanceTab: React.FC = () => {
         )}
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
-          <label className="flex items-center justify-between px-3 py-2 rounded-xl bg-bg/70 border border-borderc cursor-pointer">
+          <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-bg/70 border border-borderc">
             <span>代码块显示行号</span>
-            <input
-              type="checkbox"
+            <ToggleSwitch
               checked={appearance.showLineNumbers}
-              onChange={(e) => void updateAppearance({ showLineNumbers: e.target.checked })}
-              className="accent-sky-400"
+              onChange={(checked) => void updateAppearance({ showLineNumbers: checked })}
+              ariaLabel="代码块显示行号"
             />
-          </label>
+          </div>
 
-          <label className="flex items-center justify-between px-3 py-2 rounded-xl bg-bg/70 border border-borderc cursor-pointer">
+          <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-bg/70 border border-borderc">
             <span>自动渲染交互网页块</span>
-            <input
-              type="checkbox"
+            <ToggleSwitch
               checked={appearance.autoPreviewArtifacts}
-              onChange={(e) => void updateAppearance({ autoPreviewArtifacts: e.target.checked })}
-              className="accent-sky-400"
+              onChange={(checked) => void updateAppearance({ autoPreviewArtifacts: checked })}
+              ariaLabel="自动渲染交互网页块"
             />
-          </label>
+          </div>
 
-          <label className="flex items-center justify-between px-3 py-2 rounded-xl bg-bg/70 border border-borderc cursor-pointer">
+          <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-bg/70 border border-borderc">
             <span>Enter 直接发送</span>
-            <input
-              type="checkbox"
+            <ToggleSwitch
               checked={appearance.sendOnEnter}
-              onChange={(e) => void updateAppearance({ sendOnEnter: e.target.checked })}
-              className="accent-sky-400"
+              onChange={(checked) => void updateAppearance({ sendOnEnter: checked })}
+              ariaLabel="Enter 直接发送"
             />
-          </label>
+          </div>
         </div>
       </div>
 
@@ -245,14 +249,15 @@ export const AppearanceTab: React.FC = () => {
           进阶自定义：全局自定义 CSS 注入
         </summary>
         <p className="text-muted mt-1.5 mb-2">
-          可覆盖任意页面变量（如 <code>--bg</code>、<code>--accent</code>）或 <code>.cb-markdown</code>、<code>.katex</code> 样式，实时生效。
+          可覆盖任意页面变量（如 <code>--bg</code>、<code>--accent</code>）或{' '}
+          <code>.cb-markdown</code>、<code>.katex</code> 样式，实时生效。
         </p>
         <textarea
           rows={5}
           value={appearance.customCss}
           onChange={(e) => void updateAppearance({ customCss: e.target.value })}
           placeholder={`/* 示例：\n.cb-markdown .katex-display { background: rgba(255,255,255,0.03); border-radius: 12px; }\n*/`}
-          className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-accent"
+          className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
         />
       </details>
     </div>

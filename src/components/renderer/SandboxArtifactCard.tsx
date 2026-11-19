@@ -30,6 +30,37 @@ function buildInjectedDocument(
       color-scheme: ${isLight ? 'light' : 'dark'};
     }
     html, body { color: var(--fg); background: transparent; }
+    input[type='range'] {
+      -webkit-appearance: none;
+      appearance: none;
+      height: 4px;
+      border-radius: 9999px;
+      background: ${isLight ? 'rgba(0,0,0,0.14)' : 'rgba(255,255,255,0.16)'};
+      outline: none;
+      cursor: pointer;
+    }
+    input[type='range']::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 9999px;
+      background: var(--accent);
+      border: 2px solid var(--bg);
+      cursor: pointer;
+      transition: transform 0.1s ease;
+    }
+    input[type='range']::-webkit-slider-thumb:hover {
+      transform: scale(1.15);
+    }
+    input[type='range']::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border-radius: 9999px;
+      background: var(--accent);
+      border: 2px solid var(--bg);
+      cursor: pointer;
+    }
   </style>`;
 
   const resizeScript = `<script>
@@ -133,7 +164,7 @@ export const SandboxArtifactCard: React.FC<SandboxArtifactCardProps> = ({
             title="复制代码"
           >
             {copied ? (
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
+              <Check className="w-3.5 h-3.5 text-fg" />
             ) : (
               <Copy className="w-3.5 h-3.5" />
             )}

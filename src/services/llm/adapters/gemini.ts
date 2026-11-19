@@ -6,6 +6,7 @@ import {
   extractDataUrlParts,
   extractTextFromParts,
   isModelReasoningCapable,
+  resolveThinkingBudget,
   sliceContextMessages,
   toModelDefinition,
   trimBaseUrl,
@@ -70,13 +71,11 @@ export class GeminiAdapter implements LLMProviderAdapter {
       maxOutputTokens: req.generation.maxTokens,
     };
 
-    if (
-      isModelReasoningCapable(req.modelId, req.provider.models) &&
-      req.generation.reasoningBudgetTokens > 0
-    ) {
+    const thinkingBudget = resolveThinkingBudget(req.generation.reasoningEffort);
+    if (isModelReasoningCapable(req.modelId, req.provider.models) && thinkingBudget > 0) {
       generationConfig.thinkingConfig = {
         includeThoughts: true,
-        thinkingBudget: req.generation.reasoningBudgetTokens,
+        thinkingBudget,
       };
     }
 

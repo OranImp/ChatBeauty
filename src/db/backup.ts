@@ -96,7 +96,7 @@ export function exportConversationMarkdown(conv: Conversation, messages: Message
   const header = `# ${conv.title}\n\n> 导出时间：${new Date().toLocaleString()}\n\n---\n`;
   const body = messages
     .map((m) => {
-      const label = m.role === 'user' ? '## 👤 用户' : `## ✨ 助手${m.modelId ? ` (${m.modelId})` : ''}`;
+      const label = m.role === 'user' ? '## 用户' : `## 助手${m.modelId ? ` (${m.modelId})` : ''}`;
       return `${label}\n\n${messagePartsToMarkdown(m)}`;
     })
     .join('\n\n---\n\n');
@@ -126,11 +126,11 @@ export function exportConversationHtml(conv: Conversation, messages: Message[]):
 <meta charset="utf-8" />
 <title>${escapeHtml(conv.title)} - ChatBeauty</title>
 <style>
-  body { background: #0b0d12; color: #f4f4f5; font-family: system-ui, -apple-system, sans-serif; max-width: 820px; margin: 40px auto; padding: 0 20px; line-height: 1.7; }
-  h1 { font-size: 1.6rem; border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 12px; }
-  .msg { background: #14161d; border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 16px 20px; margin: 18px 0; }
-  .msg.user { border-color: rgba(56,189,248,0.35); }
-  h3 { margin: 0 0 10px 0; font-size: 0.9rem; color: #38bdf8; }
+  body { background: #0d0d0f; color: #f4f4f5; font-family: system-ui, -apple-system, sans-serif; max-width: 820px; margin: 40px auto; padding: 0 20px; line-height: 1.7; }
+  h1 { font-size: 1.6rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 12px; }
+  .msg { background: #161618; border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 16px 20px; margin: 18px 0; }
+  .msg.user { border-color: rgba(255,255,255,0.2); }
+  h3 { margin: 0 0 10px 0; font-size: 0.9rem; color: #e4e4e7; }
   pre.raw { white-space: pre-wrap; word-break: break-word; font-family: inherit; margin: 0; }
 </style>
 </head>

@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Database, KeyRound, Palette, Sparkles, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { ProvidersTab } from './ProvidersTab';
 import { PromptsTab } from './PromptsTab';
 import { AppearanceTab } from './AppearanceTab';
@@ -14,11 +14,11 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
-const TABS: Array<{ key: SettingsTabKey; label: string; Icon: React.FC<{ className?: string }> }> = [
-  { key: 'providers', label: '模型接口', Icon: KeyRound },
-  { key: 'prompts', label: '提示词与渲染', Icon: Sparkles },
-  { key: 'appearance', label: '外观排版', Icon: Palette },
-  { key: 'data', label: '数据与同步', Icon: Database },
+const TABS: Array<{ key: SettingsTabKey; label: string }> = [
+  { key: 'providers', label: '模型接口' },
+  { key: 'prompts', label: '提示词与渲染' },
+  { key: 'appearance', label: '外观排版' },
+  { key: 'data', label: '数据与同步' },
 ];
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -40,7 +40,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm sm:p-4"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-sm sm:p-4"
       role="dialog"
       aria-modal="true"
     >
@@ -59,22 +59,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex items-center gap-1 px-4 py-2 border-b border-borderc/70 bg-surface/40 overflow-x-auto shrink-0">
-          {TABS.map(({ key, label, Icon }) => {
+        <div className="flex items-center gap-1.5 px-4 py-2 border-b border-borderc/70 bg-surface/35 overflow-x-auto no-scrollbar shrink-0">
+          {TABS.map(({ key, label }) => {
             const active = activeTab === key;
             return (
               <button
                 key={key}
                 type="button"
                 onClick={() => onTabChange(key)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition ${
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition ${
                   active
-                    ? 'bg-accent text-black'
+                    ? 'bg-accent text-accentfg'
                     : 'text-muted hover:text-fg hover:bg-white/5'
                 }`}
               >
-                <Icon className="w-3.5 h-3.5" />
-                <span>{label}</span>
+                {label}
               </button>
             );
           })}

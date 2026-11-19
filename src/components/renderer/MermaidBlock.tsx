@@ -45,12 +45,12 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
                 }
               : {
                   background: 'transparent',
-                  primaryColor: '#161b26',
+                  primaryColor: '#18181b',
                   primaryTextColor: '#f4f4f5',
-                  primaryBorderColor: '#38bdf8',
-                  lineColor: '#94a3b8',
-                  secondaryColor: '#1e293b',
-                  tertiaryColor: '#0f172a',
+                  primaryBorderColor: '#52525b',
+                  lineColor: '#a1a1aa',
+                  secondaryColor: '#27272a',
+                  tertiaryColor: '#141416',
                 },
         });
 
@@ -104,7 +104,7 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
             title="复制 Mermaid 源码"
           >
             {copied ? (
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
+              <Check className="w-3.5 h-3.5 text-fg" />
             ) : (
               <Copy className="w-3.5 h-3.5" />
             )}

@@ -145,7 +145,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
             }
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs transition"
           >
-            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+            {copied ? <Check className="w-3.5 h-3.5 text-fg" /> : <Copy className="w-3.5 h-3.5" />}
             <span>{payload.kind === 'math' ? '复制 LaTeX' : '复制源码'}</span>
           </button>
 
@@ -242,7 +242,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
             <div className="text-[11px] uppercase tracking-wider text-zinc-400 mb-1">
               LaTeX 源码
             </div>
-            <pre className="text-xs font-mono text-sky-300 bg-black/50 p-2.5 rounded-lg overflow-x-auto border border-white/10">
+            <pre className="text-xs font-mono text-zinc-200 bg-black/50 p-2.5 rounded-lg overflow-x-auto border border-white/10">
               {payload.latex}
             </pre>
           </div>

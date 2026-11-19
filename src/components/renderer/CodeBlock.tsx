@@ -136,8 +136,8 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
           >
             {copied ? (
               <>
-                <Check className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="text-emerald-400">已复制</span>
+                <Check className="w-3.5 h-3.5 text-fg" />
+                <span className="text-fg">已复制</span>
               </>
             ) : (
               <>

@@ -6,6 +6,7 @@ import {
   extractDataUrlParts,
   extractTextFromParts,
   isModelReasoningCapable,
+  resolveThinkingBudget,
   sliceContextMessages,
   toModelDefinition,
   trimBaseUrl,
@@ -71,9 +72,9 @@ export class AnthropicAdapter implements LLMProviderAdapter {
       apiMessages.shift();
     }
 
+    const budget = resolveThinkingBudget(req.generation.reasoningEffort);
     const thinkingEnabled =
-      isModelReasoningCapable(req.modelId, req.provider.models) &&
-      req.generation.reasoningBudgetTokens >= 1024;
+      isModelReasoningCapable(req.modelId, req.provider.models) && budget >= 1024;
 
     const payload: Record<string, unknown> = {
       model: req.modelId,
@@ -86,7 +87,6 @@ export class AnthropicAdapter implements LLMProviderAdapter {
     }
 
     if (thinkingEnabled) {
-      const budget = req.generation.reasoningBudgetTokens;
       payload.thinking = {
         type: 'enabled',
         budget_tokens: budget,

@@ -1,5 +1,7 @@
 export type ProtocolType = 'openai-chat' | 'openai-responses' | 'gemini' | 'anthropic';
 
+export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high';
+
 export type ContentPart =
   | { type: 'text'; text: string }
   | { type: 'reasoning'; text: string; durationMs?: number }
@@ -39,6 +41,7 @@ export interface Conversation {
   pinned?: boolean;
   providerId?: string;
   modelId?: string;
+  reasoningEffort?: ReasoningEffort;
   systemPromptPresetId?: string;
   customSystemPrompt?: string;
   enableRenderPrompt?: boolean;

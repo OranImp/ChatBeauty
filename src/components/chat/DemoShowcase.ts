@@ -8,7 +8,7 @@ export function createDemoShowcaseData(now = Date.now()): {
 } {
   const conversation: Conversation = {
     id: DEMO_CONVERSATION_ID,
-    title: '✨ 渲染引擎演示：全加器推导与交互可视化',
+    title: '全加器推导与交互可视化示例',
     createdAt: now - 120000,
     updatedAt: now - 60000,
     pinned: true,
@@ -64,22 +64,22 @@ $$C_{out} = C_1 + C_2$$
   <text x="64" y="144" fill="currentColor" font-size="18" font-family="ui-serif, Georgia, serif">B</text>
 
   <!-- HA1 Box -->
-  <rect x="150" y="54" width="136" height="130" rx="14" fill="rgba(56,189,248,0.06)" stroke="currentColor" stroke-width="2.5" />
+  <rect x="150" y="54" width="136" height="130" rx="14" fill="rgba(255,255,255,0.03)" stroke="currentColor" stroke-width="2.5" />
   <text x="218" y="108" fill="currentColor" font-size="19" font-weight="600" text-anchor="middle">HA1</text>
-  <text x="218" y="138" fill="currentColor" opacity="0.8" font-size="16" text-anchor="middle">半加器</text>
+  <text x="218" y="138" fill="currentColor" opacity="0.78" font-size="16" text-anchor="middle">半加器</text>
 
   <!-- S1 wire -->
-  <line x1="286" y1="84" x2="386" y2="84" stroke="#38bdf8" stroke-width="2.5" />
-  <text x="336" y="72" fill="#38bdf8" font-size="18" text-anchor="middle" font-family="ui-serif, Georgia, serif">S₁</text>
+  <line x1="286" y1="84" x2="386" y2="84" stroke="currentColor" stroke-width="2.5" />
+  <text x="336" y="72" fill="currentColor" font-size="18" text-anchor="middle" font-family="ui-serif, Georgia, serif">S₁</text>
 
   <!-- HA2 Box -->
-  <rect x="386" y="54" width="136" height="130" rx="14" fill="rgba(52,211,153,0.06)" stroke="currentColor" stroke-width="2.5" />
+  <rect x="386" y="54" width="136" height="130" rx="14" fill="rgba(255,255,255,0.03)" stroke="currentColor" stroke-width="2.5" />
   <text x="454" y="108" fill="currentColor" font-size="19" font-weight="600" text-anchor="middle">HA2</text>
-  <text x="454" y="138" fill="currentColor" opacity="0.8" font-size="16" text-anchor="middle">半加器</text>
+  <text x="454" y="138" fill="currentColor" opacity="0.78" font-size="16" text-anchor="middle">半加器</text>
 
   <!-- Output S -->
-  <line x1="522" y1="84" x2="632" y2="84" stroke="#34d399" stroke-width="2.5" />
-  <text x="580" y="72" fill="#34d399" font-size="18" font-family="ui-serif, Georgia, serif">S</text>
+  <line x1="522" y1="84" x2="632" y2="84" stroke="currentColor" stroke-width="2.5" />
+  <text x="580" y="72" fill="currentColor" font-size="18" font-family="ui-serif, Georgia, serif">S</text>
 
   <!-- Cin wire -->
   <polyline points="260,218 352,218 352,156 386,156" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" />
@@ -94,12 +94,12 @@ $$C_{out} = C_1 + C_2$$
   <text x="542" y="196" fill="currentColor" font-size="15" opacity="0.85">C₂</text>
 
   <!-- OR Box -->
-  <rect x="404" y="228" width="136" height="72" rx="14" fill="rgba(245,158,11,0.08)" stroke="currentColor" stroke-width="2.5" />
+  <rect x="404" y="228" width="136" height="72" rx="14" fill="rgba(255,255,255,0.03)" stroke="currentColor" stroke-width="2.5" />
   <text x="472" y="270" fill="currentColor" font-size="19" font-weight="600" text-anchor="middle">OR</text>
 
   <!-- Cout output -->
-  <line x1="540" y1="264" x2="632" y2="264" stroke="#f59e0b" stroke-width="2.5" />
-  <text x="578" y="252" fill="#f59e0b" font-size="18" font-family="ui-serif, Georgia, serif">Cₒᵤₜ</text>
+  <line x1="540" y1="264" x2="632" y2="264" stroke="currentColor" stroke-width="2.5" />
+  <text x="578" y="252" fill="currentColor" font-size="18" font-family="ui-serif, Georgia, serif">Cₒᵤₜ</text>
 </svg>
 \`\`\`
 
@@ -178,16 +178,15 @@ flowchart LR
 <style>
   * { box-sizing: border-box; font-family: system-ui, sans-serif; }
   body { margin: 0; padding: 14px; background: transparent; color: var(--fg, #f4f4f5); }
-  .bar { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-bottom: 10px; font-size: 13px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-bottom: 12px; font-size: 13px; }
   label { display: flex; align-items: center; gap: 8px; }
-  input[type=range] { accent-color: var(--accent, #38bdf8); }
-  canvas { width: 100%; height: 150px; display: block; border-radius: 10px; border: 1px solid var(--border, rgba(255,255,255,0.12)); }
+  canvas { width: 100%; height: 150px; display: block; border-radius: 10px; border: 1px solid var(--border, rgba(255,255,255,0.1)); }
 </style>
 </head>
 <body>
   <div class="bar">
-    <label>频率比 f₂/f₁: <input id="freq" type="range" min="1" max="5" step="0.25" value="2" /> <span id="fv">2.0</span></label>
-    <label>相位差 φ: <input id="phase" type="range" min="0" max="6.28" step="0.1" value="0" /> <span id="pv">0.0</span></label>
+    <label>频率比 f₂/f₁ <input id="freq" type="range" min="1" max="5" step="any" value="2" /> <span id="fv">2.00</span></label>
+    <label>相位差 φ <input id="phase" type="range" min="0" max="6.28" step="any" value="0" /> <span id="pv">0.00</span></label>
   </div>
   <canvas id="c" width="600" height="160"></canvas>
   <script>
@@ -197,18 +196,19 @@ flowchart LR
     const phaseEl = document.getElementById('phase');
     const fv = document.getElementById('fv');
     const pv = document.getElementById('pv');
+    const isLight = getComputedStyle(document.documentElement).colorScheme === 'light';
     let t = 0;
     function draw() {
       const f = parseFloat(freqEl.value);
       const p = parseFloat(phaseEl.value);
       fv.textContent = f.toFixed(2);
-      pv.textContent = p.toFixed(1);
+      pv.textContent = p.toFixed(2);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const mid = canvas.height / 2;
-      ctx.strokeStyle = 'rgba(148,163,184,0.22)';
+      ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.12)';
       ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(canvas.width, mid); ctx.stroke();
 
-      ctx.strokeStyle = 'rgba(56,189,248,0.45)';
+      ctx.strokeStyle = isLight ? 'rgba(24,24,27,0.3)' : 'rgba(244,244,245,0.35)';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       for (let x = 0; x <= canvas.width; x += 2) {
@@ -217,7 +217,7 @@ flowchart LR
       }
       ctx.stroke();
 
-      ctx.strokeStyle = '#34d399';
+      ctx.strokeStyle = isLight ? '#18181b' : '#f4f4f5';
       ctx.lineWidth = 2.4;
       ctx.beginPath();
       for (let x = 0; x <= canvas.width; x += 2) {

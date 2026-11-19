@@ -26,6 +26,23 @@ function resolveFontFamily(
   return `-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif`;
 }
 
+function getContrastFg(hex: string): string {
+  const clean = hex.trim().replace('#', '');
+  const full =
+    clean.length === 3
+      ? clean
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : clean;
+  if (full.length !== 6) return '#0a0a0a';
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.58 ? '#0a0a0a' : '#ffffff';
+}
+
 export const App: React.FC = () => {
   const { ready, appearance, initApp, createConversation } = useAppStore();
 
@@ -66,7 +83,15 @@ export const App: React.FC = () => {
     const root = document.documentElement;
     root.setAttribute('data-theme', resolvedTheme);
     root.classList.toggle('dark', resolvedTheme !== 'light');
-    root.style.setProperty('--accent', appearance.accentColor);
+
+    const rawAccent = (appearance.accentColor || '#ededed').trim();
+    const effectiveAccent =
+      resolvedTheme === 'light' && rawAccent.toLowerCase() === '#ededed'
+        ? '#18181b'
+        : rawAccent;
+    root.style.setProperty('--accent', effectiveAccent);
+    root.style.setProperty('--accent-fg', getContrastFg(effectiveAccent));
+
     root.style.setProperty('--chat-font-size', `${appearance.fontSize}px`);
     root.style.setProperty('--chat-line-height', String(appearance.lineHeight));
     root.style.setProperty('--math-scale', String(appearance.mathScale));
@@ -87,7 +112,7 @@ export const App: React.FC = () => {
     // Native Android StatusBar sync
     if (Capacitor.isNativePlatform()) {
       const bgColor =
-        resolvedTheme === 'oled' ? '#000000' : resolvedTheme === 'dark' ? '#141416' : '#ffffff';
+        resolvedTheme === 'oled' ? '#000000' : resolvedTheme === 'dark' ? '#171717' : '#ffffff';
       void StatusBar.setBackgroundColor({ color: bgColor }).catch(() => undefined);
       void StatusBar.setStyle({
         style: resolvedTheme === 'light' ? Style.Light : Style.Dark,
