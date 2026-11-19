@@ -41,7 +41,7 @@ export interface WebDavSyncSettings {
 
 export interface AppBackupV1 {
   version: 1;
-  app: 'ChatBeaty';
+  app: 'ChatBeauty';
   exportedAt: number;
   conversations: Conversation[];
   messages: Message[];
@@ -85,6 +85,6 @@ export const DEFAULT_WEBDAV_SETTINGS: WebDavSyncSettings = {
   endpoint: '',
   username: '',
   password: '',
-  remotePath: '/ChatBeaty/backup.json',
+  remotePath: '/ChatBeauty/backup.json',
   autoSync: false,
 };

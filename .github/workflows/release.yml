@@ -1,4 +1,4 @@
-name: Build and Release ChatBeaty
+name: Build and Release ChatBeauty
 
 on:
   push:
@@ -102,7 +102,7 @@ jobs:
             echo "No APK generated!"
             exit 1
           fi
-          cp "$APK_SRC" "apk-out/ChatBeaty-Android-${VERSION}.apk"
+          cp "$APK_SRC" "apk-out/ChatBeauty-Android-${VERSION}.apk"
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4

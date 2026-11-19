@@ -71,8 +71,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Brand + Actions */}
       <div className="flex items-center justify-between px-3.5 pt-3 pb-2 safe-top">
         <div className="flex items-center gap-2">
-          <img src="./icon.svg" alt="ChatBeaty" className="w-6 h-6 rounded-lg" />
-          <span className="font-semibold tracking-tight text-sm text-fg">ChatBeaty</span>
+          <img src="./icon.svg" alt="ChatBeauty" className="w-6 h-6 rounded-lg" />
+          <span className="font-semibold tracking-tight text-sm text-fg">ChatBeauty</span>
         </div>
         <div className="flex items-center gap-1">
           <button

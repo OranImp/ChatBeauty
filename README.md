@@ -1,4 +1,4 @@
-# ChatBeaty
+# ChatBeauty
 
 一款面向 **Windows** 与 **Android** 的极简高颜值 AI 学习聊天客户端，专注 **ChatGPT 网页端级别的公式、矢量图解与交互式学习渲染体验**。
 
@@ -61,6 +61,6 @@ pnpm cap:sync
 
 推送形如 `v0.1.0` 的标签至 GitHub 时，[`.github/workflows/release.yml`](.github/workflows/release.yml) 会自动完成：
 1. 类型检查、Vitest 单元测试与前端生产构建验证
-2. 在 `windows-latest` 构建 `ChatBeaty-Setup-<version>.exe` 与 `ChatBeaty-Portable-<version>.exe`
-3. 在 `ubuntu-latest`（JDK 21）构建已签名的 `ChatBeaty-Android-<version>.apk`
+2. 在 `windows-latest` 构建 `ChatBeauty-Setup-<version>.exe` 与 `ChatBeauty-Portable-<version>.exe`
+3. 在 `ubuntu-latest`（JDK 21）构建已签名的 `ChatBeauty-Android-<version>.apk`
 4. 自动发布到 GitHub Releases

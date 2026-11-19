@@ -1,5 +1,5 @@
-appId: com.chatbeaty.app
-productName: ChatBeaty
+appId: com.chatbeauty.app
+productName: ChatBeauty
 directories:
   output: release
   buildResources: build
@@ -23,6 +23,6 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  artifactName: ChatBeaty-Setup-${version}.${ext}
+  artifactName: ChatBeauty-Setup-${version}.${ext}
 portable:
-  artifactName: ChatBeaty-Portable-${version}.${ext}
+  artifactName: ChatBeauty-Portable-${version}.${ext}

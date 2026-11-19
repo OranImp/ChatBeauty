@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.chatbeaty.app',
-  appName: 'ChatBeaty',
+  appId: 'com.chatbeauty.app',
+  appName: 'ChatBeauty',
   webDir: 'dist',
   android: {
     backgroundColor: '#000000',

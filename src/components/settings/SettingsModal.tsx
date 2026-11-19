@@ -47,7 +47,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       <div className="w-full sm:max-w-3xl h-[92dvh] sm:h-[82vh] rounded-t-3xl sm:rounded-3xl border border-borderc bg-bg flex flex-col overflow-hidden shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-borderc shrink-0">
-          <div className="font-semibold text-base text-fg">ChatBeaty 设置</div>
+          <div className="font-semibold text-base text-fg">ChatBeauty 设置</div>
           <button
             type="button"
             onClick={onClose}

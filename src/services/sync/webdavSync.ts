@@ -16,7 +16,7 @@ export interface SyncProvider {
 
 function buildTargetUrl(settings: WebDavSyncSettings): string {
   const base = settings.endpoint.trim().replace(/\/+$/, '');
-  const rel = settings.remotePath.trim().replace(/^\/+/, '') || 'ChatBeaty/backup.json';
+  const rel = settings.remotePath.trim().replace(/^\/+/, '') || 'ChatBeauty/backup.json';
   return `${base}/${rel}`;
 }
 

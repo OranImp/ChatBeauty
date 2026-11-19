@@ -89,7 +89,7 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({ code, theme, isStrea
       pixelRatio: 2,
       backgroundColor: bg,
     });
-    triggerDownload(`chatbeaty-chart-${Date.now()}.png`, dataUrl);
+    triggerDownload(`chatbeauty-chart-${Date.now()}.png`, dataUrl);
   };
 
   return (

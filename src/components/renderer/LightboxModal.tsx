@@ -155,7 +155,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
                 type="button"
                 onClick={() =>
                   triggerDownload(
-                    `chatbeaty-diagram-${Date.now()}.svg`,
+                    `chatbeauty-diagram-${Date.now()}.svg`,
                     new Blob([payload.rawSource], { type: 'image/svg+xml;charset=utf-8' })
                   )
                 }
@@ -169,7 +169,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
                 onClick={() =>
                   void exportSvgToPng(
                     payload.svgHtml,
-                    `chatbeaty-diagram-${Date.now()}.png`,
+                    `chatbeauty-diagram-${Date.now()}.png`,
                     theme
                   )
                 }

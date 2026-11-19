@@ -76,10 +76,10 @@ export const App: React.FC = () => {
       resolveFontFamily(appearance.fontFamily, appearance.customFontName)
     );
 
-    let styleEl = document.getElementById('chatbeaty-custom-css') as HTMLStyleElement | null;
+    let styleEl = document.getElementById('chatbeauty-custom-css') as HTMLStyleElement | null;
     if (!styleEl) {
       styleEl = document.createElement('style');
-      styleEl.id = 'chatbeaty-custom-css';
+      styleEl.id = 'chatbeauty-custom-css';
       document.head.appendChild(styleEl);
     }
     styleEl.textContent = appearance.customCss || '';
@@ -144,7 +144,7 @@ export const App: React.FC = () => {
   if (!ready) {
     return (
       <div className="h-full w-full flex items-center justify-center bg-bg text-muted text-sm">
-        正在初始化 ChatBeaty…
+        正在初始化 ChatBeauty…
       </div>
     );
   }

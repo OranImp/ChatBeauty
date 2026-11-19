@@ -27,7 +27,7 @@ export async function exportFullBackup(): Promise<AppBackupV1> {
 
   return {
     version: 1,
-    app: 'ChatBeaty',
+    app: 'ChatBeauty',
     exportedAt: Date.now(),
     conversations,
     messages,
@@ -46,8 +46,8 @@ export async function importFullBackup(
   data: AppBackupV1,
   mode: 'merge' | 'replace'
 ): Promise<void> {
-  if (!data || data.app !== 'ChatBeaty' || data.version !== 1) {
-    throw new Error('无效的 ChatBeaty 备份文件格式');
+  if (!data || data.app !== 'ChatBeauty' || data.version !== 1) {
+    throw new Error('无效的 ChatBeauty 备份文件格式');
   }
 
   await db.transaction(
@@ -124,7 +124,7 @@ export function exportConversationHtml(conv: Conversation, messages: Message[]):
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<title>${escapeHtml(conv.title)} - ChatBeaty</title>
+<title>${escapeHtml(conv.title)} - ChatBeauty</title>
 <style>
   body { background: #0b0d12; color: #f4f4f5; font-family: system-ui, -apple-system, sans-serif; max-width: 820px; margin: 40px auto; padding: 0 20px; line-height: 1.7; }
   h1 { font-size: 1.6rem; border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 12px; }

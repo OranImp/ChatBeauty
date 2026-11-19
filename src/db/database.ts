@@ -17,7 +17,7 @@ export interface KvRecord {
   value: unknown;
 }
 
-class ChatBeatyDatabase extends Dexie {
+class ChatBeautyDatabase extends Dexie {
   conversations!: Table<Conversation, string>;
   messages!: Table<Message, string>;
   providers!: Table<ProviderConfig, string>;
@@ -25,7 +25,7 @@ class ChatBeatyDatabase extends Dexie {
   kv!: Table<KvRecord, string>;
 
   constructor() {
-    super('ChatBeatyDB');
+    super('ChatBeautyDB');
     this.version(1).stores({
       conversations: 'id, updatedAt, pinned',
       messages: 'id, conversationId, createdAt',
@@ -36,7 +36,7 @@ class ChatBeatyDatabase extends Dexie {
   }
 }
 
-export const db = new ChatBeatyDatabase();
+export const db = new ChatBeautyDatabase();
 
 const KV_KEYS = {
   INITIALIZED: 'app:initialized_v1',

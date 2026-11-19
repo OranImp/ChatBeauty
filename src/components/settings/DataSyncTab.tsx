@@ -31,7 +31,7 @@ export const DataSyncTab: React.FC = () => {
   const handleExportFull = async () => {
     const data = await exportFullBackup();
     triggerDownload(
-      `ChatBeaty-Backup-${new Date().toISOString().slice(0, 10)}.json`,
+      `ChatBeauty-Backup-${new Date().toISOString().slice(0, 10)}.json`,
       new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' })
     );
     setNotice({ ok: true, text: '已导出全部本地对话、接口与设置备份' });

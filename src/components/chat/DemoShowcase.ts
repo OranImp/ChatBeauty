@@ -267,7 +267,7 @@ def full_adder(a: int, b: int, c_in: int) -> tuple[int, int]:
     ],
     createdAt: now - 105000,
     updatedAt: now - 60000,
-    modelId: 'ChatBeaty Showcase',
+    modelId: 'ChatBeauty Showcase',
     status: 'done',
   };
 

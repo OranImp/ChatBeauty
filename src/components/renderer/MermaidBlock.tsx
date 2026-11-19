@@ -114,7 +114,7 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
               <button
                 type="button"
                 onClick={() =>
-                  void exportSvgToPng(svg, `chatbeaty-mermaid-${Date.now()}.png`, theme)
+                  void exportSvgToPng(svg, `chatbeauty-mermaid-${Date.now()}.png`, theme)
                 }
                 className="p-1.5 rounded-lg text-muted hover:text-fg hover:bg-white/10 transition"
                 title="导出 PNG"

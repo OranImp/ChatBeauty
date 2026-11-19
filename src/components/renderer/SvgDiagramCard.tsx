@@ -84,7 +84,7 @@ export const SvgDiagramCard: React.FC<SvgDiagramCardProps> = ({
                 type="button"
                 onClick={() =>
                   triggerDownload(
-                    `chatbeaty-svg-${Date.now()}.svg`,
+                    `chatbeauty-svg-${Date.now()}.svg`,
                     new Blob([code], { type: 'image/svg+xml;charset=utf-8' })
                   )
                 }
@@ -98,7 +98,7 @@ export const SvgDiagramCard: React.FC<SvgDiagramCardProps> = ({
                 onClick={() =>
                   void exportSvgToPng(
                     processed.html,
-                    `chatbeaty-svg-${Date.now()}.png`,
+                    `chatbeauty-svg-${Date.now()}.png`,
                     theme
                   )
                 }

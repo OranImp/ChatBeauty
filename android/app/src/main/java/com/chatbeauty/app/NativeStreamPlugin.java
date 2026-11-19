@@ -1,4 +1,4 @@
-package com.chatbeaty.app;
+package com.chatbeauty.app;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
