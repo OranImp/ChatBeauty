@@ -53,7 +53,7 @@ export const SvgDiagramCard: React.FC<SvgDiagramCardProps> = ({
   return (
     <figure className="my-4 rounded-2xl border border-borderc bg-surface/35 overflow-hidden group relative">
       {/* Subtle hover-only floating corner actions */}
-      <div className="absolute top-2.5 right-2.5 z-10 flex items-center gap-0.5 rounded-xl border border-borderc/80 bg-elevated/85 backdrop-blur-md px-1 py-0.5 opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+      <div className="absolute top-2.5 right-2.5 z-10 flex items-center gap-0.5 rounded-xl border border-borderc bg-elevated/85 backdrop-blur-md px-1 py-0.5 opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
         <button
           type="button"
           onClick={() => setShowCode((v) => !v)}
@@ -128,7 +128,7 @@ export const SvgDiagramCard: React.FC<SvgDiagramCardProps> = ({
         </pre>
       ) : (
         <div
-          className="px-4 py-5 flex justify-center items-center cursor-zoom-in text-fg"
+          className="px-4 pt-11 pb-4 sm:py-5 flex justify-center items-center cursor-zoom-in text-fg"
           onClick={() =>
             onInspect({
               kind: 'svg',

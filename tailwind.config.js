@@ -5,14 +5,14 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: 'var(--bg)',
-        surface: 'var(--surface)',
-        elevated: 'var(--surface-elevated)',
-        fg: 'var(--fg)',
-        muted: 'var(--muted)',
+        bg: 'rgb(var(--bg-rgb) / <alpha-value>)',
+        surface: 'rgb(var(--surface-rgb) / <alpha-value>)',
+        elevated: 'rgb(var(--elevated-rgb) / <alpha-value>)',
+        fg: 'rgb(var(--fg-rgb) / <alpha-value>)',
+        muted: 'rgb(var(--muted-rgb) / <alpha-value>)',
         borderc: 'var(--border)',
-        accent: 'var(--accent)',
-        accentfg: 'var(--accent-fg)',
+        accent: 'rgb(var(--accent-rgb) / <alpha-value>)',
+        accentfg: 'rgb(var(--accent-fg-rgb) / <alpha-value>)',
       },
     },
   },

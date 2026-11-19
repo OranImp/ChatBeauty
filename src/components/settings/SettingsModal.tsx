@@ -59,7 +59,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex items-center gap-1.5 px-4 py-2 border-b border-borderc/70 bg-surface/35 overflow-x-auto no-scrollbar shrink-0">
+        <div className="flex items-center gap-1.5 px-4 py-2 border-b border-borderc bg-surface/35 overflow-x-auto no-scrollbar shrink-0">
           {TABS.map(({ key, label }) => {
             const active = activeTab === key;
             return (

@@ -379,7 +379,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
                   className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border transition ${
                     selected
                       ? 'border-fg/35 bg-elevated text-fg'
-                      : 'border-borderc/60 bg-surface/40 text-muted hover:text-fg'
+                      : 'border-borderc bg-surface/40 text-muted hover:text-fg'
                   }`}
                 >
                   <button

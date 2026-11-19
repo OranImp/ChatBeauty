@@ -166,7 +166,7 @@ export const PromptsTab: React.FC = () => {
         </div>
 
         {presetDraft && (
-          <div className="space-y-3 pt-2 border-t border-borderc/60">
+          <div className="space-y-3 pt-2 border-t border-borderc">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               <label className="space-y-1">
                 <span className="text-muted">预设名称</span>

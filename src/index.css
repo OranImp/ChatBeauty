@@ -4,6 +4,13 @@
 
 :root,
 [data-theme='oled'] {
+  --bg-rgb: 0 0 0;
+  --surface-rgb: 20 20 22;
+  --elevated-rgb: 31 31 34;
+  --fg-rgb: 244 244 245;
+  --muted-rgb: 156 163 175;
+  --accent-rgb: 237 237 237;
+  --accent-fg-rgb: 10 10 10;
   --bg: #000000;
   --surface: #141416;
   --surface-elevated: #1f1f22;
@@ -22,6 +29,13 @@
 }
 
 [data-theme='dark'] {
+  --bg-rgb: 23 23 23;
+  --surface-rgb: 33 33 33;
+  --elevated-rgb: 43 43 43;
+  --fg-rgb: 244 244 245;
+  --muted-rgb: 161 161 170;
+  --accent-rgb: 237 237 237;
+  --accent-fg-rgb: 10 10 10;
   --bg: #171717;
   --surface: #212121;
   --surface-elevated: #2b2b2b;
@@ -34,6 +48,13 @@
 }
 
 [data-theme='light'] {
+  --bg-rgb: 255 255 255;
+  --surface-rgb: 244 244 245;
+  --elevated-rgb: 255 255 255;
+  --fg-rgb: 24 24 27;
+  --muted-rgb: 113 113 122;
+  --accent-rgb: 24 24 27;
+  --accent-fg-rgb: 255 255 255;
   --bg: #ffffff;
   --surface: #f4f4f5;
   --surface-elevated: #ffffff;

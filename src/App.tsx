@@ -26,7 +26,7 @@ function resolveFontFamily(
   return `-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif`;
 }
 
-function getContrastFg(hex: string): string {
+function parseHexRgb(hex: string): { r: number; g: number; b: number } | null {
   const clean = hex.trim().replace('#', '');
   const full =
     clean.length === 3
@@ -35,11 +35,18 @@ function getContrastFg(hex: string): string {
           .map((c) => c + c)
           .join('')
       : clean;
-  if (full.length !== 6) return '#0a0a0a';
+  if (full.length !== 6) return null;
   const r = parseInt(full.slice(0, 2), 16);
   const g = parseInt(full.slice(2, 4), 16);
   const b = parseInt(full.slice(4, 6), 16);
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  if ([r, g, b].some(Number.isNaN)) return null;
+  return { r, g, b };
+}
+
+function getContrastFg(hex: string): string {
+  const rgb = parseHexRgb(hex);
+  if (!rgb) return '#0a0a0a';
+  const luminance = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
   return luminance > 0.58 ? '#0a0a0a' : '#ffffff';
 }
 
@@ -89,8 +96,20 @@ export const App: React.FC = () => {
       resolvedTheme === 'light' && rawAccent.toLowerCase() === '#ededed'
         ? '#18181b'
         : rawAccent;
+    const accentFg = getContrastFg(effectiveAccent);
+    const accentRgb = parseHexRgb(effectiveAccent);
+    const accentFgRgb = parseHexRgb(accentFg);
     root.style.setProperty('--accent', effectiveAccent);
-    root.style.setProperty('--accent-fg', getContrastFg(effectiveAccent));
+    root.style.setProperty('--accent-fg', accentFg);
+    if (accentRgb) {
+      root.style.setProperty('--accent-rgb', `${accentRgb.r} ${accentRgb.g} ${accentRgb.b}`);
+    }
+    if (accentFgRgb) {
+      root.style.setProperty(
+        '--accent-fg-rgb',
+        `${accentFgRgb.r} ${accentFgRgb.g} ${accentFgRgb.b}`
+      );
+    }
 
     root.style.setProperty('--chat-font-size', `${appearance.fontSize}px`);
     root.style.setProperty('--chat-line-height', String(appearance.lineHeight));

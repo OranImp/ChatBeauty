@@ -327,7 +327,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveMenu((m) => (m === 'model' ? null : 'model'))}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-borderc/80 bg-bg/50 hover:bg-elevated text-xs text-fg max-w-[140px] sm:max-w-[200px] transition"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-borderc bg-bg/50 hover:bg-elevated text-xs text-fg max-w-[140px] sm:max-w-[200px] transition"
                 title="切换模型"
               >
                 <span className="truncate">{currentModelId || '选择模型'}</span>
@@ -337,7 +337,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveMenu((m) => (m === 'reasoning' ? null : 'reasoning'))}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-borderc/80 bg-bg/50 hover:bg-elevated text-xs text-muted hover:text-fg shrink-0 transition"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-borderc bg-bg/50 hover:bg-elevated text-xs text-muted hover:text-fg shrink-0 transition"
                 title="设置推理强度"
               >
                 <span>推理 {reasoningLabel}</span>

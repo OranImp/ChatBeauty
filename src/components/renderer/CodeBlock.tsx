@@ -106,7 +106,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
 
   return (
     <div className="my-3.5 rounded-xl border border-borderc bg-surface/60 overflow-hidden text-sm">
-      <div className="flex items-center justify-between px-3.5 py-1.5 border-b border-borderc/60 bg-surface/80 text-xs text-muted">
+      <div className="flex items-center justify-between px-3.5 py-1.5 border-b border-borderc bg-surface/80 text-xs text-muted">
         <span className="font-mono text-[11px] uppercase tracking-wider">{lang}</span>
         <div className="flex items-center gap-1">
           {isHtml && (

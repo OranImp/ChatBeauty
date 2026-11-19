@@ -291,7 +291,7 @@ export const ProvidersTab: React.FC = () => {
                     className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl border ${
                       isActive || isDefault
                         ? 'bg-elevated border-fg/25 text-fg'
-                        : 'bg-bg/60 border-borderc/60 text-muted'
+                        : 'bg-bg/60 border-borderc text-muted'
                     }`}
                   >
                     <button

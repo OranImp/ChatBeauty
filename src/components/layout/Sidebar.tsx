@@ -226,7 +226,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Footer Settings */}
-      <div className="p-3 border-t border-borderc/70 safe-bottom">
+      <div className="p-3 border-t border-borderc safe-bottom">
         <button
           type="button"
           onClick={() => {

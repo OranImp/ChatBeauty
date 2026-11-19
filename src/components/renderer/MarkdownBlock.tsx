@@ -59,7 +59,7 @@ const TableWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 
   return (
     <div className="my-4 rounded-xl border border-borderc bg-surface/35 overflow-hidden">
-      <div className="flex justify-end px-2.5 py-1 border-b border-borderc/50 bg-surface/50">
+      <div className="flex justify-end px-2.5 py-1 border-b border-borderc bg-surface/50">
         <button
           type="button"
           onClick={() => void handleCopyTsv()}
@@ -182,7 +182,7 @@ export const MarkdownBlock: React.FC<MarkdownBlockProps> = memo(
           // Block codes are handled by `pre`; only inline code lands directly without `pre`
           return (
             <code
-              className={`px-1.5 py-0.5 rounded-md bg-white/[0.08] border border-borderc/60 font-mono text-[0.875em] text-fg ${
+              className={`px-1.5 py-0.5 rounded-md bg-white/[0.08] border border-borderc font-mono text-[0.875em] text-fg ${
                 className || ''
               }`}
               {...rest}
@@ -214,7 +214,7 @@ export const MarkdownBlock: React.FC<MarkdownBlockProps> = memo(
           </th>
         ),
         td: ({ children }: { children?: React.ReactNode }) => (
-          <td className="px-3.5 py-2 border-t border-borderc/50 text-fg/90">{children}</td>
+          <td className="px-3.5 py-2 border-t border-borderc text-fg/90">{children}</td>
         ),
         a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
           <a

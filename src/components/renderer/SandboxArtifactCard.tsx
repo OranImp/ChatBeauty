@@ -127,7 +127,7 @@ export const SandboxArtifactCard: React.FC<SandboxArtifactCardProps> = ({
 
   return (
     <div className="my-4 rounded-2xl border border-borderc bg-surface/40 overflow-hidden">
-      <div className="flex items-center justify-between px-3.5 py-2 border-b border-borderc/60 bg-surface/60">
+      <div className="flex items-center justify-between px-3.5 py-2 border-b border-borderc bg-surface/60">
         <span className="text-[11px] font-medium tracking-wide text-muted uppercase">
           交互沙盒预览
         </span>

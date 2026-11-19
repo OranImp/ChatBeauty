@@ -89,7 +89,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
 
       {/* Desktop clean header bar */}
-      <div className="hidden md:flex items-center justify-between px-4 h-[50px] border-b border-borderc/60 bg-bg/85 backdrop-blur-md">
+      <div className="hidden md:flex items-center justify-between px-4 h-[50px] border-b border-borderc bg-bg/85 backdrop-blur-md">
         <div className="flex items-center gap-2.5 min-w-0">
           {!sidebarOpen && (
             <button
@@ -186,7 +186,7 @@ export const TopBar: React.FC<TopBarProps> = ({
               <button
                 type="button"
                 onClick={handleExportMd}
-                className="w-full text-left px-3 py-2 rounded-xl hover:bg-white/10 border-t border-borderc/60 mt-1 pt-2"
+                className="w-full text-left px-3 py-2 rounded-xl hover:bg-white/10 border-t border-borderc mt-1 pt-2"
               >
                 导出 Markdown
               </button>

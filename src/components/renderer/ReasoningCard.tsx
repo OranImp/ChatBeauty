@@ -43,7 +43,7 @@ export const ReasoningCard: React.FC<ReasoningCardProps> = ({
       </button>
 
       {open && (
-        <div className="px-3.5 pb-3 pt-1 border-t border-borderc/50 text-[13px] text-muted leading-relaxed">
+        <div className="px-3.5 pb-3 pt-1 border-t border-borderc text-[13px] text-muted leading-relaxed">
           <MarkdownBlock
             content={text}
             theme={theme}

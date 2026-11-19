@@ -148,7 +148,7 @@ export const DataSyncTab: React.FC = () => {
         </div>
 
         {activeConv && (
-          <div className="pt-3 border-t border-borderc/60 flex flex-wrap items-center gap-2">
+          <div className="pt-3 border-t border-borderc flex flex-wrap items-center gap-2">
             <span className="text-muted">导出当前对话：</span>
             <button
               type="button"
