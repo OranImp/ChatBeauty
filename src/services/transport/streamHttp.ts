@@ -49,6 +49,9 @@ export interface ElectronBridge {
     backgroundGeneration: boolean;
   }) => Promise<void>;
   setStreamingState?: (count: number) => Promise<void>;
+  onClipboardImagePaste?: (
+    cb: (data: { dataUrl: string; mimeType: string; name: string }) => void
+  ) => () => void;
   quitApp?: () => Promise<void>;
 }
 
@@ -393,4 +396,13 @@ export async function openAndroidBatterySettings(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export function subscribeDesktopClipboardImagePaste(
+  cb: (data: { dataUrl: string; mimeType: string; name: string }) => void
+): () => void {
+  if (typeof window === 'undefined' || !window.electronBridge?.onClipboardImagePaste) {
+    return () => undefined;
+  }
+  return window.electronBridge.onClipboardImagePaste(cb);
 }

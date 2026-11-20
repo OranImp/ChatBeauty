@@ -322,80 +322,101 @@ export const AppearanceTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Background Generation & Keep-Alive */}
-      <div className="rounded-2xl border border-borderc bg-surface/40 p-4 space-y-3">
-        <div className="flex items-center gap-2 font-semibold text-fg">
-          <Monitor className="w-4 h-4 text-accent" />
-          <span>后台生成与保活设置</span>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-          <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-bg/70 border border-borderc">
-            <div>
-              <div className="font-medium text-fg">启用后台持续生成</div>
-              <div className="text-xs text-muted">切换应用或最小化窗口时不中断流式输出，完成后发送系统通知</div>
-            </div>
-            <ToggleSwitch
-              checked={appearance.backgroundGeneration ?? true}
-              onChange={(checked) => void updateAppearance({ backgroundGeneration: checked })}
-              ariaLabel="启用后台持续生成"
-            />
+      {/* Background Generation & Keep-Alive (only rendered on native Electron / Capacitor runtimes) */}
+      {(runtimeEnv === 'electron' || runtimeEnv === 'capacitor') && (
+        <div className="rounded-2xl border border-borderc bg-surface/40 p-4 space-y-3">
+          <div className="flex items-center gap-2 font-semibold text-fg">
+            {runtimeEnv === 'electron' ? (
+              <>
+                <Monitor className="w-4 h-4 text-accent" />
+                <span>后台生成与托盘设置</span>
+              </>
+            ) : (
+              <>
+                <Smartphone className="w-4 h-4 text-accent" />
+                <span>后台生成与保活设置</span>
+              </>
+            )}
           </div>
 
-          <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-bg/70 border border-borderc">
-            <div>
-              <div className="font-medium text-fg">关闭窗口最小化到托盘 (Windows)</div>
-              <div className="text-xs text-muted">点击主窗口关闭按钮后隐藏至右下角系统托盘并在后台继续运行</div>
-            </div>
-            <ToggleSwitch
-              checked={appearance.closeToTray ?? true}
-              onChange={(checked) => void updateAppearance({ closeToTray: checked })}
-              ariaLabel="关闭窗口最小化到托盘"
-            />
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl bg-bg/60 border border-borderc">
-          <div className="flex items-start gap-2.5">
-            <Smartphone className="w-4 h-4 text-muted shrink-0 mt-0.5" />
-            <div>
-              <div className="font-medium text-fg">手机端后台保活（无限制电池策略）</div>
-              <div className="text-xs text-muted">
-                {runtimeEnv === 'capacitor'
-                  ? batteryIgnored === true
-                    ? '当前已授予「电池无限制」，后台生成时会自动启用前台服务与唤醒锁'
-                    : '建议在系统设置中将 ChatBeauty 设为「后台无限制 / 忽略电池优化」，防止息屏断流'
-                  : '仅在 Android 客户端中生效：点击可引导至系统应用电池设置页面'}
+          <div
+            className={`grid grid-cols-1 ${
+              runtimeEnv === 'electron' ? 'sm:grid-cols-2' : ''
+            } gap-2.5`}
+          >
+            <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-bg/70 border border-borderc">
+              <div>
+                <div className="font-medium text-fg">启用后台持续生成</div>
+                <div className="text-xs text-muted">
+                  {runtimeEnv === 'electron'
+                    ? '最小化或隐藏至托盘时不中断流式输出，完成后发送系统通知'
+                    : '切换应用或息屏时不中断流式输出，由前台服务持续保活'}
+                </div>
               </div>
+              <ToggleSwitch
+                checked={appearance.backgroundGeneration ?? true}
+                onChange={(checked) => void updateAppearance({ backgroundGeneration: checked })}
+                ariaLabel="启用后台持续生成"
+              />
             </div>
+
+            {runtimeEnv === 'electron' && (
+              <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-bg/70 border border-borderc">
+                <div>
+                  <div className="font-medium text-fg">关闭窗口最小化到托盘</div>
+                  <div className="text-xs text-muted">
+                    点击主窗口关闭按钮后隐藏至右下角系统托盘并在后台继续运行
+                  </div>
+                </div>
+                <ToggleSwitch
+                  checked={appearance.closeToTray ?? true}
+                  onChange={(checked) => void updateAppearance({ closeToTray: checked })}
+                  ariaLabel="关闭窗口最小化到托盘"
+                />
+              </div>
+            )}
           </div>
 
           {runtimeEnv === 'capacitor' && (
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => void refreshBatteryStatus()}
-                disabled={batteryChecking}
-                className="px-2.5 py-1.5 rounded-xl border border-borderc bg-bg hover:bg-elevated text-xs text-muted hover:text-fg transition disabled:opacity-50"
-              >
-                {batteryChecking ? '检测中...' : '刷新状态'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void openAndroidBatterySettings().then(() => {
-                    setTimeout(() => void refreshBatteryStatus(), 800);
-                  });
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-accent text-accentfg text-xs font-semibold transition"
-              >
-                <BatteryCharging className="w-4 h-4" />
-                <span>{batteryIgnored ? '查看电池策略' : '去设置后台无限制'}</span>
-              </button>
+            <div className="flex flex-wrap items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl bg-bg/60 border border-borderc">
+              <div className="flex items-start gap-2.5">
+                <BatteryCharging className="w-4 h-4 text-muted shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-medium text-fg">手机端后台保活（无限制电池策略）</div>
+                  <div className="text-xs text-muted">
+                    {batteryIgnored === true
+                      ? '当前已授予「电池无限制」，后台生成时会自动启用前台服务与唤醒锁'
+                      : '建议在系统设置中将 ChatBeauty 设为「后台无限制 / 忽略电池优化」，防止息屏断流'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => void refreshBatteryStatus()}
+                  disabled={batteryChecking}
+                  className="px-2.5 py-1.5 rounded-xl border border-borderc bg-bg hover:bg-elevated text-xs text-muted hover:text-fg transition disabled:opacity-50"
+                >
+                  {batteryChecking ? '检测中...' : '刷新状态'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void openAndroidBatterySettings().then(() => {
+                      setTimeout(() => void refreshBatteryStatus(), 800);
+                    });
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-accent text-accentfg text-xs font-semibold transition"
+                >
+                  <BatteryCharging className="w-4 h-4" />
+                  <span>{batteryIgnored ? '查看电池策略' : '去设置后台无限制'}</span>
+                </button>
+              </div>
             </div>
           )}
         </div>
-      </div>
+      )}
 
       {/* Smooth Collapsible Custom CSS Injection */}
       <div className="rounded-2xl border border-borderc bg-surface/40 overflow-hidden">

@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   ipcMain,
   Menu,
   nativeImage,
@@ -37,6 +38,60 @@ let backgroundGenEnabled = true;
 let activeGenerationCount = 0;
 let suspendBlockerId: number | null = null;
 let trayTipShown = false;
+
+const CLIPBOARD_IMAGE_MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+};
+
+function readClipboardImagePayload(): {
+  dataUrl: string;
+  mimeType: string;
+  name: string;
+} | null {
+  try {
+    const img = clipboard.readImage();
+    if (!img.isEmpty()) {
+      const pngBuffer = img.toPNG();
+      if (pngBuffer.length > 0) {
+        return {
+          dataUrl: `data:image/png;base64,${pngBuffer.toString('base64')}`,
+          mimeType: 'image/png',
+          name: `clipboard-${Date.now()}.png`,
+        };
+      }
+    }
+
+    if (process.platform === 'win32' && clipboard.has('FileNameW')) {
+      const filePath = clipboard
+        .readBuffer('FileNameW')
+        .toString('utf16le')
+        .replace(/\0[\s\S]*$/, '')
+        .trim();
+      if (filePath) {
+        const ext = path.extname(filePath).toLowerCase();
+        const mimeType = CLIPBOARD_IMAGE_MIME_BY_EXT[ext];
+        if (mimeType && fs.existsSync(filePath)) {
+          const stat = fs.statSync(filePath);
+          if (stat.isFile() && stat.size > 0 && stat.size <= 15 * 1024 * 1024) {
+            const bytes = fs.readFileSync(filePath);
+            return {
+              dataUrl: `data:${mimeType};base64,${bytes.toString('base64')}`,
+              mimeType,
+              name: path.basename(filePath),
+            };
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore unsupported clipboard format reads
+  }
+  return null;
+}
 
 function showMainWindow(): void {
   if (!mainWindow) {
@@ -178,6 +233,62 @@ function createWindow(): void {
   } else {
     void mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
+
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    const hasText = clipboard.readText().length > 0;
+    const clipboardImage = readClipboardImagePayload();
+    const hasImage = Boolean(clipboardImage);
+    const template: Electron.MenuItemConstructorOptions[] = [];
+
+    if (params.isEditable) {
+      template.push(
+        { label: '撤销', role: 'undo', enabled: params.editFlags.canUndo },
+        { label: '重做', role: 'redo', enabled: params.editFlags.canRedo },
+        { type: 'separator' },
+        { label: '剪切', role: 'cut', enabled: params.editFlags.canCut },
+        { label: '复制', role: 'copy', enabled: params.editFlags.canCopy },
+        {
+          label: '粘贴',
+          enabled: params.editFlags.canPaste || hasText || hasImage,
+          click: () => {
+            if (hasImage && !hasText && clipboardImage) {
+              mainWindow?.webContents.send('app:paste-clipboard-image', clipboardImage);
+            } else {
+              mainWindow?.webContents.paste();
+            }
+          },
+        }
+      );
+      if (hasImage && clipboardImage) {
+        template.push({
+          label: '粘贴图片',
+          click: () => {
+            mainWindow?.webContents.send('app:paste-clipboard-image', clipboardImage);
+          },
+        });
+      }
+      template.push(
+        { type: 'separator' },
+        { label: '全选', role: 'selectAll', enabled: params.editFlags.canSelectAll }
+      );
+    } else {
+      if (params.selectionText.trim()) {
+        template.push({ label: '复制', role: 'copy' });
+      }
+      if (hasImage && clipboardImage) {
+        template.push({
+          label: '粘贴图片到输入框',
+          click: () => {
+            mainWindow?.webContents.send('app:paste-clipboard-image', clipboardImage);
+          },
+        });
+      }
+    }
+
+    if (template.length > 0) {
+      Menu.buildFromTemplate(template).popup({ window: mainWindow ?? undefined });
+    }
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;

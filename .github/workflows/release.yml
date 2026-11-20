@@ -92,6 +92,9 @@ jobs:
           if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
             echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "${{ runner.temp }}/release.keystore"
             echo "KEYSTORE_FILE=${{ runner.temp }}/release.keystore" >> "$GITHUB_ENV"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "ERROR: Tagged release requires ANDROID_KEYSTORE_BASE64 secret so APK signatures remain consistent across updates."
+            exit 1
           fi
 
       - name: Build Android Release APK
@@ -119,6 +122,7 @@ jobs:
             exit 1
           fi
           cp "$APK_SRC" "apk-out/ChatBeauty-Android-${VERSION}.apk"
+          keytool -printcert -jarfile "apk-out/ChatBeauty-Android-${VERSION}.apk"
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4

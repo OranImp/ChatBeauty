@@ -16,6 +16,7 @@ import {
   MAX_ATTACHED_IMAGES,
   prepareImageAttachment,
 } from '@/services/media/imageUtils';
+import { subscribeDesktopClipboardImagePaste } from '@/services/transport/streamHttp';
 import type { ContentPart } from '@/types/chat';
 import type { LightboxPayload } from '@/components/renderer/LightboxModal';
 import type { CustomModelParams } from '@/types/chat';
@@ -251,6 +252,28 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       setAttachedImages((prev) => [...prev, ...nextBatch].slice(0, MAX_ATTACHED_IMAGES));
     }
   };
+
+  const addImageFilesRef = useRef(addImageFiles);
+  addImageFilesRef.current = addImageFiles;
+
+  useEffect(() => {
+    return subscribeDesktopClipboardImagePaste((payload) => {
+      if (typeof document !== 'undefined' && document.querySelector('[role="dialog"]')) {
+        return;
+      }
+      void (async () => {
+        try {
+          const response = await fetch(payload.dataUrl);
+          const blob = await response.blob();
+          const mimeType = payload.mimeType || blob.type || 'image/png';
+          const file = new File([blob], payload.name || 'clipboard.png', { type: mimeType });
+          await addImageFilesRef.current([file]);
+        } catch {
+          setImageError('粘贴剪贴板图片失败');
+        }
+      })();
+    });
+  }, []);
 
   const handleSubmit = () => {
     if (isStreaming) {
@@ -831,10 +854,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             }}
             onPaste={(e) => {
               const items = Array.from(e.clipboardData?.items || []);
-              const imageFiles = items
+              let imageFiles = items
                 .filter((it) => it.type.startsWith('image/'))
                 .map((it) => it.getAsFile())
                 .filter((f): f is File => Boolean(f));
+              if (imageFiles.length === 0 && e.clipboardData?.files?.length) {
+                imageFiles = Array.from(e.clipboardData.files).filter((f) =>
+                  f.type.startsWith('image/')
+                );
+              }
               if (imageFiles.length > 0) {
                 e.preventDefault();
                 void addImageFiles(imageFiles);

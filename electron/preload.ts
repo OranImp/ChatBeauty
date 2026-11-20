@@ -44,5 +44,16 @@ contextBridge.exposeInMainWorld('electronBridge', {
 
   setStreamingState: (count: number) => ipcRenderer.invoke('app:set-streaming-state', count),
 
+  onClipboardImagePaste: (
+    cb: (data: { dataUrl: string; mimeType: string; name: string }) => void
+  ) => {
+    const handler = (
+      _evt: Electron.IpcRendererEvent,
+      data: { dataUrl: string; mimeType: string; name: string }
+    ) => cb(data);
+    ipcRenderer.on('app:paste-clipboard-image', handler);
+    return () => ipcRenderer.removeListener('app:paste-clipboard-image', handler);
+  },
+
   quitApp: () => ipcRenderer.invoke('app:quit'),
 });
