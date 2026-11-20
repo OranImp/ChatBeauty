@@ -1,8 +1,13 @@
 package com.chatbeauty.app;
 
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.Base64;
+import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
 
 import com.getcapacitor.JSObject;
@@ -24,17 +29,32 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import okhttp3.internal.http.HttpMethod;
 
 @CapacitorPlugin(name = "NativeStream")
 public class NativeStreamPlugin extends Plugin {
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private final ConcurrentHashMap<String, HttpURLConnection> activeConnections = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, AtomicBoolean> abortedFlags = new ConcurrentHashMap<>();
+    private final OkHttpClient httpClient = new OkHttpClient.Builder()
+            .connectTimeout(25, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build();
 
     @PluginMethod
     public void startStream(PluginCall call) {
@@ -55,7 +75,18 @@ public class NativeStreamPlugin extends Plugin {
         executor.execute(() -> {
             HttpURLConnection conn = null;
             boolean opened = false;
+            PowerManager.WakeLock streamLock = null;
             try {
+                try {
+                    PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+                    if (pm != null) {
+                        streamLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ChatBeauty:StreamLock");
+                        streamLock.setReferenceCounted(false);
+                        streamLock.acquire(10 * 60 * 1000L);
+                    }
+                } catch (Exception ignored) {
+                    // Best-effort lock
+                }
                 URL url = new URL(urlStr);
                 conn = (HttpURLConnection) url.openConnection();
                 activeConnections.put(requestId, conn);
@@ -139,6 +170,13 @@ public class NativeStreamPlugin extends Plugin {
                 if (conn != null) {
                     conn.disconnect();
                 }
+                try {
+                    if (streamLock != null && streamLock.isHeld()) {
+                        streamLock.release();
+                    }
+                } catch (Exception ignored) {
+                    // ignore
+                }
             }
         });
     }
@@ -172,22 +210,12 @@ public class NativeStreamPlugin extends Plugin {
         }
 
         executor.execute(() -> {
-            HttpURLConnection conn = null;
             try {
-                URL url = new URL(urlStr);
-                conn = (HttpURLConnection) url.openConnection();
-                conn.setConnectTimeout(25000);
-                conn.setReadTimeout(30000);
-                conn.setUseCaches(false);
-                conn.setDoInput(true);
-
-                try {
-                    conn.setRequestMethod(method);
-                } catch (ProtocolException pe) {
-                    // Fallback for WebDAV verbs such as PROPFIND/MKCOL if restricted by HttpURLConnection
-                    conn.setRequestMethod("POST");
-                    conn.setRequestProperty("X-HTTP-Method-Override", method);
-                }
+                String upperMethod = (method != null && !method.trim().isEmpty())
+                        ? method.trim().toUpperCase(Locale.ROOT)
+                        : "GET";
+                Request.Builder reqBuilder = new Request.Builder().url(urlStr);
+                String contentType = null;
 
                 if (headers != null) {
                     Iterator<String> keys = headers.keys();
@@ -195,45 +223,49 @@ public class NativeStreamPlugin extends Plugin {
                         String key = keys.next();
                         String val = headers.getString(key);
                         if (val != null) {
-                            conn.setRequestProperty(key, val);
+                            reqBuilder.header(key, val);
+                            if ("content-type".equalsIgnoreCase(key)) {
+                                contentType = val;
+                            }
                         }
                     }
                 }
 
-                if (body != null) {
-                    conn.setDoOutput(true);
-                    byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-                    try (OutputStream os = conn.getOutputStream()) {
-                        os.write(bytes);
-                        os.flush();
+                RequestBody requestBody = null;
+                if (!"GET".equals(upperMethod) && !"HEAD".equals(upperMethod)) {
+                    if (body != null) {
+                        MediaType mediaType = MediaType.parse(
+                                contentType != null ? contentType : "application/octet-stream"
+                        );
+                        requestBody = RequestBody.create(body.getBytes(StandardCharsets.UTF_8), mediaType);
+                    } else if (HttpMethod.requiresRequestBody(upperMethod)) {
+                        requestBody = RequestBody.create(new byte[0], null);
                     }
                 }
 
-                int status = conn.getResponseCode();
-                InputStream stream = (status >= 200 && status < 400)
-                        ? conn.getInputStream()
-                        : conn.getErrorStream();
-                String respBody = readStreamToString(stream);
+                reqBuilder.method(upperMethod, requestBody);
 
-                JSObject respHeaders = new JSObject();
-                for (Map.Entry<String, List<String>> entry : conn.getHeaderFields().entrySet()) {
-                    if (entry.getKey() != null && entry.getValue() != null && !entry.getValue().isEmpty()) {
-                        respHeaders.put(entry.getKey().toLowerCase(), String.join(", ", entry.getValue()));
+                try (Response response = httpClient.newCall(reqBuilder.build()).execute()) {
+                    int status = response.code();
+                    String respBody = response.body() != null ? response.body().string() : "";
+
+                    JSObject respHeaders = new JSObject();
+                    for (String name : response.headers().names()) {
+                        List<String> values = response.headers().values(name);
+                        if (!values.isEmpty()) {
+                            respHeaders.put(name.toLowerCase(Locale.ROOT), String.join(", ", values));
+                        }
                     }
-                }
 
-                JSObject result = new JSObject();
-                result.put("status", status);
-                result.put("statusText", conn.getResponseMessage() != null ? conn.getResponseMessage() : "");
-                result.put("headers", respHeaders);
-                result.put("body", respBody);
-                call.resolve(result);
+                    JSObject result = new JSObject();
+                    result.put("status", status);
+                    result.put("statusText", response.message());
+                    result.put("headers", respHeaders);
+                    result.put("body", respBody);
+                    call.resolve(result);
+                }
             } catch (Exception e) {
                 call.reject(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
-            } finally {
-                if (conn != null) {
-                    conn.disconnect();
-                }
             }
         });
     }
@@ -286,6 +318,69 @@ public class NativeStreamPlugin extends Plugin {
                 call.reject(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
             }
         });
+    }
+
+    @PluginMethod
+    public void getBatteryOptimizationStatus(PluginCall call) {
+        JSObject result = new JSObject();
+        boolean ignoring = true;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                ignoring = pm.isIgnoringBatteryOptimizations(getContext().getPackageName());
+            }
+        }
+        result.put("ignoring", ignoring);
+        result.put("manufacturer", Build.MANUFACTURER != null ? Build.MANUFACTURER : "");
+        result.put("sdkInt", Build.VERSION.SDK_INT);
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void openBatteryOptimizationSettings(PluginCall call) {
+        try {
+            String pkg = getContext().getPackageName();
+            Intent intent = null;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + pkg));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                if (intent.resolveActivity(getContext().getPackageManager()) == null) {
+                    intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                }
+            }
+            if (intent == null || intent.resolveActivity(getContext().getPackageManager()) == null) {
+                intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + pkg));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            }
+            getContext().startActivity(intent);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject(e.getMessage() != null ? e.getMessage() : "Unable to open battery settings");
+        }
+    }
+
+    @PluginMethod
+    public void setBackgroundGenerationState(PluginCall call) {
+        boolean active = Boolean.TRUE.equals(call.getBoolean("active", false));
+        int count = call.getInt("count", active ? 1 : 0);
+        try {
+            Intent svc = new Intent(getContext(), BackgroundGenService.class);
+            if (active && count > 0) {
+                svc.setAction(BackgroundGenService.ACTION_START);
+                svc.putExtra("count", count);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    ContextCompat.startForegroundService(getContext(), svc);
+                } else {
+                    getContext().startService(svc);
+                }
+            } else {
+                getContext().stopService(svc);
+            }
+        } catch (Exception ignored) {
+            // Fail silently if OEM restricts background service start without foreground window
+        }
+        call.resolve();
     }
 
     private static String readStreamToString(InputStream stream) throws IOException {

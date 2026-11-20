@@ -13,6 +13,7 @@ interface SvgDiagramCardProps {
   caption?: string;
   theme: ResolvedTheme;
   isStreaming?: boolean;
+  frameless?: boolean;
   onInspect: (payload: LightboxPayload) => void;
 }
 
@@ -21,6 +22,7 @@ export const SvgDiagramCard: React.FC<SvgDiagramCardProps> = ({
   caption,
   theme,
   isStreaming,
+  frameless = false,
   onInspect,
 }) => {
   const [showCode, setShowCode] = useState(false);
@@ -51,9 +53,21 @@ export const SvgDiagramCard: React.FC<SvgDiagramCardProps> = ({
   }
 
   return (
-    <figure className="my-4 rounded-2xl border border-borderc bg-surface/35 overflow-hidden group relative">
+    <figure
+      className={
+        frameless
+          ? 'my-4 overflow-hidden group/media relative'
+          : 'my-4 rounded-2xl border border-borderc bg-surface/35 overflow-hidden group/media relative'
+      }
+    >
       {/* Subtle hover-only floating corner actions */}
-      <div className="absolute top-2.5 right-2.5 z-10 flex items-center gap-0.5 rounded-xl border border-borderc bg-elevated/85 backdrop-blur-md px-1 py-0.5 opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+      <div
+        className={
+          frameless
+            ? 'absolute top-2 right-2 z-20 flex items-center gap-0.5 rounded-xl border border-borderc bg-elevated/90 backdrop-blur-md px-1 py-0.5 opacity-0 group-hover/media:opacity-100 focus-within:opacity-100 transition-opacity duration-200 pointer-events-none group-hover/media:pointer-events-auto focus-within:pointer-events-auto'
+            : 'absolute top-2.5 right-2.5 z-10 flex items-center gap-0.5 rounded-xl border border-borderc bg-elevated/85 backdrop-blur-md px-1 py-0.5 opacity-80 sm:opacity-0 sm:group-hover/media:opacity-100 focus-within:opacity-100 transition-opacity'
+        }
+      >
         <button
           type="button"
           onClick={() => setShowCode((v) => !v)}

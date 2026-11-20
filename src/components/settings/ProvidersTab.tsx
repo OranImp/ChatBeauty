@@ -1,21 +1,32 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  ArrowRightLeft,
   Check,
   ChevronRight,
   CloudDownload,
+  Copy,
+  Download,
   Eye,
   EyeOff,
+  Gauge,
   Loader2,
   Plus,
   RefreshCw,
+  Search,
   SlidersHorizontal,
   Trash2,
+  Upload,
   Wifi,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { PROTOCOL_TEMPLATES } from '@/services/llm/registry';
-import { parseHttpHeadersJson, toModelDefinition } from '@/services/llm/adapters/shared';
+import { parseHttpHeadersJson, toModelDefinition, trimBaseUrl } from '@/services/llm/adapters/shared';
+import {
+  benchmarkProviderEndpoint,
+  type EndpointBenchmarkResult,
+} from '@/services/llm/endpointBenchmark';
+import { triggerDownload } from '@/components/renderer/svgUtils';
 import type {
   CustomModelParams,
   ModelDefinition,
@@ -99,12 +110,19 @@ export const ProvidersTab: React.FC = () => {
   const [headersText, setHeadersText] = useState('{}');
   const [showKey, setShowKey] = useState(false);
   const [newModelId, setNewModelId] = useState('');
+  const [modelSearch, setModelSearch] = useState('');
+  const [newBackupUrl, setNewBackupUrl] = useState('');
   const [expandedModelId, setExpandedModelId] = useState<string | null>(null);
   const [modelExtraJson, setModelExtraJson] = useState<Record<string, string>>({});
   const [modelExtraErr, setModelExtraErr] = useState<Record<string, string | null>>({});
   const [statusMsg, setStatusMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [listNotice, setListNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [benchmarkByUrl, setBenchmarkByUrl] = useState<Record<string, EndpointBenchmarkResult>>({});
+  const [benchmarkingUrls, setBenchmarkingUrls] = useState<Record<string, boolean>>({});
+  const [benchmarkingAll, setBenchmarkingAll] = useState(false);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   // List-view accordions & rule sync states
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -132,11 +150,152 @@ export const ProvidersTab: React.FC = () => {
     setDraft(structuredClone(p));
     setHeadersText(JSON.stringify(p.extraHeaders || {}, null, 2));
     setShowKey(false);
+    setModelSearch('');
+    setNewBackupUrl('');
     setExpandedModelId(null);
     setModelExtraJson({});
     setModelExtraErr({});
     setStatusMsg(null);
     setView('edit');
+  };
+
+  const getUrlKey = (p: ProviderConfig, urlOverride?: string) =>
+    `${p.id}::${trimBaseUrl(urlOverride || p.baseUrl || PROTOCOL_TEMPLATES[p.protocol].defaultBaseUrl)}`;
+
+  const handleBenchmarkEndpoint = async (p: ProviderConfig, urlOverride?: string) => {
+    const key = getUrlKey(p, urlOverride);
+    setBenchmarkingUrls((prev) => ({ ...prev, [key]: true }));
+    try {
+      const result = await benchmarkProviderEndpoint(p, urlOverride);
+      setBenchmarkByUrl((prev) => ({ ...prev, [key]: result }));
+      return result;
+    } finally {
+      setBenchmarkingUrls((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
+  const handleBenchmarkAll = async () => {
+    if (providers.length === 0 || benchmarkingAll) return;
+    setBenchmarkingAll(true);
+    setListNotice(null);
+    try {
+      const results = await Promise.all(
+        providers.map((p) => handleBenchmarkEndpoint(p))
+      );
+      const okCount = results.filter((r) => r.ok).length;
+      setListNotice({
+        ok: okCount > 0,
+        text: `测速完成：${okCount} / ${results.length} 个主端点可连通`,
+      });
+    } finally {
+      setBenchmarkingAll(false);
+    }
+  };
+
+  const handleDuplicateProvider = async (p: ProviderConfig) => {
+    const copy: ProviderConfig = {
+      ...structuredClone(p),
+      id: `prov_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: `${p.name} (副本)`,
+      createdAt: Date.now(),
+    };
+    await saveProvider(copy);
+    setListNotice({ ok: true, text: `已复制配置「${copy.name}」` });
+  };
+
+  const handleExportProviders = () => {
+    const json = JSON.stringify(providers, null, 2);
+    triggerDownload(
+      `chatbeauty-providers-${new Date().toISOString().slice(0, 10)}.json`,
+      new Blob([json], { type: 'application/json' })
+    );
+    setListNotice({ ok: true, text: `已导出 ${providers.length} 个供应商配置` });
+  };
+
+  const handleImportProviders = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const raw = await file.text();
+      const parsed = JSON.parse(raw) as unknown;
+      const items = Array.isArray(parsed) ? parsed : [parsed];
+      const existingIds = new Set(providers.map((p) => p.id));
+      let imported = 0;
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i] as Partial<ProviderConfig> | null;
+        if (!item || typeof item !== 'object') continue;
+        if (
+          typeof item.name !== 'string' ||
+          !item.name.trim() ||
+          typeof item.baseUrl !== 'string' ||
+          !item.baseUrl.trim() ||
+          !(
+            item.protocol === 'openai-chat' ||
+            item.protocol === 'openai-responses' ||
+            item.protocol === 'gemini' ||
+            item.protocol === 'anthropic'
+          )
+        ) {
+          continue;
+        }
+        const tpl = PROTOCOL_TEMPLATES[item.protocol];
+        const nextId =
+          typeof item.id === 'string' && item.id.trim() && !existingIds.has(item.id.trim())
+            ? item.id.trim()
+            : `prov_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`;
+        existingIds.add(nextId);
+
+        const models =
+          Array.isArray(item.models) && item.models.length > 0
+            ? item.models.filter((m): m is ModelDefinition => Boolean(m && typeof m.id === 'string'))
+            : [...tpl.suggestedModels];
+        const primaryUrl = trimBaseUrl(item.baseUrl);
+        const backupBaseUrls = Array.isArray(item.backupBaseUrls)
+          ? Array.from(
+              new Set(
+                item.backupBaseUrls
+                  .filter((u): u is string => typeof u === 'string')
+                  .map((u) => trimBaseUrl(u))
+                  .filter((u) => Boolean(u) && u !== primaryUrl)
+              )
+            )
+          : [];
+
+        const normalized: ProviderConfig = {
+          id: nextId,
+          name: item.name.trim(),
+          protocol: item.protocol,
+          baseUrl: primaryUrl,
+          backupBaseUrls,
+          apiKey: typeof item.apiKey === 'string' ? item.apiKey : '',
+          defaultModel:
+            typeof item.defaultModel === 'string' && item.defaultModel.trim()
+              ? item.defaultModel.trim()
+              : models[0]?.id || tpl.placeholderModel,
+          models,
+          extraHeaders:
+            item.extraHeaders && typeof item.extraHeaders === 'object' ? item.extraHeaders : {},
+          presetId: typeof item.presetId === 'string' ? item.presetId : undefined,
+          enabled: item.enabled !== false,
+          createdAt: typeof item.createdAt === 'number' ? item.createdAt : Date.now(),
+        };
+        await saveProvider(normalized);
+        imported++;
+      }
+
+      if (imported === 0) {
+        setListNotice({ ok: false, text: '未识别到有效的供应商配置条目' });
+      } else {
+        setListNotice({ ok: true, text: `已成功导入 ${imported} 个供应商配置` });
+      }
+    } catch (err) {
+      setListNotice({
+        ok: false,
+        text: err instanceof Error ? `导入失败：${err.message}` : '导入 JSON 格式无效',
+      });
+    }
   };
 
   const handleWizardComplete = async (created: ProviderConfig) => {
@@ -171,10 +330,19 @@ export const ProvidersTab: React.FC = () => {
       params: pruneParams(m.params),
     }));
     const cleanDefault = draft.defaultModel.trim() || cleanModels[0]?.id || '';
+    const primaryBaseUrl = draft.baseUrl.trim() || PROTOCOL_TEMPLATES[draft.protocol].defaultBaseUrl;
+    const backupList = Array.from(
+      new Set(
+        (draft.backupBaseUrls || [])
+          .map((u) => trimBaseUrl(u))
+          .filter((u) => Boolean(u) && u !== trimBaseUrl(primaryBaseUrl))
+      )
+    );
     const updated: ProviderConfig = {
       ...draft,
       name: draft.name.trim() || PROTOCOL_TEMPLATES[draft.protocol].defaultName,
-      baseUrl: draft.baseUrl.trim() || PROTOCOL_TEMPLATES[draft.protocol].defaultBaseUrl,
+      baseUrl: primaryBaseUrl,
+      backupBaseUrls: backupList,
       defaultModel: cleanDefault,
       models: cleanModels,
       extraHeaders: parsedHeaders,
@@ -401,8 +569,48 @@ export const ProvidersTab: React.FC = () => {
 
   if (view === 'edit' && draft) {
     const allProfiles = listAllReasoningProfiles();
+    const primaryUrlKey = getUrlKey(draft);
+    const primaryBench = benchmarkByUrl[primaryUrlKey];
+    const primaryBenching = Boolean(benchmarkingUrls[primaryUrlKey]);
+    const filteredModels = modelSearch.trim()
+      ? draft.models.filter((m) => {
+          const q = modelSearch.trim().toLowerCase();
+          return m.id.toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q);
+        })
+      : draft.models;
+
+    const addBackupEndpoint = () => {
+      const cleaned = trimBaseUrl(newBackupUrl);
+      if (!cleaned) return;
+      if (cleaned === trimBaseUrl(draft.baseUrl)) {
+        setStatusMsg({ ok: false, text: '该地址已作为主 Base URL 使用' });
+        return;
+      }
+      const existing = draft.backupBaseUrls || [];
+      if (!existing.some((u) => trimBaseUrl(u) === cleaned)) {
+        setDraft({ ...draft, backupBaseUrls: [...existing, cleaned] });
+      }
+      setNewBackupUrl('');
+    };
+
+    const promoteBackupUrl = (targetUrl: string) => {
+      const currentPrimary = trimBaseUrl(draft.baseUrl);
+      const nextBackups = Array.from(
+        new Set([
+          ...(currentPrimary && currentPrimary !== targetUrl ? [currentPrimary] : []),
+          ...(draft.backupBaseUrls || []).filter((u) => trimBaseUrl(u) !== targetUrl),
+        ])
+      );
+      setDraft({
+        ...draft,
+        baseUrl: targetUrl,
+        backupBaseUrls: nextBackups,
+      });
+      setStatusMsg({ ok: true, text: `已将 ${targetUrl} 设为主端点（保存后生效）` });
+    };
+
     return (
-      <div className="cb-panel-enter space-y-4 text-xs">
+      <div className="cb-panel-enter space-y-4 text-[13.5px]">
         <div className="flex items-center justify-between">
           <button
             type="button"
@@ -421,7 +629,7 @@ export const ProvidersTab: React.FC = () => {
             }}
             className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-muted hover:text-rose-400 hover:bg-white/5 transition"
           >
-            <Trash2 className="w-3.5 h-3.5" />
+            <Trash2 className="w-4 h-4" />
             <span>删除接口</span>
           </button>
         </div>
@@ -460,15 +668,142 @@ export const ProvidersTab: React.FC = () => {
             </label>
           </div>
 
-          <label className="block space-y-1">
-            <span className="text-muted">Base URL（支持任意兼容中转站地址）</span>
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted">Base URL（支持任意兼容中转站地址）</span>
+              <div className="flex items-center gap-2">
+                {primaryBench && (
+                  <span
+                    className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${
+                      primaryBench.ok
+                        ? primaryBench.latencyMs < 800
+                          ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-400'
+                          : 'border-amber-500/35 bg-amber-500/10 text-amber-300'
+                        : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
+                    }`}
+                  >
+                    {primaryBench.ok
+                      ? `${primaryBench.latencyMs} ms`
+                      : primaryBench.error || `${primaryBench.latencyMs} ms 异常`}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  disabled={primaryBenching}
+                  onClick={() => void handleBenchmarkEndpoint(draft)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-borderc bg-bg hover:bg-elevated text-xs text-fg transition disabled:opacity-50"
+                >
+                  {primaryBenching ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Gauge className="w-3.5 h-3.5" />
+                  )}
+                  <span>测速</span>
+                </button>
+              </div>
+            </div>
             <input
               value={draft.baseUrl}
               onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}
               placeholder={PROTOCOL_TEMPLATES[draft.protocol].defaultBaseUrl}
               className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc text-fg font-mono focus:outline-none focus:border-fg/40"
             />
-          </label>
+          </div>
+
+          {/* Backup Endpoints */}
+          <div className="rounded-xl border border-borderc bg-bg/50 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-muted text-xs font-medium">备用端点（中转站多线路测速与一键切换）</span>
+              <span className="text-[11px] text-muted">{(draft.backupBaseUrls || []).length} 个备用</span>
+            </div>
+
+            {(draft.backupBaseUrls || []).length > 0 && (
+              <div className="space-y-1.5">
+                {(draft.backupBaseUrls || []).map((url) => {
+                  const key = getUrlKey(draft, url);
+                  const bench = benchmarkByUrl[key];
+                  const isBusy = Boolean(benchmarkingUrls[key]);
+                  return (
+                    <div
+                      key={url}
+                      className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl border border-borderc bg-surface/50"
+                    >
+                      <span className="font-mono text-xs text-fg truncate flex-1 min-w-[140px]">
+                        {url}
+                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {bench && (
+                          <span
+                            className={`text-[11px] font-mono px-1.5 py-0.5 rounded border ${
+                              bench.ok
+                                ? bench.latencyMs < 800
+                                  ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-400'
+                                  : 'border-amber-500/35 bg-amber-500/10 text-amber-300'
+                                : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
+                            }`}
+                          >
+                            {bench.ok ? `${bench.latencyMs} ms` : bench.error || '不可用'}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => void handleBenchmarkEndpoint(draft, url)}
+                          className="px-2 py-1 rounded-lg border border-borderc bg-bg hover:bg-elevated text-xs text-muted hover:text-fg transition disabled:opacity-50"
+                        >
+                          {isBusy ? '测速中' : '测速'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => promoteBackupUrl(url)}
+                          className="flex items-center gap-1 px-2 py-1 rounded-lg border border-borderc bg-bg hover:bg-elevated text-xs text-fg transition"
+                          title="与当前主 Base URL 互换"
+                        >
+                          <ArrowRightLeft className="w-3.5 h-3.5" />
+                          <span>设为主端点</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDraft({
+                              ...draft,
+                              backupBaseUrls: (draft.backupBaseUrls || []).filter((x) => x !== url),
+                            })
+                          }
+                          className="p-1 text-muted hover:text-rose-400"
+                          title="删除备用端点"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <input
+                value={newBackupUrl}
+                onChange={(e) => setNewBackupUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addBackupEndpoint();
+                  }
+                }}
+                placeholder="添加备用 Base URL，例如 https://backup.example.com/v1"
+                className="flex-1 px-3 py-1.5 rounded-xl bg-bg border border-borderc text-fg font-mono text-xs focus:outline-none focus:border-fg/40"
+              />
+              <button
+                type="button"
+                onClick={addBackupEndpoint}
+                className="px-3 py-1.5 rounded-xl bg-elevated border border-borderc text-fg text-xs hover:border-fg/35 shrink-0"
+              >
+                添加备用
+              </button>
+            </div>
+          </div>
 
           <label className="block space-y-1">
             <span className="text-muted">API Key</span>
@@ -502,38 +837,60 @@ export const ProvidersTab: React.FC = () => {
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-elevated border border-borderc text-fg hover:border-fg/35 shrink-0 transition disabled:opacity-50"
               >
                 {fetchingModels ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
-                  <RefreshCw className="w-3.5 h-3.5" />
+                  <RefreshCw className="w-4 h-4" />
                 )}
                 <span>在线拉取模型</span>
               </button>
             </div>
 
-            <div className="flex gap-2">
-              <input
-                value={newModelId}
-                onChange={(e) => setNewModelId(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    addManualModel();
-                  }
-                }}
-                placeholder={`手动添加模型 ID，如 ${PROTOCOL_TEMPLATES[draft.protocol].placeholderModel}`}
-                className="flex-1 px-3 py-1.5 rounded-xl bg-bg border border-borderc text-fg font-mono focus:outline-none focus:border-fg/40"
-              />
-              <button
-                type="button"
-                onClick={addManualModel}
-                className="px-3 py-1.5 rounded-xl bg-elevated border border-borderc text-fg hover:border-fg/35"
-              >
-                添加
-              </button>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="flex gap-2">
+                <input
+                  value={newModelId}
+                  onChange={(e) => setNewModelId(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addManualModel();
+                    }
+                  }}
+                  placeholder={`手动添加模型 ID，如 ${PROTOCOL_TEMPLATES[draft.protocol].placeholderModel}`}
+                  className="flex-1 px-3 py-1.5 rounded-xl bg-bg border border-borderc text-fg font-mono focus:outline-none focus:border-fg/40"
+                />
+                <button
+                  type="button"
+                  onClick={addManualModel}
+                  className="px-3 py-1.5 rounded-xl bg-elevated border border-borderc text-fg hover:border-fg/35 shrink-0"
+                >
+                  添加
+                </button>
+              </div>
+
+              <div className="relative flex items-center">
+                <Search className="w-4 h-4 text-muted absolute left-3 pointer-events-none" />
+                <input
+                  value={modelSearch}
+                  onChange={(e) => setModelSearch(e.target.value)}
+                  placeholder="搜索模型 ID 或名称..."
+                  className="w-full pl-9 pr-14 py-1.5 rounded-xl bg-bg border border-borderc text-fg focus:outline-none focus:border-fg/40"
+                />
+                {modelSearch.trim() && (
+                  <span className="absolute right-2.5 text-[11px] text-muted tabular-nums">
+                    {filteredModels.length}/{draft.models.length}
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1">
-              {draft.models.map((m) => {
+              {filteredModels.length === 0 ? (
+                <div className="px-3 py-4 text-center text-muted text-xs border border-dashed border-borderc rounded-xl">
+                  未找到匹配「{modelSearch}」的模型
+                </div>
+              ) : (
+                filteredModels.map((m) => {
                 const isDefault = draft.defaultModel === m.id;
                 const isActive = activeProviderId === draft.id && activeModelId === m.id;
                 const isExpanded = expandedModelId === m.id;
@@ -789,7 +1146,7 @@ export const ProvidersTab: React.FC = () => {
                     </Collapsible>
                   </div>
                 );
-              })}
+              }))}
             </div>
           </div>
 
@@ -825,9 +1182,9 @@ export const ProvidersTab: React.FC = () => {
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-borderc bg-bg hover:bg-elevated text-fg transition disabled:opacity-50"
             >
               {testing ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
-                <Wifi className="w-3.5 h-3.5" />
+                <Wifi className="w-4 h-4" />
               )}
               <span>测试连接</span>
             </button>
@@ -836,7 +1193,7 @@ export const ProvidersTab: React.FC = () => {
               onClick={() => void handleSave()}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-accentfg font-semibold hover:opacity-90 transition"
             >
-              <Check className="w-3.5 h-3.5" />
+              <Check className="w-4 h-4" />
               <span>保存配置</span>
             </button>
           </div>
@@ -846,24 +1203,78 @@ export const ProvidersTab: React.FC = () => {
   }
 
   return (
-    <div className="cb-panel-enter space-y-4 text-xs">
-      {/* Header + Single Add Provider CTA */}
-      <div className="flex items-center justify-between gap-3 pb-1">
+    <div className="cb-panel-enter space-y-4 text-[13.5px]">
+      {/* CC-Switch Switchboard Header & Toolbar */}
+      <div className="flex flex-wrap items-start justify-between gap-3 pb-1">
         <div>
-          <div className="text-sm font-semibold text-fg">模型供应商</div>
-          <div className="text-muted mt-0.5">
-            管理 OpenAI Chat / Responses、Gemini 与 Anthropic 接口；模型、思考强度与参数可在输入框直接实时调节。
+          <div className="text-[15px] font-semibold text-fg">模型供应商切换台</div>
+          <div className="text-muted text-xs mt-0.5">
+            仿 CC-Switch 多线路控制台：支持品牌预设、端点测速、备用 URL 切换与 JSON 批量导入导出。
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setView('wizard')}
-          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-accent text-accentfg font-semibold shrink-0 hover:opacity-90 active:scale-95 transition"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>添加供应商</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {providers.length > 0 && (
+            <button
+              type="button"
+              disabled={benchmarkingAll}
+              onClick={() => void handleBenchmarkAll()}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-borderc bg-surface hover:bg-elevated text-fg transition disabled:opacity-50"
+            >
+              {benchmarkingAll ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Gauge className="w-4 h-4" />
+              )}
+              <span>全部测速</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => importInputRef.current?.click()}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-borderc bg-surface hover:bg-elevated text-fg transition"
+          >
+            <Upload className="w-4 h-4" />
+            <span>导入 JSON</span>
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={(e) => void handleImportProviders(e)}
+          />
+          {providers.length > 0 && (
+            <button
+              type="button"
+              onClick={handleExportProviders}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-borderc bg-surface hover:bg-elevated text-fg transition"
+            >
+              <Download className="w-4 h-4" />
+              <span>导出 JSON</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setView('wizard')}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-accent text-accentfg font-semibold shrink-0 hover:opacity-90 active:scale-95 transition"
+          >
+            <Plus className="w-4 h-4" />
+            <span>添加供应商</span>
+          </button>
+        </div>
       </div>
+
+      {listNotice && (
+        <div
+          className={`px-3 py-2 rounded-xl border text-xs ${
+            listNotice.ok
+              ? 'border-borderc bg-surface text-fg'
+              : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
+          }`}
+        >
+          {listNotice.text}
+        </div>
+      )}
 
       {/* Configured Providers List */}
       {providers.length === 0 ? (
@@ -874,37 +1285,111 @@ export const ProvidersTab: React.FC = () => {
             onClick={() => setView('wizard')}
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-accentfg font-semibold active:scale-95 transition"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-4 h-4" />
             <span>立即配置</span>
           </button>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2.5">
           {providers.map((p) => {
             const isActive = p.id === activeProviderId;
+            const benchKey = getUrlKey(p);
+            const bench = benchmarkByUrl[benchKey];
+            const isBenching = Boolean(benchmarkingUrls[benchKey]);
+            let hostLabel = p.baseUrl;
+            try {
+              hostLabel = new URL(p.baseUrl).host;
+            } catch {
+              // Keep raw string when URL is partial
+            }
+            const backupCount = p.backupBaseUrls?.length ?? 0;
             return (
-              <button
+              <div
                 key={p.id}
-                type="button"
-                onClick={() => openEditor(p)}
-                className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-2xl border border-borderc bg-surface/45 hover:bg-surface active:scale-[0.99] transition text-left"
+                className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-2xl border transition ${
+                  isActive
+                    ? 'border-accent/45 bg-elevated/80'
+                    : 'border-borderc bg-surface/45 hover:bg-surface/80'
+                }`}
               >
-                <div className="min-w-0 space-y-0.5">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-[13px] text-fg truncate">{p.name}</span>
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-[14px] text-fg truncate">{p.name}</span>
                     {isActive && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-fg/10 text-fg shrink-0">
-                        当前使用
+                      <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                        当前启用
+                      </span>
+                    )}
+                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-fg/10 text-muted shrink-0">
+                      {PROTOCOL_TEMPLATES[p.protocol].shortLabel}
+                    </span>
+                    {bench && (
+                      <span
+                        className={`text-[11px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${
+                          bench.ok
+                            ? bench.latencyMs < 800
+                              ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-400'
+                              : 'border-amber-500/35 bg-amber-500/10 text-amber-300'
+                            : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
+                        }`}
+                      >
+                        {bench.ok ? `${bench.latencyMs} ms` : bench.error || '连接异常'}
                       </span>
                     )}
                   </div>
-                  <div className="text-[11px] text-muted truncate">
-                    {PROTOCOL_TEMPLATES[p.protocol].shortLabel} · {p.models.length} 个模型 · 默认{' '}
+                  <div className="text-xs text-muted truncate font-mono">
+                    {hostLabel} · {p.models.length} 个模型
+                    {backupCount > 0 ? ` · ${backupCount} 个备用端点` : ''} · 默认{' '}
                     {p.defaultModel || '未指定'}
                   </div>
                 </div>
-                <ChevronRight className="w-4 h-4 text-muted shrink-0" />
-              </button>
+
+                <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                  {!isActive && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void setActiveProviderModel(p.id, p.defaultModel || p.models[0]?.id || '')
+                      }
+                      className="px-2.5 py-1.5 rounded-xl bg-accent text-accentfg text-xs font-semibold hover:opacity-90 active:scale-95 transition"
+                    >
+                      启用
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={isBenching}
+                    onClick={() => void handleBenchmarkEndpoint(p)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-borderc bg-bg hover:bg-elevated text-xs text-fg transition disabled:opacity-50"
+                    title="测速主端点"
+                  >
+                    {isBenching ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Gauge className="w-4 h-4" />
+                    )}
+                    <span>测速</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDuplicateProvider(p)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-borderc bg-bg hover:bg-elevated text-xs text-muted hover:text-fg transition"
+                    title="复制配置"
+                  >
+                    <Copy className="w-4 h-4" />
+                    <span>复制</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openEditor(p)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-borderc bg-bg hover:bg-elevated text-xs text-fg transition"
+                  >
+                    <span>编辑</span>
+                    <ChevronRight className="w-4 h-4 text-muted" />
+                  </button>
+                </div>
+              </div>
             );
           })}
         </div>

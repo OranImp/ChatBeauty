@@ -53,12 +53,17 @@ export interface AppearanceSettings {
   fontFamily: 'system' | 'serif' | 'mono' | 'custom';
   customFontName: string;
   fontSize: number;
+  uiScale: number;
   lineHeight: number;
   mathScale: number;
   contentMaxWidth: number;
   codeTheme: 'auto' | 'github-dark-default' | 'vitesse-black' | 'github-light';
   showLineNumbers: boolean;
   autoPreviewArtifacts: boolean;
+  hideMediaFrames: boolean;
+  backgroundGeneration: boolean;
+  closeToTray: boolean;
+  androidBatteryPromptDismissed?: boolean;
   customCss: string;
   sendOnEnter: boolean;
 }
@@ -116,12 +121,17 @@ export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   fontFamily: 'system',
   customFontName: '',
   fontSize: 16,
+  uiScale: 1.06,
   lineHeight: 1.72,
   mathScale: 1.06,
   contentMaxWidth: 780,
   codeTheme: 'auto',
   showLineNumbers: false,
   autoPreviewArtifacts: true,
+  hideMediaFrames: false,
+  backgroundGeneration: true,
+  closeToTray: true,
+  androidBatteryPromptDismissed: false,
   customCss: '',
   sendOnEnter: true,
 };

@@ -11,7 +11,11 @@ import {
   Wifi,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
-import { PROTOCOL_TEMPLATES } from '@/services/llm/registry';
+import {
+  PROTOCOL_TEMPLATES,
+  PROVIDER_BRAND_PRESETS,
+  type ProviderBrandPreset,
+} from '@/services/llm/registry';
 import { parseHttpHeadersJson, toModelDefinition } from '@/services/llm/adapters/shared';
 import type { ProtocolType, ProviderConfig } from '@/types/chat';
 
@@ -25,6 +29,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [direction, setDirection] = useState<'forward' | 'backward'>('forward');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | 'global' | 'cn' | 'infra'>('all');
   const [protocol, setProtocol] = useState<ProtocolType>('openai-chat');
   const [draft, setDraft] = useState<ProviderConfig>(() => {
     const tpl = PROTOCOL_TEMPLATES['openai-chat'];
@@ -33,6 +38,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
       name: tpl.defaultName,
       protocol: 'openai-chat',
       baseUrl: tpl.defaultBaseUrl,
+      backupBaseUrls: [],
       apiKey: '',
       defaultModel: tpl.placeholderModel,
       models: [...tpl.suggestedModels],
@@ -42,6 +48,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
     };
   });
   const [headersText, setHeadersText] = useState('{}');
+  const [backupUrlsText, setBackupUrlsText] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [newModelId, setNewModelId] = useState('');
   const [testing, setTesting] = useState(false);
@@ -49,17 +56,42 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
   const [saving, setSaving] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
+  const isOptionalKeyEndpoint = (presetId?: string, url?: string) =>
+    presetId === 'ollama' || /:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test((url || '').trim());
+
+  const selectPreset = (preset: ProviderBrandPreset) => {
+    setProtocol(preset.protocol);
+    const backups = preset.backupBaseUrls ? [...preset.backupBaseUrls] : [];
+    setDraft((prev) => ({
+      ...prev,
+      presetId: preset.id,
+      protocol: preset.protocol,
+      name: preset.name,
+      baseUrl: preset.baseUrl,
+      backupBaseUrls: backups,
+      defaultModel: preset.defaultModel,
+      models: [...preset.suggestedModels],
+    }));
+    setBackupUrlsText(backups.join('\n'));
+    setStatusMsg(null);
+    setDirection('forward');
+    setStep(2);
+  };
+
   const selectProtocol = (nextProto: ProtocolType) => {
     const tpl = PROTOCOL_TEMPLATES[nextProto];
     setProtocol(nextProto);
     setDraft((prev) => ({
       ...prev,
+      presetId: undefined,
       protocol: nextProto,
       name: tpl.defaultName,
       baseUrl: tpl.defaultBaseUrl,
+      backupBaseUrls: [],
       defaultModel: tpl.placeholderModel,
       models: [...tpl.suggestedModels],
     }));
+    setBackupUrlsText('');
     setStatusMsg(null);
     setDirection('forward');
     setStep(2);
@@ -77,11 +109,24 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
       return null;
     }
     const tpl = PROTOCOL_TEMPLATES[draft.protocol];
+    const primaryUrl = draft.baseUrl.trim() || tpl.defaultBaseUrl;
+    const backupList = Array.from(
+      new Set(
+        backupUrlsText
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => Boolean(line) && line !== primaryUrl)
+      )
+    );
+    const trimmedKey = draft.apiKey.trim();
+    const effectiveKey =
+      trimmedKey || (isOptionalKeyEndpoint(draft.presetId, primaryUrl) ? 'ollama' : '');
     return {
       ...draft,
       name: draft.name.trim() || tpl.defaultName,
-      baseUrl: draft.baseUrl.trim() || tpl.defaultBaseUrl,
-      apiKey: draft.apiKey.trim(),
+      baseUrl: primaryUrl,
+      backupBaseUrls: backupList,
+      apiKey: effectiveKey,
       defaultModel: draft.defaultModel.trim() || draft.models[0]?.id || tpl.placeholderModel,
       extraHeaders: parsedHeaders,
     };
@@ -90,7 +135,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
   const handleTest = async () => {
     const candidate = buildCandidate();
     if (!candidate) return;
-    if (!candidate.apiKey) {
+    if (!candidate.apiKey && !isOptionalKeyEndpoint(candidate.presetId, candidate.baseUrl)) {
       setStatusMsg({ ok: false, text: '请先填写 API Key' });
       return;
     }
@@ -112,7 +157,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
   const handleNextToModels = () => {
     const candidate = buildCandidate();
     if (!candidate) return;
-    if (!candidate.apiKey) {
+    if (!candidate.apiKey && !isOptionalKeyEndpoint(candidate.presetId, candidate.baseUrl)) {
       setStatusMsg({ ok: false, text: '请先填写 API Key 再进入下一步' });
       return;
     }
@@ -170,8 +215,17 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
     }
   };
 
+  const activePreset = draft.presetId
+    ? PROVIDER_BRAND_PRESETS.find((p) => p.id === draft.presetId)
+    : undefined;
+  const filteredPresets = PROVIDER_BRAND_PRESETS.filter((p) => {
+    if (categoryFilter === 'all') return true;
+    if (categoryFilter === 'infra') return p.category === 'aggregator' || p.category === 'local';
+    return p.category === categoryFilter;
+  });
+
   return (
-    <div className="space-y-5 text-xs">
+    <div className="space-y-5 text-[13.5px]">
       <div className="flex items-center justify-between">
         <button
           type="button"
@@ -208,36 +262,98 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
         className={direction === 'forward' ? 'cb-step-forward' : 'cb-step-backward'}
       >
       {step === 1 && (
-        <div className="space-y-3">
-          <div>
-            <h3 className="text-sm font-semibold text-fg">选择接口协议</h3>
-            <p className="text-muted mt-0.5">
-              选择对应的官方协议或中转站兼容协议，下一步填写地址与密钥。
-            </p>
+        <div className="space-y-4">
+          <div className="space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-[15px] font-semibold text-fg">品牌预设快选</h3>
+                <p className="text-muted text-xs mt-0.5">
+                  一键预填官方接口地址、协议与热门旗舰模型列表，也可下方自选底层协议。
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { id: 'all' as const, label: '全部' },
+                  { id: 'global' as const, label: '国际官方' },
+                  { id: 'cn' as const, label: '国内模型' },
+                  { id: 'infra' as const, label: '聚合 / 本地' },
+                ].map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setCategoryFilter(cat.id)}
+                    className={`px-2.5 py-1 rounded-full border text-xs transition ${
+                      categoryFilter === cat.id
+                        ? 'border-accent bg-accent text-accentfg font-semibold'
+                        : 'border-borderc bg-surface/60 text-muted hover:text-fg'
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+              {filteredPresets.map((preset) => {
+                const selected = draft.presetId === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => selectPreset(preset)}
+                    className={`p-3 rounded-2xl border text-left active:scale-[0.985] transition ${
+                      selected
+                        ? 'border-accent bg-elevated text-fg'
+                        : 'border-borderc bg-surface/50 text-fg hover:bg-surface'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-[13.5px] truncate">{preset.name}</span>
+                      <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-fg/10 text-muted shrink-0 font-mono">
+                        {preset.badge}
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted mt-1 leading-relaxed line-clamp-2">
+                      {preset.description}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {(Object.keys(PROTOCOL_TEMPLATES) as ProtocolType[]).map((proto) => {
-              const tpl = PROTOCOL_TEMPLATES[proto];
-              const selected = protocol === proto;
-              return (
-                <button
-                  key={proto}
-                  type="button"
-                  onClick={() => selectProtocol(proto)}
-                  className={`p-3.5 rounded-2xl border text-left active:scale-[0.985] transition ${
-                    selected
-                      ? 'border-fg/40 bg-elevated text-fg'
-                      : 'border-borderc bg-surface/50 text-fg hover:bg-surface'
-                  }`}
-                >
-                  <div className="font-semibold text-[13px]">{tpl.shortLabel}</div>
-                  <div className="text-[11px] text-muted mt-1 leading-relaxed">
-                    {tpl.description}
-                  </div>
-                </button>
-              );
-            })}
+          <div className="pt-2 border-t border-borderc space-y-2.5">
+            <div>
+              <h3 className="text-[15px] font-semibold text-fg">自定义底层协议</h3>
+              <p className="text-muted text-xs mt-0.5">
+                适用第三方中转站或自建网关：选择兼容协议后自定义 Base URL 与密钥。
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {(Object.keys(PROTOCOL_TEMPLATES) as ProtocolType[]).map((proto) => {
+                const tpl = PROTOCOL_TEMPLATES[proto];
+                const selected = !draft.presetId && protocol === proto;
+                return (
+                  <button
+                    key={proto}
+                    type="button"
+                    onClick={() => selectProtocol(proto)}
+                    className={`p-3.5 rounded-2xl border text-left active:scale-[0.985] transition ${
+                      selected
+                        ? 'border-fg/40 bg-elevated text-fg'
+                        : 'border-borderc bg-surface/50 text-fg hover:bg-surface'
+                    }`}
+                  >
+                    <div className="font-semibold text-[13.5px]">{tpl.shortLabel}</div>
+                    <div className="text-xs text-muted mt-1 leading-relaxed">
+                      {tpl.description}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
@@ -245,10 +361,10 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
       {step === 2 && (
         <div className="space-y-4">
           <div>
-            <h3 className="text-sm font-semibold text-fg">
-              填写连接信息（{PROTOCOL_TEMPLATES[draft.protocol].shortLabel}）
+            <h3 className="text-[15px] font-semibold text-fg">
+              填写连接信息（{activePreset?.name ?? PROTOCOL_TEMPLATES[draft.protocol].shortLabel}）
             </h3>
-            <p className="text-muted mt-0.5">支持官方接口或任意兼容中转站地址。</p>
+            <p className="text-muted text-xs mt-0.5">支持官方接口或任意兼容中转站地址。</p>
           </div>
 
           <label className="block space-y-1">
@@ -271,13 +387,18 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
           </label>
 
           <label className="block space-y-1">
-            <span className="text-muted">API Key</span>
+            <div className="flex items-center justify-between">
+              <span className="text-muted">API Key</span>
+              {isOptionalKeyEndpoint(draft.presetId, draft.baseUrl) && (
+                <span className="text-xs text-emerald-400">本地服务可留空（自动填充占位密钥）</span>
+              )}
+            </div>
             <div className="relative">
               <input
                 type={showKey ? 'text' : 'password'}
                 value={draft.apiKey}
                 onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
-                placeholder="sk-... / AIza... / sk-ant-..."
+                placeholder={activePreset?.apiKeyPlaceholder || 'sk-... / AIza... / sk-ant-...'}
                 className="w-full pl-3 pr-10 py-2 rounded-xl bg-surface border border-borderc text-fg font-mono focus:outline-none focus:border-fg/40"
               />
               <button
@@ -289,6 +410,19 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
               </button>
             </div>
           </label>
+
+          <details>
+            <summary className="cursor-pointer text-muted hover:text-fg">
+              备用端点列表 (一行一个 URL，支持中转站容灾切换)
+            </summary>
+            <textarea
+              rows={2}
+              value={backupUrlsText}
+              onChange={(e) => setBackupUrlsText(e.target.value)}
+              placeholder={'https://backup-relay.example.com/v1\nhttps://relay2.example.com/v1'}
+              className="mt-2 w-full px-3 py-2 rounded-xl bg-surface border border-borderc font-mono text-fg focus:outline-none focus:border-fg/40"
+            />
+          </details>
 
           <details>
             <summary className="cursor-pointer text-muted hover:text-fg">
@@ -322,9 +456,9 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-borderc bg-surface hover:bg-elevated text-fg transition disabled:opacity-50"
             >
               {testing ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
-                <Wifi className="w-3.5 h-3.5" />
+                <Wifi className="w-4 h-4" />
               )}
               <span>测试连接</span>
             </button>
@@ -335,7 +469,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-accentfg font-semibold hover:opacity-90 transition"
             >
               <span>下一步</span>
-              <ArrowRight className="w-3.5 h-3.5" />
+              <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -345,8 +479,8 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
         <div className="space-y-4">
           <div className="flex items-start justify-between gap-2">
             <div>
-              <h3 className="text-sm font-semibold text-fg">配置可用模型</h3>
-              <p className="text-muted mt-0.5">拉取在线列表或手动添加模型，并点选默认模型。</p>
+              <h3 className="text-[15px] font-semibold text-fg">配置可用模型</h3>
+              <p className="text-muted text-xs mt-0.5">拉取在线列表或手动添加模型，并点选默认模型。</p>
             </div>
             <button
               type="button"
@@ -355,9 +489,9 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-surface border border-borderc hover:bg-elevated text-fg shrink-0 disabled:opacity-50"
             >
               {fetchingModels ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
-                <RefreshCw className="w-3.5 h-3.5" />
+                <RefreshCw className="w-4 h-4" />
               )}
               <span>拉取模型</span>
             </button>
@@ -419,36 +553,36 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
                     className="p-1 text-muted hover:text-rose-400 shrink-0"
                     title="移除模型"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-
-          {statusMsg && (
-            <div
-              className={`px-3 py-2 rounded-xl border ${
-                statusMsg.ok
-                  ? 'border-borderc bg-surface text-fg'
-                  : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
-              }`}
-            >
-              {statusMsg.text}
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
-          )}
 
-          <div className="flex justify-end pt-1">
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => void handleFinish()}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-accentfg font-semibold hover:opacity-90 transition disabled:opacity-50"
-            >
-              <Check className="w-3.5 h-3.5" />
-              <span>完成并启用</span>
-            </button>
-          </div>
+            {statusMsg && (
+              <div
+                className={`px-3 py-2 rounded-xl border ${
+                  statusMsg.ok
+                    ? 'border-borderc bg-surface text-fg'
+                    : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
+                }`}
+              >
+                {statusMsg.text}
+              </div>
+            )}
+
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => void handleFinish()}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-accentfg font-semibold hover:opacity-90 transition disabled:opacity-50"
+              >
+                <Check className="w-4 h-4" />
+                <span>完成并启用</span>
+              </button>
+            </div>
         </div>
       )}
       </div>

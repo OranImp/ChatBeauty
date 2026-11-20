@@ -38,4 +38,11 @@ contextBridge.exposeInMainWorld('electronBridge', {
     headers: Record<string, string>;
     body?: string;
   }) => ipcRenderer.invoke('http:simple-request', payload),
+
+  setBackgroundSettings: (settings: { closeToTray: boolean; backgroundGeneration: boolean }) =>
+    ipcRenderer.invoke('app:set-background-settings', settings),
+
+  setStreamingState: (count: number) => ipcRenderer.invoke('app:set-streaming-state', count),
+
+  quitApp: () => ipcRenderer.invoke('app:quit'),
 });

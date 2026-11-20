@@ -92,6 +92,8 @@ export interface ProviderConfig {
   name: string;
   protocol: ProtocolType;
   baseUrl: string;
+  backupBaseUrls?: string[];
+  presetId?: string;
   apiKey: string;
   defaultModel: string;
   models: ModelDefinition[];

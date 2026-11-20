@@ -9,6 +9,7 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
 import { ChatView } from '@/components/chat/ChatView';
 import { SettingsModal, type SettingsTabKey } from '@/components/settings/SettingsModal';
+import { syncDesktopBackgroundSettings } from '@/services/transport/streamHttp';
 
 function resolveFontFamily(
   kind: 'system' | 'serif' | 'mono' | 'custom',
@@ -71,6 +72,28 @@ export const App: React.FC = () => {
   }, [initApp]);
 
   useEffect(() => {
+    const syncViewportHeight = () => {
+      const vv = window.visualViewport;
+      const height = vv ? vv.height : window.innerHeight;
+      document.documentElement.style.setProperty('--app-height', `${Math.round(height)}px`);
+      if (window.scrollY !== 0 || window.scrollX !== 0 || (vv && vv.offsetTop !== 0)) {
+        window.scrollTo(0, 0);
+      }
+    };
+
+    syncViewportHeight();
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', syncViewportHeight);
+    vv?.addEventListener('scroll', syncViewportHeight);
+    window.addEventListener('resize', syncViewportHeight);
+    return () => {
+      vv?.removeEventListener('resize', syncViewportHeight);
+      vv?.removeEventListener('scroll', syncViewportHeight);
+      window.removeEventListener('resize', syncViewportHeight);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!window.matchMedia) return;
     const mq = window.matchMedia('(prefers-color-scheme: light)');
     const onChange = (e: MediaQueryListEvent) => setSystemPrefersLight(e.matches);
@@ -111,6 +134,8 @@ export const App: React.FC = () => {
       );
     }
 
+    const uiScale = Math.min(1.35, Math.max(0.85, appearance.uiScale ?? 1.06));
+    root.style.fontSize = `${(16 * uiScale).toFixed(2)}px`;
     root.style.setProperty('--chat-font-size', `${appearance.fontSize}px`);
     root.style.setProperty('--chat-line-height', String(appearance.lineHeight));
     root.style.setProperty('--math-scale', String(appearance.mathScale));
@@ -119,6 +144,11 @@ export const App: React.FC = () => {
       '--chat-font-family',
       resolveFontFamily(appearance.fontFamily, appearance.customFontName)
     );
+
+    void syncDesktopBackgroundSettings({
+      closeToTray: appearance.closeToTray ?? true,
+      backgroundGeneration: appearance.backgroundGeneration ?? true,
+    });
 
     let styleEl = document.getElementById('chatbeauty-custom-css') as HTMLStyleElement | null;
     if (!styleEl) {

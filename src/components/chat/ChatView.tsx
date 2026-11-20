@@ -1,6 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowDown } from 'lucide-react';
+import { ArrowDown, BatteryCharging } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
+import { App as CapApp } from '@capacitor/app';
+import {
+  getAndroidBatteryStatus,
+  getRuntimeEnvironment,
+  openAndroidBatterySettings,
+} from '@/services/transport/streamHttp';
+import type { ContentPart } from '@/types/chat';
 import type { ResolvedTheme } from '@/components/renderer/svgUtils';
 import type { LightboxPayload } from '@/components/renderer/LightboxModal';
 import { MessageItem } from './MessageItem';
@@ -34,6 +41,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
     regenerateMessage,
     editAndResend,
     deleteMessage,
+    updateAppearance,
   } = useAppStore();
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -41,6 +49,45 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const scrollBtnPresence = usePresence(showScrollBottom, 180);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
+  const [showBatteryPrompt, setShowBatteryPrompt] = useState(false);
+
+  useEffect(() => {
+    const env = getRuntimeEnvironment();
+    const shouldCheck =
+      env === 'capacitor' &&
+      (appearance.backgroundGeneration ?? true) &&
+      !appearance.androidBatteryPromptDismissed;
+
+    if (!shouldCheck) {
+      setShowBatteryPrompt(false);
+      return;
+    }
+
+    let cancelled = false;
+    const checkBattery = async () => {
+      const status = await getAndroidBatteryStatus();
+      if (!cancelled) {
+        setShowBatteryPrompt(Boolean(status.supported && !status.ignoring));
+      }
+    };
+
+    void checkBattery();
+    let handlePromise: Promise<{ remove: () => Promise<void> }> | null = null;
+    try {
+      handlePromise = CapApp.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) void checkBattery();
+      });
+    } catch {
+      // Ignore outside Capacitor native shell
+    }
+
+    return () => {
+      cancelled = true;
+      if (handlePromise) {
+        void handlePromise.then((h) => h.remove()).catch(() => undefined);
+      }
+    };
+  }, [appearance.backgroundGeneration, appearance.androidBatteryPromptDismissed]);
 
   const activeConv = conversations.find((c) => c.id === activeConversationId);
   const messages = activeConv ? messagesByConv[activeConv.id] || [] : [];
@@ -64,6 +111,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
     }
   }, [messages, activeConversationId]);
 
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      if (autoFollowRef.current) {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -73,11 +132,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
     setShowScrollBottom(!nearBottom && el.scrollHeight > el.clientHeight + 120);
   };
 
-  const dispatchSend = async (text: string) => {
+  const dispatchSend = async (
+    text: string,
+    images?: Array<Extract<ContentPart, { type: 'image' }>>
+  ) => {
     setErrorBanner(null);
     autoFollowRef.current = true;
     try {
-      await sendMessage(text);
+      await sendMessage(text, images);
     } catch (err) {
       if (err instanceof Error && err.message === 'NO_PROVIDER_CONFIGURED') {
         setErrorBanner('尚未配置可用的模型 API Key，请先在设置中添加模型供应商。');
@@ -90,6 +152,36 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
 
   return (
     <div className="flex-1 flex flex-col min-h-0 relative">
+      {showBatteryPrompt && (
+        <div className="mx-4 mt-2 px-3.5 py-2.5 rounded-xl border border-amber-500/35 bg-amber-500/10 text-xs text-fg flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <BatteryCharging className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              手机端后台生成建议：请将 ChatBeauty 设为「后台无限制 / 忽略电池优化」，防止切换应用或息屏时中断回答
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => void openAndroidBatterySettings()}
+              className="px-2.5 py-1 rounded-lg bg-accent text-accentfg font-semibold"
+            >
+              去设置
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowBatteryPrompt(false);
+                void updateAppearance({ androidBatteryPromptDismissed: true });
+              }}
+              className="px-2 py-1 rounded-lg border border-borderc text-muted hover:text-fg"
+            >
+              不再提示
+            </button>
+          </div>
+        </div>
+      )}
+
       {errorBanner && (
         <div className="mx-4 mt-2 px-3.5 py-2 rounded-xl border border-amber-500/35 bg-amber-500/10 text-xs text-amber-200 flex items-center justify-between gap-2">
           <span>{errorBanner}</span>
@@ -109,7 +201,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="flex-1 overflow-y-auto no-scrollbar px-4 sm:px-6 pt-3 pb-6 scroll-smooth"
+          className="flex-1 overflow-y-auto overscroll-y-contain touch-pan-y no-scrollbar px-4 sm:px-6 pt-3 pb-6"
         >
           <div className="mx-auto w-full" style={{ maxWidth: 'var(--chat-max-width)' }}>
             {messages.length === 0 ? (
@@ -205,10 +297,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
       </div>
 
       <ChatInput
-        onSend={(t) => void dispatchSend(t)}
+        onSend={(t, imgs) => void dispatchSend(t, imgs)}
         onStop={() => stopStreaming()}
         isStreaming={isStreaming}
         onOpenSettings={onOpenSettings}
+        onInspect={onInspect}
       />
     </div>
   );

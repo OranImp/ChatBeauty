@@ -50,7 +50,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [query, setQuery] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
-  const drawerPresence = usePresence(mobileOpen, 240);
+  const drawerPresence = usePresence(mobileOpen, 380);
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -113,18 +113,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 if (e.key === 'Enter') void commitRename(conv.id);
                 if (e.key === 'Escape') setEditingId(null);
               }}
-              className="w-full bg-bg border border-fg/35 rounded px-1.5 py-0.5 text-xs text-fg focus:outline-none"
+              className="w-full bg-bg border border-fg/35 rounded px-2 py-0.5 text-[13px] text-fg focus:outline-none"
             />
             <button
               type="button"
               onClick={() => void commitRename(conv.id)}
               className="p-1 text-fg"
             >
-              <Check className="w-3.5 h-3.5" />
+              <Check className="w-4 h-4" />
             </button>
           </div>
         ) : (
-          <span className="flex-1 text-[13px] truncate">{conv.title}</span>
+          <span className="flex-1 text-sm truncate">{conv.title}</span>
         )}
 
         {editingId !== conv.id && (
@@ -140,7 +140,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }`}
               title={conv.pinned ? '取消置顶' : '置顶'}
             >
-              <Pin className="w-3 h-3" />
+              <Pin className="w-3.5 h-3.5" />
             </button>
             <button
               type="button"
@@ -148,7 +148,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               className="p-1 rounded-md text-muted hover:text-fg hover:bg-white/10"
               title="重命名"
             >
-              <Pencil className="w-3 h-3" />
+              <Pencil className="w-3.5 h-3.5" />
             </button>
             <button
               type="button"
@@ -159,7 +159,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               className="p-1 rounded-md text-muted hover:text-rose-400 hover:bg-white/10"
               title="删除"
             >
-              <Trash2 className="w-3 h-3" />
+              <Trash2 className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
@@ -171,7 +171,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <div className="flex flex-col h-full bg-surface/95 md:bg-surface/65 border-r border-borderc select-none">
       {/* Compact Header */}
       <div className="flex items-center justify-between px-3.5 pt-3 pb-2 safe-top">
-        <span className="font-semibold tracking-tight text-sm text-fg">ChatBeauty</span>
+        <span className="font-semibold tracking-tight text-base text-fg">ChatBeauty</span>
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -179,7 +179,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className="hidden md:flex p-1.5 rounded-lg text-muted hover:text-fg hover:bg-fg/10 transition"
             title="收起侧边栏"
           >
-            <PanelLeftClose className="w-4 h-4" />
+            <PanelLeftClose className="w-[18px] h-[18px]" />
           </button>
           <button
             type="button"
@@ -187,7 +187,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className="md:hidden p-1.5 rounded-lg text-muted hover:text-fg hover:bg-fg/10 transition"
             title="关闭"
           >
-            <X className="w-4 h-4" />
+            <X className="w-[18px] h-[18px]" />
           </button>
         </div>
       </div>
@@ -200,27 +200,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
             void createConversation('新对话');
             onCloseMobile();
           }}
-          className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-borderc bg-bg/55 hover:bg-elevated text-xs text-fg font-medium transition"
+          className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl border border-borderc bg-bg/55 hover:bg-elevated text-[13px] text-fg font-medium transition"
         >
           <span className="flex items-center gap-2">
-            <SquarePen className="w-3.5 h-3.5 text-muted" />
+            <SquarePen className="w-4 h-4 text-muted" />
             <span>新建对话</span>
           </span>
-          <span className="hidden md:inline font-mono text-[10px] text-muted/75">Ctrl+N</span>
+          <span className="hidden md:inline font-mono text-[11px] text-muted/75">Ctrl+N</span>
         </button>
 
         {/* Search */}
         <div className="relative">
-          <Search className="w-3.5 h-3.5 text-muted absolute left-3 top-1/2 -translate-y-1/2" />
+          <Search className="w-4 h-4 text-muted absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             ref={searchInputRef}
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="搜索对话"
-            className="w-full pl-8 pr-14 py-1.5 rounded-xl bg-bg/65 border border-borderc text-xs text-fg placeholder:text-muted focus:outline-none focus:border-fg/35"
+            className="w-full pl-9 pr-14 py-2 rounded-xl bg-bg/65 border border-borderc text-[13px] text-fg placeholder:text-muted focus:outline-none focus:border-fg/35"
           />
-          <span className="hidden md:inline pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 font-mono text-[10px] text-muted/65">
+          <span className="hidden md:inline pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 font-mono text-[11px] text-muted/65">
             Ctrl+K
           </span>
         </div>
@@ -229,19 +229,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Conversation List */}
       <div className="flex-1 overflow-y-auto no-scrollbar px-2 py-1 space-y-3">
         {pinnedList.length === 0 && recentList.length === 0 ? (
-          <div className="px-3 py-8 text-center text-xs text-muted">暂无匹配的对话</div>
+          <div className="px-3 py-8 text-center text-[13px] text-muted">暂无匹配的对话</div>
         ) : (
           <>
             {pinnedList.length > 0 && (
               <div className="space-y-0.5">
-                <div className="px-3 py-1 text-[11px] font-medium text-muted/80">置顶</div>
+                <div className="px-3 py-1 text-xs font-medium text-muted/80">置顶</div>
                 {pinnedList.map(renderRow)}
               </div>
             )}
             {recentList.length > 0 && (
               <div className="space-y-0.5">
                 {pinnedList.length > 0 && (
-                  <div className="px-3 py-1 text-[11px] font-medium text-muted/80">最近</div>
+                  <div className="px-3 py-1 text-xs font-medium text-muted/80">最近</div>
                 )}
                 {recentList.map(renderRow)}
               </div>
@@ -258,13 +258,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onOpenSettings('providers');
             onCloseMobile();
           }}
-          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-bg/60 hover:bg-elevated border border-borderc text-xs transition"
+          className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl bg-bg/60 hover:bg-elevated border border-borderc text-[13px] transition"
         >
           <span className="flex items-center gap-2 text-fg font-medium shrink-0">
-            <Settings className="w-3.5 h-3.5 text-muted" />
+            <Settings className="w-4 h-4 text-muted" />
             <span>设置</span>
           </span>
-          <span className="text-[11px] font-mono text-muted truncate">
+          <span className="text-xs font-mono text-muted truncate">
             {resolvedModelId || `${providers.length} 个供应商`}
           </span>
         </button>
@@ -276,7 +276,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <>
       {/* Desktop persistent sidebar */}
       <aside
-        className={`hidden md:block shrink-0 overflow-hidden transition-[width,opacity] duration-[250ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        className={`hidden md:block shrink-0 overflow-hidden transition-[width,opacity] duration-[300ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${
           desktopOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
         style={{ width: desktopOpen ? 268 : 0 }}
@@ -288,13 +288,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {drawerPresence.mounted && (
         <div className="fixed inset-0 z-50 md:hidden flex">
           <div
-            className={`fixed inset-0 bg-black/65 backdrop-blur-sm transition-opacity duration-[240ms] ease-out ${
+            className={`fixed inset-0 bg-black/65 backdrop-blur-sm transition-opacity duration-[340ms] ease-out ${
               drawerPresence.visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
             }`}
             onClick={onCloseMobile}
           />
           <div
-            className={`relative z-10 w-[82vw] max-w-[300px] h-full shadow-2xl transition-transform duration-[250ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+            className={`relative z-10 w-[82vw] max-w-[300px] h-full shadow-2xl transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${
               drawerPresence.visible ? 'translate-x-0' : '-translate-x-full'
             }`}
           >

@@ -1,4 +1,16 @@
-import { app, BrowserWindow, ipcMain, nativeTheme, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Menu,
+  nativeImage,
+  nativeTheme,
+  Notification,
+  powerSaveBlocker,
+  shell,
+  Tray,
+} from 'electron';
+import fs from 'node:fs';
 import path from 'node:path';
 
 interface StreamStartPayload {
@@ -18,6 +30,80 @@ interface SimpleRequestPayload {
 
 const activeStreams = new Map<string, AbortController>();
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+let isQuitting = false;
+let closeToTrayEnabled = true;
+let backgroundGenEnabled = true;
+let activeGenerationCount = 0;
+let suspendBlockerId: number | null = null;
+let trayTipShown = false;
+
+function showMainWindow(): void {
+  if (!mainWindow) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
+}
+
+function updateSuspendBlocker(): void {
+  const shouldPreventSuspend = backgroundGenEnabled && activeGenerationCount > 0;
+  if (shouldPreventSuspend) {
+    if (suspendBlockerId === null || !powerSaveBlocker.isStarted(suspendBlockerId)) {
+      suspendBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+    }
+  } else if (suspendBlockerId !== null && powerSaveBlocker.isStarted(suspendBlockerId)) {
+    powerSaveBlocker.stop(suspendBlockerId);
+    suspendBlockerId = null;
+  }
+}
+
+function updateTrayAppearance(): void {
+  if (!tray) return;
+  const tip =
+    activeGenerationCount > 0
+      ? `ChatBeauty — 正在后台生成（${activeGenerationCount} 个任务）`
+      : 'ChatBeauty';
+  tray.setToolTip(tip);
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: '显示 ChatBeauty', click: showMainWindow },
+      ...(activeGenerationCount > 0
+        ? [{ label: `后台生成中 (${activeGenerationCount})`, enabled: false }]
+        : []),
+      { type: 'separator' },
+      {
+        label: '退出程序',
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      },
+    ])
+  );
+}
+
+function ensureTray(): Tray {
+  if (tray) return tray;
+  const icoPath = path.join(__dirname, '..', 'build', 'icon.ico');
+  const pngPath = path.join(__dirname, '..', 'build', 'icon.png');
+  let icon = fs.existsSync(icoPath)
+    ? nativeImage.createFromPath(icoPath)
+    : nativeImage.createEmpty();
+  if (icon.isEmpty() && fs.existsSync(pngPath)) {
+    icon = nativeImage.createFromPath(pngPath);
+  }
+  if (!icon.isEmpty() && process.platform === 'win32') {
+    icon = icon.resize({ width: 16, height: 16 });
+  }
+  tray = new Tray(icon);
+  tray.on('click', showMainWindow);
+  tray.on('double-click', showMainWindow);
+  updateTrayAppearance();
+  return tray;
+}
 
 function createWindow(): void {
   nativeTheme.themeSource = 'dark';
@@ -35,7 +121,31 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      backgroundThrottling: false,
     },
+  });
+
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return;
+    if (closeToTrayEnabled || (backgroundGenEnabled && activeGenerationCount > 0)) {
+      event.preventDefault();
+      const t = ensureTray();
+      mainWindow?.hide();
+      if (!trayTipShown && process.platform === 'win32') {
+        trayTipShown = true;
+        try {
+          t.displayBalloon({
+            title: 'ChatBeauty 已转入任务栏后台',
+            content:
+              activeGenerationCount > 0
+                ? '当前回复正在后台持续生成，完成后将提醒您。'
+                : '可在设置 → 外观排版中调整关闭窗口行为。',
+          });
+        } catch {
+          // Ignore notification balloon failures
+        }
+      }
+    }
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -187,31 +297,83 @@ ipcMain.handle('http:simple-request', async (_event, payload: SimpleRequestPaylo
   };
 });
 
+ipcMain.handle(
+  'app:set-background-settings',
+  (_event, payload: { closeToTray?: boolean; backgroundGeneration?: boolean }) => {
+    if (typeof payload?.closeToTray === 'boolean') {
+      closeToTrayEnabled = payload.closeToTray;
+    }
+    if (typeof payload?.backgroundGeneration === 'boolean') {
+      backgroundGenEnabled = payload.backgroundGeneration;
+    }
+    updateSuspendBlocker();
+    if (closeToTrayEnabled) {
+      ensureTray();
+    } else if (tray && mainWindow?.isVisible() && activeGenerationCount === 0) {
+      tray.destroy();
+      tray = null;
+    }
+  }
+);
+
+ipcMain.handle('app:set-streaming-state', (_event, count: number) => {
+  const prevCount = activeGenerationCount;
+  activeGenerationCount = Math.max(0, Number(count) || 0);
+  updateSuspendBlocker();
+  updateTrayAppearance();
+  if (prevCount > 0 && activeGenerationCount === 0 && mainWindow && !mainWindow.isVisible()) {
+    try {
+      const note = new Notification({
+        title: 'ChatBeauty',
+        body: '后台回复已生成完成，点击查看结果。',
+      });
+      note.on('click', showMainWindow);
+      note.show();
+    } catch {
+      // ignore OS notification errors
+    }
+  }
+});
+
+ipcMain.handle('app:quit', () => {
+  isQuitting = true;
+  app.quit();
+});
+
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      if (!mainWindow.isVisible()) mainWindow.show();
-      mainWindow.focus();
-    }
-  });
+  app.on('second-instance', showMainWindow);
 
   app.whenReady().then(() => {
     createWindow();
+    if (closeToTrayEnabled) {
+      ensureTray();
+    }
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
+      } else {
+        showMainWindow();
       }
     });
   });
 }
 
+app.on('before-quit', () => {
+  isQuitting = true;
+  if (suspendBlockerId !== null && powerSaveBlocker.isStarted(suspendBlockerId)) {
+    powerSaveBlocker.stop(suspendBlockerId);
+    suspendBlockerId = null;
+  }
+  tray?.destroy();
+  tray = null;
+});
+
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && !closeToTrayEnabled && isQuitting) {
     app.quit();
   }
 });

@@ -6,7 +6,8 @@ import { usePresence } from '@/components/ui/MotionPrimitives';
 export type LightboxPayload =
   | { kind: 'svg'; title?: string; svgHtml: string; rawSource: string }
   | { kind: 'math'; latex: string; katexHtml: string }
-  | { kind: 'iframe'; title?: string; htmlDoc: string; rawSource: string };
+  | { kind: 'iframe'; title?: string; htmlDoc: string; rawSource: string }
+  | { kind: 'image'; title?: string; src: string };
 
 interface LightboxModalProps {
   payload: LightboxPayload | null;
@@ -17,22 +18,83 @@ interface LightboxModalProps {
 export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, onClose }) => {
   const [renderedPayload, setRenderedPayload] = useState<LightboxPayload | null>(payload);
   const lightboxPresence = usePresence(Boolean(payload), 200);
-  const [scale, setScale] = useState(1);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [displayScale, setDisplayScale] = useState(1);
   const [copied, setCopied] = useState(false);
-  const dragging = useRef<{ active: boolean; x: number; y: number }>({
-    active: false,
+
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const transformRef = useRef<{ x: number; y: number; scale: number }>({
     x: 0,
     y: 0,
+    scale: 1,
   });
-  const pinchDist = useRef<number | null>(null);
+  const activePointers = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const lastPinchRef = useRef<{ dist: number; midX: number; midY: number } | null>(null);
+  const tapTrackRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  } | null>(null);
+  const lastTapRef = useRef<{ time: number; x: number; y: number }>({ time: 0, x: 0, y: 0 });
+
+  const applyTransform = (
+    next: { x: number; y: number; scale: number },
+    smooth = false
+  ) => {
+    const clampedScale = Math.max(0.4, Math.min(6, next.scale));
+    const committed = { x: next.x, y: next.y, scale: clampedScale };
+    transformRef.current = committed;
+    const el = contentRef.current;
+    if (el) {
+      el.style.transition = smooth ? 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)' : 'none';
+      el.style.transform = `translate3d(${committed.x}px, ${committed.y}px, 0) scale(${committed.scale})`;
+    }
+    const nextPct = Math.round(clampedScale * 100);
+    setDisplayScale((prev) => (Math.round(prev * 100) === nextPct ? prev : clampedScale));
+  };
+
+  const zoomAroundPoint = (
+    targetScale: number,
+    clientX: number,
+    clientY: number,
+    smooth = false
+  ) => {
+    const curr = transformRef.current;
+    const clampedScale = Math.max(0.4, Math.min(6, targetScale));
+    const rect = viewportRef.current?.getBoundingClientRect();
+    if (!rect || curr.scale <= 0) {
+      applyTransform({ x: curr.x, y: curr.y, scale: clampedScale }, smooth);
+      return;
+    }
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const px = clientX - cx;
+    const py = clientY - cy;
+    const ratio = clampedScale / curr.scale;
+    applyTransform(
+      {
+        x: px - (px - curr.x) * ratio,
+        y: py - (py - curr.y) * ratio,
+        scale: clampedScale,
+      },
+      smooth
+    );
+  };
 
   useEffect(() => {
     if (payload) {
       setRenderedPayload(payload);
-      setScale(payload.kind === 'math' ? 1.45 : 1);
-      setOffset({ x: 0, y: 0 });
+      const initialScale = payload.kind === 'math' ? 1.45 : 1;
+      activePointers.current.clear();
+      lastPinchRef.current = null;
+      tapTrackRef.current = null;
+      transformRef.current = { x: 0, y: 0, scale: initialScale };
+      setDisplayScale(initialScale);
       setCopied(false);
+      requestAnimationFrame(() => {
+        applyTransform({ x: 0, y: 0, scale: initialScale }, false);
+      });
     }
   }, [payload]);
 
@@ -48,6 +110,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
   const activePayload = payload ?? renderedPayload;
   if (!lightboxPresence.mounted || !activePayload) return null;
 
+  const defaultScale = activePayload.kind === 'math' ? 1.45 : 1;
+
   const copySource = async (text: string) => {
     await navigator.clipboard.writeText(text);
     setCopied(true);
@@ -57,43 +121,122 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
   const handleWheel: React.WheelEventHandler<HTMLDivElement> = (e) => {
     if (activePayload.kind === 'iframe') return;
     e.preventDefault();
-    const delta = e.deltaY < 0 ? 0.14 : -0.14;
-    setScale((prev) => Math.max(0.4, Math.min(5, Number((prev + delta).toFixed(2)))));
+    const factor = e.deltaY < 0 ? 1.12 : 0.89;
+    zoomAroundPoint(transformRef.current.scale * factor, e.clientX, e.clientY, false);
   };
 
   const handlePointerDown: React.PointerEventHandler<HTMLDivElement> = (e) => {
     if (activePayload.kind === 'iframe') return;
-    dragging.current = { active: true, x: e.clientX - offset.x, y: e.clientY - offset.y };
-  };
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Ignore synthetic events where pointer capture isn't registered
+    }
+    activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-  const handlePointerMove: React.PointerEventHandler<HTMLDivElement> = (e) => {
-    if (!dragging.current.active) return;
-    setOffset({
-      x: e.clientX - dragging.current.x,
-      y: e.clientY - dragging.current.y,
-    });
-  };
-
-  const handlePointerUp = () => {
-    dragging.current.active = false;
-  };
-
-  const handleTouchMove: React.TouchEventHandler<HTMLDivElement> = (e) => {
-    if (activePayload.kind === 'iframe') return;
-    if (e.touches.length === 2) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      const dist = Math.hypot(dx, dy);
-      if (pinchDist.current !== null) {
-        const ratio = dist / pinchDist.current;
-        setScale((prev) => Math.max(0.4, Math.min(5, Number((prev * ratio).toFixed(2)))));
-      }
-      pinchDist.current = dist;
+    if (activePointers.current.size === 1) {
+      lastPinchRef.current = null;
+      tapTrackRef.current = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        moved: false,
+      };
+    } else if (activePointers.current.size === 2) {
+      tapTrackRef.current = null;
+      const pts = Array.from(activePointers.current.values());
+      lastPinchRef.current = {
+        dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
+        midX: (pts[0].x + pts[1].x) / 2,
+        midY: (pts[0].y + pts[1].y) / 2,
+      };
     }
   };
 
-  const handleTouchEnd = () => {
-    pinchDist.current = null;
+  const handlePointerMove: React.PointerEventHandler<HTMLDivElement> = (e) => {
+    if (activePayload.kind === 'iframe') return;
+    const prev = activePointers.current.get(e.pointerId);
+    if (!prev) return;
+    activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (activePointers.current.size === 1) {
+      const dx = e.clientX - prev.x;
+      const dy = e.clientY - prev.y;
+      if (
+        tapTrackRef.current &&
+        tapTrackRef.current.pointerId === e.pointerId &&
+        Math.hypot(e.clientX - tapTrackRef.current.startX, e.clientY - tapTrackRef.current.startY) > 10
+      ) {
+        tapTrackRef.current.moved = true;
+      }
+      const curr = transformRef.current;
+      applyTransform({ x: curr.x + dx, y: curr.y + dy, scale: curr.scale }, false);
+    } else if (activePointers.current.size === 2) {
+      const pts = Array.from(activePointers.current.values());
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const midX = (pts[0].x + pts[1].x) / 2;
+      const midY = (pts[0].y + pts[1].y) / 2;
+      const prevPinch = lastPinchRef.current;
+      if (prevPinch && prevPinch.dist > 4) {
+        const curr = transformRef.current;
+        const panDx = midX - prevPinch.midX;
+        const panDy = midY - prevPinch.midY;
+        transformRef.current = { ...curr, x: curr.x + panDx, y: curr.y + panDy };
+        zoomAroundPoint(curr.scale * (dist / prevPinch.dist), midX, midY, false);
+      }
+      lastPinchRef.current = { dist, midX, midY };
+    }
+  };
+
+  const finishPointer = (e: React.PointerEvent<HTMLDivElement>, allowTap: boolean) => {
+    activePointers.current.delete(e.pointerId);
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // Ignore synthetic event cleanup
+    }
+
+    if (activePointers.current.size < 2) {
+      lastPinchRef.current = null;
+    }
+
+    if (
+      allowTap &&
+      activePointers.current.size === 0 &&
+      tapTrackRef.current &&
+      tapTrackRef.current.pointerId === e.pointerId &&
+      !tapTrackRef.current.moved
+    ) {
+      const now = Date.now();
+      const prevTap = lastTapRef.current;
+      if (
+        now - prevTap.time < 280 &&
+        Math.hypot(e.clientX - prevTap.x, e.clientY - prevTap.y) < 28
+      ) {
+        lastTapRef.current = { time: 0, x: 0, y: 0 };
+        if (Math.abs(transformRef.current.scale - defaultScale) < 0.2) {
+          zoomAroundPoint(defaultScale * 2.2, e.clientX, e.clientY, true);
+        } else {
+          applyTransform({ x: 0, y: 0, scale: defaultScale }, true);
+        }
+      } else {
+        lastTapRef.current = { time: now, x: e.clientX, y: e.clientY };
+      }
+    }
+
+    if (tapTrackRef.current?.pointerId === e.pointerId) {
+      tapTrackRef.current = null;
+    }
+  };
+
+  const stepZoom = (delta: number) => {
+    const rect = viewportRef.current?.getBoundingClientRect();
+    const cx = rect ? rect.left + rect.width / 2 : 0;
+    const cy = rect ? rect.top + rect.height / 2 : 0;
+    zoomAroundPoint(transformRef.current.scale + delta, cx, cy, true);
   };
 
   return (
@@ -108,28 +251,30 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
     >
       {/* Top Toolbar */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0 safe-top">
-        <div className="text-sm font-medium truncate max-w-[45%]">
-          {activePayload.kind === 'math'
-            ? '公式详情 & LaTeX 源码'
-            : activePayload.title || (activePayload.kind === 'iframe' ? '交互式实验预览' : '矢量图形查看器')}
-        </div>
+          <div className="text-sm font-medium truncate max-w-[45%]">
+            {activePayload.kind === 'math'
+              ? '公式详情 & LaTeX 源码'
+              : activePayload.kind === 'image'
+                ? activePayload.title || '图片预览'
+                : activePayload.title || (activePayload.kind === 'iframe' ? '交互式实验预览' : '矢量图形查看器')}
+          </div>
         <div className="flex items-center gap-1.5">
           {activePayload.kind !== 'iframe' && (
             <>
               <button
                 type="button"
-                onClick={() => setScale((s) => Math.max(0.4, Number((s - 0.2).toFixed(2))))}
+                onClick={() => stepZoom(-0.25)}
                 className="p-2 rounded-lg hover:bg-white/10 transition"
                 title="缩小"
               >
                 <ZoomOut className="w-4 h-4" />
               </button>
               <span className="text-xs text-zinc-400 w-11 text-center tabular-nums">
-                {Math.round(scale * 100)}%
+                {Math.round(displayScale * 100)}%
               </span>
               <button
                 type="button"
-                onClick={() => setScale((s) => Math.min(5, Number((s + 0.2).toFixed(2))))}
+                onClick={() => stepZoom(0.25)}
                 className="p-2 rounded-lg hover:bg-white/10 transition"
                 title="放大"
               >
@@ -137,10 +282,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setScale(activePayload.kind === 'math' ? 1.45 : 1);
-                  setOffset({ x: 0, y: 0 });
-                }}
+                onClick={() => applyTransform({ x: 0, y: 0, scale: defaultScale }, true)}
                 className="p-2 rounded-lg hover:bg-white/10 transition"
                 title="重置视角"
               >
@@ -149,16 +291,36 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
             </>
           )}
 
-          <button
-            type="button"
-            onClick={() =>
-              void copySource(activePayload.kind === 'math' ? activePayload.latex : activePayload.rawSource)
-            }
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs transition"
-          >
-            {copied ? <Check className="w-3.5 h-3.5 text-fg" /> : <Copy className="w-3.5 h-3.5" />}
-            <span>{activePayload.kind === 'math' ? '复制 LaTeX' : '复制源码'}</span>
-          </button>
+          {activePayload.kind !== 'image' && (
+            <button
+              type="button"
+              onClick={() =>
+                void copySource(
+                  activePayload.kind === 'math' ? activePayload.latex : activePayload.rawSource
+                )
+              }
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs transition"
+            >
+              {copied ? <Check className="w-3.5 h-3.5 text-fg" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{activePayload.kind === 'math' ? '复制 LaTeX' : '复制源码'}</span>
+            </button>
+          )}
+
+          {activePayload.kind === 'image' && (
+            <button
+              type="button"
+              onClick={() =>
+                triggerDownload(
+                  `chatbeauty-image-${Date.now()}.png`,
+                  activePayload.src
+                )
+              }
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs transition"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>下载图片</span>
+            </button>
+          )}
 
           {activePayload.kind === 'svg' && (
             <>
@@ -216,26 +378,33 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
         </div>
       ) : (
         <div
+          ref={viewportRef}
           className="flex-1 overflow-hidden flex items-center justify-center cursor-grab active:cursor-grabbing touch-none select-none p-6"
           onWheel={handleWheel}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerLeave={handlePointerUp}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
+          onPointerUp={(e) => finishPointer(e, true)}
+          onPointerCancel={(e) => finishPointer(e, false)}
         >
           <div
+            ref={contentRef}
             style={{
-              transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+              transform: `translate3d(${transformRef.current.x}px, ${transformRef.current.y}px, 0) scale(${transformRef.current.scale})`,
               transformOrigin: 'center center',
+              willChange: 'transform',
             }}
-            className="transition-transform duration-75 max-w-[92vw]"
+            className="max-w-[92vw] pointer-events-none"
           >
             {activePayload.kind === 'svg' ? (
               <div
                 className="w-[min(860px,88vw)] text-zinc-100 p-4 rounded-2xl border border-white/10 bg-zinc-950/80"
                 dangerouslySetInnerHTML={{ __html: activePayload.svgHtml }}
+              />
+            ) : activePayload.kind === 'image' ? (
+              <img
+                src={activePayload.src}
+                alt={activePayload.title || 'image'}
+                className="max-w-[88vw] max-h-[78vh] object-contain rounded-xl select-none"
               />
             ) : (
               <div

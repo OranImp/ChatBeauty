@@ -57,14 +57,35 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
 
       {imageParts.length > 0 && (
         <div className="flex flex-wrap gap-2.5 my-2">
-          {imageParts.map((img, i) => (
-            <img
-              key={i}
-              src={img.dataUrl || img.url}
-              alt={img.alt || 'image'}
-              className="max-h-64 rounded-xl border border-borderc object-contain"
-            />
-          ))}
+          {imageParts.map((img, i) => {
+            const src = img.dataUrl || img.url || '';
+            if (!src) return null;
+            return (
+              <button
+                key={i}
+                type="button"
+                onClick={() =>
+                  onInspect({
+                    kind: 'image',
+                    title: img.alt || '图片预览',
+                    src,
+                  })
+                }
+                title="点击查看大图"
+                className="group relative rounded-xl overflow-hidden text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              >
+                <img
+                  src={src}
+                  alt={img.alt || 'image'}
+                  className={
+                    appearance.hideMediaFrames
+                      ? 'max-h-64 rounded-xl object-contain transition-transform duration-200 group-hover:scale-[1.01]'
+                      : 'max-h-64 rounded-xl border border-borderc bg-surface/30 object-contain transition-transform duration-200 group-hover:scale-[1.01]'
+                  }
+                />
+              </button>
+            );
+          })}
         </div>
       )}
 

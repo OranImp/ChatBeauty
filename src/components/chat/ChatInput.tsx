@@ -2,13 +2,22 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowUp,
   ChevronDown,
+  ImagePlus,
   Mic,
   Plus,
   RotateCcw,
   SlidersHorizontal,
   Square,
+  X,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
+import {
+  AttachedImage,
+  MAX_ATTACHED_IMAGES,
+  prepareImageAttachment,
+} from '@/services/media/imageUtils';
+import type { ContentPart } from '@/types/chat';
+import type { LightboxPayload } from '@/components/renderer/LightboxModal';
 import type { CustomModelParams } from '@/types/chat';
 import { DEFAULT_GENERATION_SETTINGS } from '@/types/settings';
 import { PROTOCOL_TEMPLATES } from '@/services/llm/registry';
@@ -22,10 +31,11 @@ import {
 } from '@/services/llm/modelProfiles';
 
 interface ChatInputProps {
-  onSend: (text: string) => void;
+  onSend: (text: string, images?: Array<Extract<ContentPart, { type: 'image' }>>) => void;
   onStop: () => void;
   isStreaming: boolean;
   onOpenSettings: (tab?: 'providers' | 'prompts' | 'appearance' | 'data') => void;
+  onInspect?: (payload: LightboxPayload) => void;
 }
 
 type ComposerMenu = 'plus' | 'model' | 'reasoning' | 'params';
@@ -43,6 +53,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onStop,
   isStreaming,
   onOpenSettings,
+  onInspect,
 }) => {
   const {
     appearance,
@@ -61,6 +72,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   } = useAppStore();
 
   const [text, setText] = useState('');
+  const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu | null>(null);
   const [renderedMenu, setRenderedMenu] = useState<ComposerMenu | null>(null);
   const [reservedHint, setReservedHint] = useState<string | null>(null);
@@ -69,6 +83,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [extraJsonError, setExtraJsonError] = useState<string | null>(null);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const menuPresence = usePresence(activeMenu !== null, 170);
   const hintPresence = usePresence(Boolean(reservedHint), 180);
@@ -201,15 +216,61 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
   };
 
+  const addImageFiles = async (files: FileList | File[]) => {
+    const incoming = Array.from(files);
+    if (incoming.length === 0) return;
+
+    const imageFiles = incoming.filter((f) => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) {
+      setImageError('仅支持图片格式文件 (PNG / JPG / WebP / GIF)');
+      return;
+    }
+
+    const availableSlots = MAX_ATTACHED_IMAGES - attachedImages.length;
+    if (availableSlots <= 0) {
+      setImageError(`单条消息最多附加 ${MAX_ATTACHED_IMAGES} 张图片`);
+      return;
+    }
+
+    setImageError(
+      imageFiles.length > availableSlots
+        ? `已达到上限，最多附加 ${MAX_ATTACHED_IMAGES} 张图片`
+        : null
+    );
+
+    const nextBatch: AttachedImage[] = [];
+    for (const file of imageFiles.slice(0, availableSlots)) {
+      try {
+        nextBatch.push(await prepareImageAttachment(file));
+      } catch (err) {
+        setImageError(err instanceof Error ? err.message : '图片处理失败');
+      }
+    }
+
+    if (nextBatch.length > 0) {
+      setAttachedImages((prev) => [...prev, ...nextBatch].slice(0, MAX_ATTACHED_IMAGES));
+    }
+  };
+
   const handleSubmit = () => {
     if (isStreaming) {
       onStop();
       return;
     }
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed && attachedImages.length === 0) return;
+    const imageParts: Array<Extract<ContentPart, { type: 'image' }>> = attachedImages.map(
+      (img) => ({
+        type: 'image',
+        mimeType: img.mimeType,
+        dataUrl: img.dataUrl,
+        alt: img.name,
+      })
+    );
     setText('');
-    onSend(trimmed);
+    setAttachedImages([]);
+    setImageError(null);
+    onSend(trimmed, imageParts.length > 0 ? imageParts : undefined);
   };
 
   const handleKeyDown: React.KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
@@ -346,17 +407,22 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 )}
 
                 <div className="pt-2 border-t border-borderc space-y-1">
-                  <div className="text-[11px] text-muted px-1">预留扩展接口</div>
+                  <div className="text-[11px] text-muted px-1">多模态与图片输入</div>
                   <button
                     type="button"
                     onClick={() => {
                       setActiveMenu(null);
-                      showReservedNotice('识图 (Vision) 与图像生成接口已在底层预留');
+                      fileInputRef.current?.click();
                     }}
-                    className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl hover:bg-fg/5 active:scale-[0.985] text-muted hover:text-fg transition"
+                    className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl hover:bg-fg/5 active:scale-[0.985] text-fg transition"
                   >
-                    <span>图片识图 / 图像生成</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-fg/5">预留</span>
+                    <span className="flex items-center gap-2">
+                      <ImagePlus className="w-4 h-4 text-accent" />
+                      <span>上传图片（识图）</span>
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-fg/10 text-muted">
+                      最多 {MAX_ATTACHED_IMAGES} 张
+                    </span>
                   </button>
                 </div>
               </div>
@@ -658,24 +724,135 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         )}
 
         {/* ChatGPT x Claude Code Scrollbar-free Composer */}
-        <div className="rounded-[24px] border border-borderc focus-within:border-fg/25 bg-surface/95 backdrop-blur-xl px-3.5 pt-3 pb-2.5 shadow-[0_8px_30px_rgba(0,0,0,0.32)] transition-colors">
+        <div
+          onDragOver={(e) => {
+            if (e.dataTransfer?.types.includes('Files')) {
+              e.preventDefault();
+              setIsDragOver(true);
+            }
+          }}
+          onDragLeave={() => setIsDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDragOver(false);
+            if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+              void addImageFiles(e.dataTransfer.files);
+            }
+          }}
+          className={`rounded-[24px] border bg-surface/95 backdrop-blur-xl px-3.5 pt-3 pb-2.5 shadow-[0_8px_30px_rgba(0,0,0,0.32)] transition-colors ${
+            isDragOver
+              ? 'border-accent ring-2 ring-accent/25'
+              : 'border-borderc focus-within:border-fg/25'
+          }`}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files && e.target.files.length > 0) {
+                void addImageFiles(e.target.files);
+              }
+              e.target.value = '';
+            }}
+          />
+
+          {imageError && (
+            <div className="mb-2 px-3 py-1.5 rounded-xl border border-rose-500/35 bg-rose-500/10 text-xs text-rose-300 flex items-center justify-between gap-2">
+              <span>{imageError}</span>
+              <button
+                type="button"
+                onClick={() => setImageError(null)}
+                className="p-0.5 text-rose-200 hover:text-fg"
+                aria-label="关闭图片提示"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {attachedImages.length > 0 && (
+            <div className="mb-2.5 space-y-1.5">
+              <div className="flex flex-wrap gap-2">
+                {attachedImages.map((img) => (
+                  <div
+                    key={img.id}
+                    className="group relative w-16 h-16 rounded-xl border border-borderc bg-bg/70 overflow-hidden shrink-0"
+                  >
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onInspect?.({
+                          kind: 'image',
+                          title: img.name,
+                          src: img.dataUrl,
+                        })
+                      }
+                      className="w-full h-full block focus:outline-none"
+                      title={`预览 ${img.name}`}
+                    >
+                      <img
+                        src={img.dataUrl}
+                        alt={img.name}
+                        className="w-full h-full object-cover"
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAttachedImages((prev) => prev.filter((item) => item.id !== img.id))
+                      }
+                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-bg/85 text-fg border border-borderc flex items-center justify-center opacity-90 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 transition hover:bg-rose-500 hover:text-white"
+                      aria-label={`移除图片 ${img.name}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {currentModelDef?.capabilities?.vision === false && (
+                <div className="text-[11px] text-amber-300/90 px-1">
+                  提示：当前选中模型标记为不支持图片输入，发送前建议切换支持 Vision 的模型。
+                </div>
+              )}
+            </div>
+          )}
+
           <textarea
             ref={textareaRef}
             rows={1}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="向 ChatBeauty 提问"
+            onFocus={() => {
+              if (typeof window !== 'undefined') window.scrollTo(0, 0);
+            }}
+            onPaste={(e) => {
+              const items = Array.from(e.clipboardData?.items || []);
+              const imageFiles = items
+                .filter((it) => it.type.startsWith('image/'))
+                .map((it) => it.getAsFile())
+                .filter((f): f is File => Boolean(f));
+              if (imageFiles.length > 0) {
+                e.preventDefault();
+                void addImageFiles(imageFiles);
+              }
+            }}
+            placeholder={
+              attachedImages.length > 0 ? '添加图片说明或直接发送（支持粘贴/拖拽图片）' : '向 ChatBeauty 提问'
+            }
             className="w-full bg-transparent text-[15px] text-fg placeholder:text-muted/80 px-1 resize-none focus:outline-none max-h-[160px] leading-relaxed no-scrollbar"
           />
 
-          <div className="flex items-center justify-between gap-2 mt-2 pt-1">
-            {/* Left controls: +, Monospace Model Pill, Dynamic Reasoning Pill, Custom Params Pill */}
-            <div className="flex items-center gap-1.5 min-w-0">
+          <div className="flex items-center justify-between gap-1.5 sm:gap-2 mt-2 pt-1">
+            {/* Left controls: +, Upload Image, Monospace Model Pill, Dynamic Reasoning Pill, Custom Params Pill */}
+            <div className="flex items-center gap-1 sm:gap-1.5 flex-1 min-w-0">
               <button
                 type="button"
                 onClick={() => toggleMenu('plus')}
-                className={`w-8 h-8 rounded-full flex items-center justify-center hover:text-fg hover:bg-fg/10 active:scale-95 shrink-0 transition ${
+                className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center hover:text-fg hover:bg-fg/10 active:scale-95 shrink-0 transition ${
                   activeMenu === 'plus' ? 'bg-fg/10 text-fg' : 'text-muted'
                 }`}
                 aria-label="更多能力与提示词"
@@ -690,8 +867,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
               <button
                 type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="relative w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-muted hover:text-fg hover:bg-fg/10 active:scale-95 shrink-0 transition"
+                title="上传图片（支持拖拽与 Ctrl+V 粘贴）"
+                aria-label="上传图片"
+              >
+                <ImagePlus className="w-[18px] h-[18px]" />
+                {attachedImages.length > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-accent text-accentfg text-[10px] font-semibold flex items-center justify-center">
+                    {attachedImages.length}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
                 onClick={() => toggleMenu('model')}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border bg-bg/55 hover:bg-elevated active:scale-95 text-xs font-mono text-fg min-w-0 max-w-[120px] sm:max-w-[175px] lg:max-w-[210px] transition ${
+                className={`flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full border bg-bg/55 hover:bg-elevated active:scale-95 text-xs font-mono text-fg min-w-[76px] max-w-[140px] sm:max-w-[185px] lg:max-w-[220px] transition ${
                   activeMenu === 'model' ? 'border-fg/30 bg-elevated' : 'border-borderc'
                 }`}
                 title="切换模型"
@@ -764,7 +956,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => showReservedNotice('语音输入 / TTS 合成接口已在底层预留')}
-                className="w-8 h-8 rounded-full flex items-center justify-center text-muted hover:text-fg hover:bg-fg/10 transition"
+                className="hidden sm:flex w-8 h-8 rounded-full items-center justify-center text-muted hover:text-fg hover:bg-fg/10 transition"
                 title="语音接口（已预留）"
               >
                 <Mic className="w-[17px] h-[17px]" />
@@ -773,9 +965,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={!isStreaming && !text.trim()}
+                disabled={!isStreaming && !text.trim() && attachedImages.length === 0}
                 className={`w-8 h-8 rounded-full flex items-center justify-center transition ${
-                  isStreaming || text.trim()
+                  isStreaming || text.trim() || attachedImages.length > 0
                     ? 'bg-accent text-accentfg active:scale-95'
                     : 'bg-fg/10 text-muted cursor-not-allowed'
                 }`}

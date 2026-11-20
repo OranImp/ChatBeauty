@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Check, Copy, Pencil, RotateCw, Trash2 } from 'lucide-react';
-import type { Message } from '@/types/chat';
+import type { ContentPart, Message } from '@/types/chat';
 import type { AppearanceSettings } from '@/types/settings';
 import type { ResolvedTheme } from '@/components/renderer/svgUtils';
 import type { LightboxPayload } from '@/components/renderer/LightboxModal';
@@ -32,6 +32,9 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     .filter((p) => p.type === 'text')
     .map((p) => p.text)
     .join('\n');
+  const imageParts = message.parts.filter(
+    (p): p is Extract<ContentPart, { type: 'image' }> => p.type === 'image'
+  );
   const [draft, setDraft] = useState(rawText);
 
   const isUser = message.role === 'user';
@@ -78,8 +81,45 @@ export const MessageItem: React.FC<MessageItemProps> = ({
             </div>
           </div>
         ) : (
-          <div className="max-w-[86%] sm:max-w-[78%] rounded-2xl rounded-tr-sm bg-elevated border border-borderc px-4 py-2.5 text-[15px] leading-relaxed text-fg whitespace-pre-wrap break-words">
-            {rawText}
+          <div className="flex flex-col items-end gap-1.5 max-w-[86%] sm:max-w-[78%]">
+            {imageParts.length > 0 && (
+              <div className="flex flex-wrap justify-end gap-2">
+                {imageParts.map((img, i) => {
+                  const src = img.dataUrl || img.url || '';
+                  if (!src) return null;
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() =>
+                        onInspect({
+                          kind: 'image',
+                          title: img.alt || '图片预览',
+                          src,
+                        })
+                      }
+                      title="点击查看大图"
+                      className="group/img relative rounded-xl overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    >
+                      <img
+                        src={src}
+                        alt={img.alt || 'uploaded image'}
+                        className={
+                          appearance.hideMediaFrames
+                            ? 'max-h-56 max-w-[240px] rounded-xl object-contain transition-transform duration-200 group-hover/img:scale-[1.02]'
+                            : 'max-h-56 max-w-[240px] rounded-xl border border-borderc bg-surface/40 object-contain transition-transform duration-200 group-hover/img:scale-[1.02]'
+                        }
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {rawText.length > 0 && (
+              <div className="rounded-2xl rounded-tr-sm bg-elevated border border-borderc px-4 py-2.5 text-[15px] leading-relaxed text-fg whitespace-pre-wrap break-words">
+                {rawText}
+              </div>
+            )}
           </div>
         )}
 
@@ -91,7 +131,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               className="p-1.5 rounded-lg hover:bg-surface hover:text-fg transition"
               title="复制"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-fg" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? <Check className="w-4 h-4 text-fg" /> : <Copy className="w-4 h-4" />}
             </button>
             <button
               type="button"
@@ -102,7 +142,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               className="p-1.5 rounded-lg hover:bg-surface hover:text-fg transition"
               title="编辑并重发"
             >
-              <Pencil className="w-3.5 h-3.5" />
+              <Pencil className="w-4 h-4" />
             </button>
             <button
               type="button"
@@ -110,7 +150,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               className="p-1.5 rounded-lg hover:bg-surface hover:text-rose-400 transition"
               title="删除消息"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Trash2 className="w-4 h-4" />
             </button>
           </div>
         )}
@@ -158,7 +198,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               className="p-1.5 rounded-lg hover:bg-surface hover:text-fg transition"
               title="复制 Markdown"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-fg" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? <Check className="w-4 h-4 text-fg" /> : <Copy className="w-4 h-4" />}
             </button>
             <button
               type="button"
@@ -166,7 +206,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               className="p-1.5 rounded-lg hover:bg-surface hover:text-fg transition"
               title="重新生成"
             >
-              <RotateCw className="w-3.5 h-3.5" />
+              <RotateCw className="w-4 h-4" />
             </button>
             <button
               type="button"
@@ -174,7 +214,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               className="p-1.5 rounded-lg hover:bg-surface hover:text-rose-400 transition"
               title="删除消息"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Trash2 className="w-4 h-4" />
             </button>
           </div>
 

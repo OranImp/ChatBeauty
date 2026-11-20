@@ -11,7 +11,11 @@ vi.mock('@/services/transport/streamHttp', () => ({
   getRuntimeEnvironment: () => 'electron',
 }));
 
-import { getProviderAdapter } from '@/services/llm/registry';
+import {
+  getProviderAdapter,
+  PROTOCOL_TEMPLATES,
+  PROVIDER_BRAND_PRESETS,
+} from '@/services/llm/registry';
 import { BUILTIN_REASONING_PROFILES } from '@/services/llm/modelProfiles';
 
 const userMessages: Message[] = [
@@ -791,5 +795,197 @@ describe('LLM Protocol Adapters', () => {
         new AbortController().signal
       )
     ).rejects.toThrow('Top-level Responses API failure');
+  });
+
+  it('serializes multimodal image + text and image-only user messages across all 4 adapters', async () => {
+    mockStreamRequest.mockImplementation(async (opts: { onChunk: (c: string) => void }) => {
+      opts.onChunk('data: [DONE]\n\n');
+    });
+
+    const sampleBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const sampleDataUrl = `data:image/png;base64,${sampleBase64}`;
+
+    const multiMsgs: Message[] = [
+      {
+        id: 'm_img_text',
+        conversationId: 'c1',
+        role: 'user',
+        parts: [
+          { type: 'image', mimeType: 'image/png', dataUrl: sampleDataUrl, alt: 'circuit.png' },
+          { type: 'text', text: '分析这张电路图' },
+        ],
+        createdAt: 1,
+        updatedAt: 1,
+        status: 'done',
+      },
+      {
+        id: 'm_img_only',
+        conversationId: 'c1',
+        role: 'user',
+        parts: [{ type: 'image', mimeType: 'image/png', dataUrl: sampleDataUrl, alt: 'only.png' }],
+        createdAt: 2,
+        updatedAt: 2,
+        status: 'done',
+      },
+    ];
+
+    // 1) OpenAI Chat
+    await getProviderAdapter('openai-chat').chatStream(
+      {
+        provider: {
+          id: 'p1',
+          name: 'OpenAI',
+          protocol: 'openai-chat',
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'sk-test',
+          defaultModel: 'gpt-6.2-sol',
+          models: [],
+          enabled: true,
+          createdAt: 1,
+        },
+        modelId: 'gpt-6.2-sol',
+        systemPrompt: '',
+        messages: multiMsgs,
+        generation: DEFAULT_GENERATION_SETTINGS,
+      },
+      { onReasoningDelta: () => {}, onTextDelta: () => {} },
+      new AbortController().signal
+    );
+    const chatBody = JSON.parse(
+      (mockStreamRequest.mock.calls[0][0] as { body: string }).body
+    ) as { messages: Array<{ role: string; content: unknown }> };
+    expect(chatBody.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '分析这张电路图' },
+          { type: 'image_url', image_url: { url: sampleDataUrl } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'image_url', image_url: { url: sampleDataUrl } }],
+      },
+    ]);
+
+    // 2) OpenAI Responses
+    await getProviderAdapter('openai-responses').chatStream(
+      {
+        provider: {
+          id: 'p2',
+          name: 'Responses',
+          protocol: 'openai-responses',
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'sk-resp',
+          defaultModel: 'gpt-6.2-sol',
+          models: [],
+          enabled: true,
+          createdAt: 1,
+        },
+        modelId: 'gpt-6.2-sol',
+        systemPrompt: '',
+        messages: multiMsgs,
+        generation: DEFAULT_GENERATION_SETTINGS,
+      },
+      { onReasoningDelta: () => {}, onTextDelta: () => {} },
+      new AbortController().signal
+    );
+    const respBody = JSON.parse(
+      (mockStreamRequest.mock.calls[1][0] as { body: string }).body
+    ) as { input: Array<{ role: string; content: unknown }> };
+    expect(respBody.input).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'input_text', text: '分析这张电路图' },
+          { type: 'input_image', image_url: sampleDataUrl },
+        ],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'input_image', image_url: sampleDataUrl }],
+      },
+    ]);
+
+    // 3) Gemini
+    await getProviderAdapter('gemini').chatStream(
+      {
+        provider: {
+          id: 'p3',
+          name: 'Gemini',
+          protocol: 'gemini',
+          baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+          apiKey: 'AIza',
+          defaultModel: 'gemini-4-neon',
+          models: [],
+          enabled: true,
+          createdAt: 1,
+        },
+        modelId: 'gemini-4-neon',
+        systemPrompt: '',
+        messages: multiMsgs,
+        generation: DEFAULT_GENERATION_SETTINGS,
+      },
+      { onReasoningDelta: () => {}, onTextDelta: () => {} },
+      new AbortController().signal
+    );
+    const gemBody = JSON.parse(
+      (mockStreamRequest.mock.calls[2][0] as { body: string }).body
+    ) as { contents: Array<{ role: string; parts: Array<Record<string, unknown>> }> };
+    expect(gemBody.contents[0].parts).toEqual([
+      { text: '分析这张电路图' },
+      { inlineData: { mimeType: 'image/png', data: sampleBase64 } },
+      { inlineData: { mimeType: 'image/png', data: sampleBase64 } },
+    ]);
+
+    // 4) Anthropic
+    await getProviderAdapter('anthropic').chatStream(
+      {
+        provider: {
+          id: 'p4',
+          name: 'Anthropic',
+          protocol: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          apiKey: 'sk-ant',
+          defaultModel: 'claude-sonnet-5-5',
+          models: [],
+          enabled: true,
+          createdAt: 1,
+        },
+        modelId: 'claude-sonnet-5-5',
+        systemPrompt: '',
+        messages: multiMsgs,
+        generation: DEFAULT_GENERATION_SETTINGS,
+      },
+      { onReasoningDelta: () => {}, onTextDelta: () => {} },
+      new AbortController().signal
+    );
+    const antBody = JSON.parse(
+      (mockStreamRequest.mock.calls[3][0] as { body: string }).body
+    ) as { messages: Array<{ role: string; content: Array<Record<string, unknown>> }> };
+    expect(antBody.messages[0].content).toEqual([
+      {
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: sampleBase64 },
+      },
+      { type: 'text', text: '分析这张电路图' },
+      {
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: sampleBase64 },
+      },
+    ]);
+  });
+
+  it('defines valid CC-Switch brand presets with unique ids and complete metadata', () => {
+    expect(PROVIDER_BRAND_PRESETS.length).toBeGreaterThanOrEqual(11);
+    const ids = new Set<string>();
+    for (const preset of PROVIDER_BRAND_PRESETS) {
+      expect(ids.has(preset.id)).toBe(false);
+      ids.add(preset.id);
+      expect(Object.keys(PROTOCOL_TEMPLATES)).toContain(preset.protocol);
+      expect(preset.baseUrl).toMatch(/^https?:\/\//);
+      expect(preset.suggestedModels.length).toBeGreaterThan(0);
+      expect(preset.suggestedModels.some((m) => m.id === preset.defaultModel)).toBe(true);
+    }
   });
 });

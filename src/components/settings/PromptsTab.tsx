@@ -50,9 +50,9 @@ export const PromptsTab: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 text-[13.5px]">
       {savedNotice && (
-        <div className="px-3 py-2 rounded-xl border border-borderc bg-surface text-xs text-fg">
+        <div className="px-3 py-2 rounded-xl border border-borderc bg-surface text-[13.5px] text-fg">
           {savedNotice}
         </div>
       )}
@@ -61,10 +61,10 @@ export const PromptsTab: React.FC = () => {
       <div className="rounded-2xl border border-borderc bg-surface/40 p-4 space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-1">
-            <div className="text-sm font-semibold text-fg">
+            <div className="text-[15px] font-semibold text-fg">
               视觉与学术渲染增强协议
             </div>
-            <p className="text-xs text-muted leading-relaxed">
+            <p className="text-[13px] text-muted leading-relaxed">
               开启后，系统会自动附带这段协议到所有角色提示词末尾，引导模型稳定输出规范的 LaTeX 公式、SVG 原理电路图、Mermaid 流程图、ECharts 图表与交互实验。
             </p>
           </div>
@@ -75,7 +75,7 @@ export const PromptsTab: React.FC = () => {
                 renderEnhancementEnabled: !promptSettings.renderEnhancementEnabled,
               })
             }
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold shrink-0 transition ${
+            className={`px-3 py-1.5 rounded-full text-[13px] font-semibold shrink-0 transition ${
               promptSettings.renderEnhancementEnabled
                 ? 'bg-accent text-accentfg'
                 : 'bg-surface border border-borderc text-muted'
@@ -89,7 +89,7 @@ export const PromptsTab: React.FC = () => {
           rows={9}
           value={renderDraft}
           onChange={(e) => setRenderDraft(e.target.value)}
-          className="w-full px-3 py-2.5 rounded-xl bg-bg/90 border border-borderc text-xs text-fg leading-relaxed font-mono focus:outline-none focus:border-fg/40"
+          className="w-full px-3 py-2.5 rounded-xl bg-bg/90 border border-borderc text-[13.5px] text-fg leading-relaxed font-mono focus:outline-none focus:border-fg/40"
         />
 
         <div className="flex items-center justify-between gap-2">
@@ -102,9 +102,9 @@ export const PromptsTab: React.FC = () => {
               });
               flash('已恢复默认渲染增强协议');
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-borderc text-xs text-muted hover:text-fg transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-borderc text-[13.5px] text-muted hover:text-fg transition"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
+            <RotateCcw className="w-4 h-4" />
             <span>恢复默认</span>
           </button>
 
@@ -114,9 +114,9 @@ export const PromptsTab: React.FC = () => {
               void updatePromptSettings({ renderEnhancementPrompt: renderDraft });
               flash('渲染增强协议已保存');
             }}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-accent text-accentfg text-xs font-semibold transition"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-accent text-accentfg text-[13.5px] font-semibold transition"
           >
-            <Check className="w-3.5 h-3.5" />
+            <Check className="w-4 h-4" />
             <span>保存协议内容</span>
           </button>
         </div>
@@ -126,15 +126,15 @@ export const PromptsTab: React.FC = () => {
       <div className="rounded-2xl border border-borderc bg-surface/40 p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-sm font-semibold text-fg">角色与学习系统提示词预设</div>
-            <div className="text-xs text-muted">内置多套学术与教学预设，支持任意编辑或新建</div>
+            <div className="text-[15px] font-semibold text-fg">角色与学习系统提示词预设</div>
+            <div className="text-[13px] text-muted">内置多套学术与教学预设，支持任意编辑或新建</div>
           </div>
           <button
             type="button"
             onClick={() => void handleCreateCustom()}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-elevated border border-borderc hover:border-fg/35 text-xs text-fg transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-elevated border border-borderc hover:border-fg/35 text-[13.5px] text-fg transition"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-4 h-4" />
             <span>新建预设</span>
           </button>
         </div>
@@ -148,7 +148,7 @@ export const PromptsTab: React.FC = () => {
                 key={p.id}
                 type="button"
                 onClick={() => setSelectedPresetId(p.id)}
-                className={`px-3 py-1.5 rounded-xl text-xs border transition flex items-center gap-1.5 ${
+                className={`px-3 py-1.5 rounded-xl text-[13.5px] border transition flex items-center gap-1.5 ${
                   isSelected
                     ? 'border-fg/35 bg-elevated text-fg font-medium'
                     : 'border-borderc bg-bg/60 text-muted hover:text-fg'
@@ -156,7 +156,7 @@ export const PromptsTab: React.FC = () => {
               >
                 <span>{p.name}</span>
                 {isDefault && (
-                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-fg/10 text-fg">
+                  <span className="text-[11px] px-1.5 py-0.2 rounded bg-fg/10 text-fg">
                     默认
                   </span>
                 )}
@@ -167,7 +167,7 @@ export const PromptsTab: React.FC = () => {
 
         {presetDraft && (
           <div className="space-y-3 pt-2 border-t border-borderc">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[13.5px]">
               <label className="space-y-1">
                 <span className="text-muted">预设名称</span>
                 <input
@@ -188,13 +188,13 @@ export const PromptsTab: React.FC = () => {
               </label>
             </div>
 
-            <label className="block space-y-1 text-xs">
+            <label className="block space-y-1 text-[13.5px]">
               <span className="text-muted">系统提示词正文</span>
               <textarea
                 rows={6}
                 value={presetDraft.content}
                 onChange={(e) => setPresetDraft({ ...presetDraft, content: e.target.value })}
-                className="w-full px-3 py-2.5 rounded-xl bg-bg border border-borderc text-fg text-xs leading-relaxed focus:outline-none focus:border-fg/40"
+                className="w-full px-3 py-2.5 rounded-xl bg-bg border border-borderc text-fg text-[13.5px] leading-relaxed focus:outline-none focus:border-fg/40"
               />
             </label>
 
@@ -207,9 +207,9 @@ export const PromptsTab: React.FC = () => {
                       void resetBuiltinPreset(presetDraft.id);
                       flash('已还原该内置预设');
                     }}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-borderc text-xs text-muted hover:text-fg"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-borderc text-[13.5px] text-muted hover:text-fg"
                   >
-                    <RotateCcw className="w-3.5 h-3.5" />
+                    <RotateCcw className="w-4 h-4" />
                     <span>还原默认</span>
                   </button>
                 ) : (
@@ -219,9 +219,9 @@ export const PromptsTab: React.FC = () => {
                       void deletePromptPreset(presetDraft.id);
                       flash('已删除自定义预设');
                     }}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-rose-500/30 text-xs text-rose-400 hover:bg-rose-500/10"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-rose-500/30 text-[13.5px] text-rose-400 hover:bg-rose-500/10"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <Trash2 className="w-4 h-4" />
                     <span>删除</span>
                   </button>
                 )}
@@ -233,7 +233,7 @@ export const PromptsTab: React.FC = () => {
                       void updatePromptSettings({ defaultPresetId: presetDraft.id });
                       flash(`已将「${presetDraft.name}」设为默认预设`);
                     }}
-                    className="px-3 py-1.5 rounded-xl border border-borderc text-xs text-fg hover:border-fg/40"
+                    className="px-3 py-1.5 rounded-xl border border-borderc text-[13.5px] text-fg hover:border-fg/40"
                   >
                     设为新对话默认
                   </button>
@@ -246,9 +246,9 @@ export const PromptsTab: React.FC = () => {
                   void savePromptPreset(presetDraft);
                   flash('预设内容已保存');
                 }}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-accent text-accentfg text-xs font-semibold"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-accent text-accentfg text-[13.5px] font-semibold"
               >
-                <Check className="w-3.5 h-3.5" />
+                <Check className="w-4 h-4" />
                 <span>保存此预设</span>
               </button>
             </div>

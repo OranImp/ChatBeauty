@@ -11,7 +11,7 @@ export function createDemoShowcaseData(now = Date.now()): {
     title: '全加器推导与交互可视化示例',
     createdAt: now - 120000,
     updatedAt: now - 60000,
-    pinned: true,
+    pinned: false,
     systemPromptPresetId: 'stem-tutor',
     enableRenderPrompt: true,
     isDemo: true,

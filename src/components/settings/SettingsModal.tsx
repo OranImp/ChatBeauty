@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
-import { X } from 'lucide-react';
+import { Sparkles, X } from 'lucide-react';
+import { useAppStore } from '@/store/useAppStore';
 import { ProvidersTab } from './ProvidersTab';
 import { PromptsTab } from './PromptsTab';
 import { AppearanceTab } from './AppearanceTab';
@@ -29,6 +30,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
 }) => {
   const modalPresence = usePresence(open, 200);
+  const openDemoShowcase = useAppStore((s) => s.openDemoShowcase);
 
   useEffect(() => {
     if (!open) return;
@@ -60,20 +62,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         }`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-borderc shrink-0">
-          <div className="font-semibold text-base text-fg">ChatBeauty 设置</div>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-borderc shrink-0">
+          <div className="font-semibold text-[17px] text-fg">ChatBeauty 设置</div>
           <button
             type="button"
             onClick={onClose}
             className="p-2 rounded-xl text-muted hover:text-fg hover:bg-surface active:scale-95 transition"
             aria-label="关闭设置"
           >
-            <X className="w-4 h-4" />
+            <X className="w-[18px] h-[18px]" />
           </button>
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex items-center gap-1.5 px-4 py-2 border-b border-borderc bg-surface/35 overflow-x-auto no-scrollbar shrink-0">
+        <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-borderc bg-surface/35 overflow-x-auto no-scrollbar shrink-0">
           {TABS.map(({ key, label }) => {
             const active = activeTab === key;
             return (
@@ -81,7 +83,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 key={key}
                 type="button"
                 onClick={() => onTabChange(key)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap active:scale-95 transition ${
+                className={`px-3.5 py-2 rounded-xl text-[13px] font-medium whitespace-nowrap active:scale-95 transition ${
                   active
                     ? 'bg-accent text-accentfg shadow-sm'
                     : 'text-muted hover:text-fg hover:bg-fg/5'
@@ -105,7 +107,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Subtle License & Font Attribution Footer */}
         <div className="px-5 py-2 border-t border-borderc bg-surface/25 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted font-mono shrink-0">
-          <span>ChatBeauty v0.3.0 · MIT License</span>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span>ChatBeauty v0.4.0 · MIT License</span>
+            <button
+              type="button"
+              onClick={() => void openDemoShowcase().then(() => onClose())}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-borderc bg-bg/60 hover:bg-elevated text-muted hover:text-fg transition font-sans"
+              title="打开内置渲染能力演示会话（LaTeX、SVG、Mermaid、ECharts 与交互沙盒）"
+            >
+              <Sparkles className="w-3 h-3 text-accent" />
+              <span>渲染效果示例</span>
+            </button>
+          </div>
           <span className="truncate">Inter / Newsreader / JetBrains Mono (SIL OFL)</span>
         </div>
       </div>

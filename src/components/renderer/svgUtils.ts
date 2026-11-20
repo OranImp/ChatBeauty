@@ -91,6 +91,7 @@ export function sanitizeAndHarmonizeSvg(
   }
 
   // Harmonize explicit black/white strokes & fills against current theme
+  // and protect labels from intersecting wires with a crisp theme-background halo.
   const allNodes = svg.querySelectorAll('*');
   allNodes.forEach((el) => {
     const stroke = normColor(el.getAttribute('stroke'));
@@ -102,6 +103,15 @@ export function sanitizeAndHarmonizeSvg(
     } else {
       if (PURE_WHITE.has(stroke)) el.setAttribute('stroke', 'currentColor');
       if (PURE_WHITE.has(fill)) el.setAttribute('fill', 'currentColor');
+    }
+
+    if (el.tagName.toLowerCase() === 'text' && (!stroke || stroke === 'none')) {
+      const existingStyle = (el.getAttribute('style') || '').trim();
+      const sep = existingStyle && !existingStyle.endsWith(';') ? '; ' : existingStyle ? ' ' : '';
+      el.setAttribute(
+        'style',
+        `${existingStyle}${sep}paint-order: stroke fill; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round;`
+      );
     }
   });
 
@@ -178,8 +188,10 @@ export async function exportSvgToPng(
   exportSvg.setAttribute('height', String(h * 2));
   exportSvg.setAttribute('style', `color: ${fg}; background: ${bg};`);
 
-  // Replace currentColor explicitly for standalone rasterization
-  const serialized = exportSvg.outerHTML.replace(/currentColor/g, fg);
+  // Replace currentColor and var(--bg) explicitly for standalone rasterization
+  const serialized = exportSvg.outerHTML
+    .replace(/currentColor/g, fg)
+    .replace(/var\(--bg\)/g, bg);
   const svgBlob = new Blob([serialized], { type: 'image/svg+xml;charset=utf-8' });
   const blobUrl = URL.createObjectURL(svgBlob);
 

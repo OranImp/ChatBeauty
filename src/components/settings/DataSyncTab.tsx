@@ -91,7 +91,7 @@ export const DataSyncTab: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6 text-xs">
+    <div className="space-y-6 text-[13.5px]">
       {notice && (
         <div
           className={`px-3 py-2 rounded-xl border ${
@@ -117,7 +117,7 @@ export const DataSyncTab: React.FC = () => {
             onClick={() => void handleExportFull()}
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-accent text-accentfg font-semibold"
           >
-            <Download className="w-3.5 h-3.5" />
+            <Download className="w-4 h-4" />
             <span>导出全量 JSON 备份</span>
           </button>
 
@@ -135,7 +135,7 @@ export const DataSyncTab: React.FC = () => {
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-borderc bg-bg hover:bg-elevated text-fg"
           >
-            <Upload className="w-3.5 h-3.5" />
+            <Upload className="w-4 h-4" />
             <span>导入备份文件</span>
           </button>
           <input
@@ -171,7 +171,7 @@ export const DataSyncTab: React.FC = () => {
       {/* Reserved WebDAV Sync Interface */}
       <div className="rounded-2xl border border-borderc bg-surface/40 p-4 space-y-3.5">
         <div className="flex items-center justify-between">
-          <div className="font-semibold text-sm text-fg">WebDAV 跨端同步</div>
+          <div className="font-semibold text-[15px] text-fg">WebDAV 跨端同步</div>
           <div className="flex items-center gap-2">
             <span className="text-muted">启用</span>
             <ToggleSwitch
@@ -234,9 +234,9 @@ export const DataSyncTab: React.FC = () => {
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-borderc bg-bg hover:bg-elevated text-fg disabled:opacity-50"
           >
             {syncBusy ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
-              <Wifi className="w-3.5 h-3.5" />
+              <Wifi className="w-4 h-4" />
             )}
             <span>测试 WebDAV 连接</span>
           </button>
@@ -259,7 +259,7 @@ export const DataSyncTab: React.FC = () => {
         </div>
 
         {webdav.lastStatus && (
-          <div className="text-[11px] text-muted">
+          <div className="text-xs text-muted">
             上次状态：{webdav.lastStatus}
             {webdav.lastSyncedAt ? ` (${new Date(webdav.lastSyncedAt).toLocaleString()})` : ''}
           </div>

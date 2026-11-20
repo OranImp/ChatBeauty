@@ -1,6 +1,11 @@
-import React, { useState } from 'react';
-import { ChevronRight, RotateCcw } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { BatteryCharging, ChevronRight, Monitor, RotateCcw, Smartphone } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
+import {
+  getAndroidBatteryStatus,
+  getRuntimeEnvironment,
+  openAndroidBatterySettings,
+} from '@/services/transport/streamHttp';
 import { DEFAULT_APPEARANCE_SETTINGS, type ThemeMode } from '@/types/settings';
 import { SmoothSlider } from '@/components/ui/SmoothSlider';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
@@ -25,9 +30,29 @@ const THEMES: Array<{ id: ThemeMode; name: string; desc: string }> = [
 export const AppearanceTab: React.FC = () => {
   const { appearance, updateAppearance } = useAppStore();
   const [customCssOpen, setCustomCssOpen] = useState(false);
+  const runtimeEnv = getRuntimeEnvironment();
+  const [batteryIgnored, setBatteryIgnored] = useState<boolean | null>(null);
+  const [batteryChecking, setBatteryChecking] = useState(false);
+
+  const refreshBatteryStatus = async () => {
+    if (runtimeEnv !== 'capacitor') return;
+    setBatteryChecking(true);
+    try {
+      const status = await getAndroidBatteryStatus();
+      setBatteryIgnored(Boolean(status?.ignoring));
+    } catch {
+      // Ignore probe error on unsupported runtime
+    } finally {
+      setBatteryChecking(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshBatteryStatus();
+  }, [runtimeEnv]);
 
   return (
-    <div className="space-y-6 text-xs">
+    <div className="space-y-6 text-[13.5px]">
       {/* Theme Selection */}
       <div className="space-y-2">
         <div className="font-semibold text-fg">界面主题</div>
@@ -201,6 +226,47 @@ export const AppearanceTab: React.FC = () => {
               <option value="github-light">GitHub Light</option>
             </select>
           </label>
+
+          <div className="space-y-2 sm:col-span-2 pt-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted">界面文字与图标全局缩放</span>
+              <span className="text-muted font-mono">
+                {Math.round((appearance.uiScale ?? 1.06) * 100)}% ({(appearance.uiScale ?? 1.06).toFixed(2)}x)
+              </span>
+            </div>
+            <SmoothSlider
+              min={0.9}
+              max={1.35}
+              decimals={2}
+              value={appearance.uiScale ?? 1.06}
+              onChange={(val) => void updateAppearance({ uiScale: val })}
+              ariaLabel="界面与图标全局缩放"
+            />
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { label: '紧凑 95%', value: 0.95 },
+                { label: '舒适 106% (默认)', value: 1.06 },
+                { label: '大号 116%', value: 1.16 },
+                { label: '超大 126%', value: 1.26 },
+              ].map((preset) => {
+                const active = Math.abs((appearance.uiScale ?? 1.06) - preset.value) < 0.015;
+                return (
+                  <button
+                    key={preset.value}
+                    type="button"
+                    onClick={() => void updateAppearance({ uiScale: preset.value })}
+                    className={`px-2.5 py-1 rounded-lg border text-xs transition ${
+                      active
+                        ? 'border-accent bg-accent text-accentfg font-semibold'
+                        : 'border-borderc bg-bg/70 text-muted hover:text-fg'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
         {appearance.fontFamily === 'custom' && (
@@ -215,7 +281,18 @@ export const AppearanceTab: React.FC = () => {
           </label>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+          <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-bg/70 border border-borderc">
+            <div>
+              <div>隐藏图表与图片外框</div>
+              <div className="text-xs text-muted">隐藏 SVG / Mermaid / ECharts / 图片边框与顶栏</div>
+            </div>
+            <ToggleSwitch
+              checked={Boolean(appearance.hideMediaFrames)}
+              onChange={(checked) => void updateAppearance({ hideMediaFrames: checked })}
+              ariaLabel="隐藏图表与图片外框"
+            />
+          </div>
           <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-bg/70 border border-borderc">
             <span>代码块显示行号</span>
             <ToggleSwitch
@@ -242,6 +319,81 @@ export const AppearanceTab: React.FC = () => {
               ariaLabel="Enter 直接发送"
             />
           </div>
+        </div>
+      </div>
+
+      {/* Background Generation & Keep-Alive */}
+      <div className="rounded-2xl border border-borderc bg-surface/40 p-4 space-y-3">
+        <div className="flex items-center gap-2 font-semibold text-fg">
+          <Monitor className="w-4 h-4 text-accent" />
+          <span>后台生成与保活设置</span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-bg/70 border border-borderc">
+            <div>
+              <div className="font-medium text-fg">启用后台持续生成</div>
+              <div className="text-xs text-muted">切换应用或最小化窗口时不中断流式输出，完成后发送系统通知</div>
+            </div>
+            <ToggleSwitch
+              checked={appearance.backgroundGeneration ?? true}
+              onChange={(checked) => void updateAppearance({ backgroundGeneration: checked })}
+              ariaLabel="启用后台持续生成"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-bg/70 border border-borderc">
+            <div>
+              <div className="font-medium text-fg">关闭窗口最小化到托盘 (Windows)</div>
+              <div className="text-xs text-muted">点击主窗口关闭按钮后隐藏至右下角系统托盘并在后台继续运行</div>
+            </div>
+            <ToggleSwitch
+              checked={appearance.closeToTray ?? true}
+              onChange={(checked) => void updateAppearance({ closeToTray: checked })}
+              ariaLabel="关闭窗口最小化到托盘"
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl bg-bg/60 border border-borderc">
+          <div className="flex items-start gap-2.5">
+            <Smartphone className="w-4 h-4 text-muted shrink-0 mt-0.5" />
+            <div>
+              <div className="font-medium text-fg">手机端后台保活（无限制电池策略）</div>
+              <div className="text-xs text-muted">
+                {runtimeEnv === 'capacitor'
+                  ? batteryIgnored === true
+                    ? '当前已授予「电池无限制」，后台生成时会自动启用前台服务与唤醒锁'
+                    : '建议在系统设置中将 ChatBeauty 设为「后台无限制 / 忽略电池优化」，防止息屏断流'
+                  : '仅在 Android 客户端中生效：点击可引导至系统应用电池设置页面'}
+              </div>
+            </div>
+          </div>
+
+          {runtimeEnv === 'capacitor' && (
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => void refreshBatteryStatus()}
+                disabled={batteryChecking}
+                className="px-2.5 py-1.5 rounded-xl border border-borderc bg-bg hover:bg-elevated text-xs text-muted hover:text-fg transition disabled:opacity-50"
+              >
+                {batteryChecking ? '检测中...' : '刷新状态'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void openAndroidBatterySettings().then(() => {
+                    setTimeout(() => void refreshBatteryStatus(), 800);
+                  });
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-accent text-accentfg text-xs font-semibold transition"
+              >
+                <BatteryCharging className="w-4 h-4" />
+                <span>{batteryIgnored ? '查看电池策略' : '去设置后台无限制'}</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

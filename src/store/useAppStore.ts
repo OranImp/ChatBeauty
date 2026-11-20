@@ -1,6 +1,12 @@
 import { create } from 'zustand';
 import { db, KV_KEYS, loadInitialState, setKv } from '@/db/database';
-import type { Conversation, Message, ModelDefinition, ProviderConfig } from '@/types/chat';
+import type {
+  ContentPart,
+  Conversation,
+  Message,
+  ModelDefinition,
+  ProviderConfig,
+} from '@/types/chat';
 import type { PromptSettings, SystemPromptPreset } from '@/types/prompt';
 import {
   DEFAULT_APPEARANCE_SETTINGS,
@@ -24,7 +30,8 @@ import {
   parseModelProfileRulesJson,
   resolveModelReasoningProfile,
 } from '@/services/llm/modelProfiles';
-import { simpleRequest } from '@/services/transport/streamHttp';
+import { simpleRequest, syncBackgroundStreamingState } from '@/services/transport/streamHttp';
+import { createDemoShowcaseData, DEMO_CONVERSATION_ID } from '@/components/chat/DemoShowcase';
 
 function uid(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -90,6 +97,7 @@ interface AppState {
   // Actions
   initApp: () => Promise<void>;
   reloadFromDatabase: () => Promise<void>;
+  openDemoShowcase: () => Promise<void>;
 
   createConversation: (title?: string) => Promise<Conversation>;
   selectConversation: (id: string) => Promise<void>;
@@ -112,7 +120,10 @@ interface AppState {
     >
   ) => Promise<void>;
 
-  sendMessage: (text: string) => Promise<void>;
+  sendMessage: (
+    text: string,
+    images?: Array<Extract<ContentPart, { type: 'image' }>>
+  ) => Promise<void>;
   stopStreaming: (conversationId?: string) => void;
   regenerateMessage: (assistantMessageId: string) => Promise<void>;
   editAndResend: (userMessageId: string, newText: string) => Promise<void>;
@@ -186,6 +197,10 @@ export const useAppStore = create<AppState>((set, get) => {
         [conversation.id]: [...(s.messagesByConv[conversation.id] || []), initialAssistant],
       },
     }));
+    void syncBackgroundStreamingState(
+      Object.keys(get().abortControllers).length,
+      get().appearance.backgroundGeneration ?? true
+    );
 
     // Build effective system prompt
     const presetId = conversation.systemPromptPresetId || state.promptSettings.defaultPresetId;
@@ -333,6 +348,10 @@ export const useAppStore = create<AppState>((set, get) => {
                 .sort((a, b) => b.updatedAt - a.updatedAt),
         };
       });
+      void syncBackgroundStreamingState(
+        Object.keys(get().abortControllers).length,
+        get().appearance.backgroundGeneration ?? true
+      );
     }
   };
 
@@ -397,6 +416,31 @@ export const useAppStore = create<AppState>((set, get) => {
       Object.values(get().abortControllers).forEach((ctrl) => ctrl.abort());
       set({ messagesByConv: {}, streamingMessageId: null, streamingByConv: {}, abortControllers: {} });
       await get().initApp();
+    },
+
+    openDemoShowcase: async () => {
+      deletedConvIds.delete(DEMO_CONVERSATION_ID);
+      const now = Date.now();
+      const rawDemo = createDemoShowcaseData(now);
+      const demoConv: Conversation = {
+        ...rawDemo.conversation,
+        updatedAt: now,
+      };
+      await db.transaction('rw', [db.conversations, db.messages], async () => {
+        await db.conversations.put(demoConv);
+        await db.messages.bulkPut(rawDemo.messages);
+      });
+      await setKv(KV_KEYS.ACTIVE_CONVERSATION, demoConv.id);
+      set((s) => ({
+        conversations: [demoConv, ...s.conversations.filter((c) => c.id !== demoConv.id)].sort(
+          (a, b) => b.updatedAt - a.updatedAt
+        ),
+        messagesByConv: {
+          ...s.messagesByConv,
+          [demoConv.id]: rawDemo.messages,
+        },
+        activeConversationId: demoConv.id,
+      }));
     },
 
     createConversation: async (title = '新对话') => {
@@ -499,9 +543,10 @@ export const useAppStore = create<AppState>((set, get) => {
       await db.conversations.update(id, patch);
     },
 
-    sendMessage: async (text) => {
+    sendMessage: async (text, images) => {
       const trimmed = text.trim();
-      if (!trimmed) return;
+      const hasImages = Boolean(images && images.length > 0);
+      if (!trimmed && !hasImages) return;
 
       let state = get();
       let conv = state.conversations.find((c) => c.id === state.activeConversationId);
@@ -524,11 +569,15 @@ export const useAppStore = create<AppState>((set, get) => {
 
       const existing = state.messagesByConv[conv.id] || (await loadMessagesFor(conv.id));
       const now = Date.now();
+      const parts: ContentPart[] = [
+        ...(images ?? []),
+        ...(trimmed ? [{ type: 'text' as const, text: trimmed }] : []),
+      ];
       const userMessage: Message = {
         id: uid('msg'),
         conversationId: conv.id,
         role: 'user',
-        parts: [{ type: 'text', text: trimmed }],
+        parts,
         createdAt: now,
         updatedAt: now,
         status: 'done',
@@ -537,7 +586,9 @@ export const useAppStore = create<AppState>((set, get) => {
       // Auto-title on first user message
       let nextTitle = conv.title;
       if (existing.length === 0 || conv.title === '新对话') {
-        nextTitle = trimmed.replace(/\s+/g, ' ').slice(0, 26) + (trimmed.length > 26 ? '…' : '');
+        nextTitle = trimmed
+          ? trimmed.replace(/\s+/g, ' ').slice(0, 26) + (trimmed.length > 26 ? '…' : '')
+          : '图片提问';
       }
 
       const updatedConv: Conversation = {
@@ -634,9 +685,10 @@ export const useAppStore = create<AppState>((set, get) => {
       const targetIdx = msgs.findIndex((m) => m.id === userMessageId);
       if (targetIdx === -1) return;
 
+      const preservedNonText = msgs[targetIdx].parts.filter((p) => p.type !== 'text');
       const updatedUserMsg: Message = {
         ...msgs[targetIdx],
-        parts: [{ type: 'text', text: trimmed }],
+        parts: [...preservedNonText, { type: 'text', text: trimmed }],
         updatedAt: Date.now(),
       };
       const removedIds = msgs.slice(targetIdx + 1).map((m) => m.id);

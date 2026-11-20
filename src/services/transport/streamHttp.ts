@@ -44,6 +44,12 @@ export interface ElectronBridge {
     headers: Record<string, string>;
     body?: string;
   }) => Promise<SimpleHttpResponse>;
+  setBackgroundSettings?: (settings: {
+    closeToTray: boolean;
+    backgroundGeneration: boolean;
+  }) => Promise<void>;
+  setStreamingState?: (count: number) => Promise<void>;
+  quitApp?: () => Promise<void>;
 }
 
 declare global {
@@ -72,6 +78,13 @@ interface NativeStreamPlugin {
     base64: string;
     mimeType?: string;
   }): Promise<void>;
+  getBatteryOptimizationStatus(): Promise<{
+    ignoring: boolean;
+    manufacturer?: string;
+    sdkInt?: number;
+  }>;
+  openBatteryOptimizationSettings(): Promise<void>;
+  setBackgroundGenerationState(options: { active: boolean; count: number }): Promise<void>;
   addListener(
     eventName: 'streamChunk',
     listenerFunc: (data: { requestId: string; chunk: string }) => void
@@ -324,4 +337,60 @@ export async function saveNativeFile(options: {
 }): Promise<void> {
   if (getRuntimeEnvironment() !== 'capacitor') return;
   await NativeStream.saveAndShareFile(options);
+}
+
+export async function syncDesktopBackgroundSettings(settings: {
+  closeToTray: boolean;
+  backgroundGeneration: boolean;
+}): Promise<void> {
+  if (typeof window === 'undefined' || !window.electronBridge?.setBackgroundSettings) return;
+  await window.electronBridge.setBackgroundSettings(settings).catch(() => undefined);
+}
+
+export async function syncBackgroundStreamingState(
+  count: number,
+  enabled: boolean
+): Promise<void> {
+  const env = getRuntimeEnvironment();
+  const effectiveCount = enabled ? Math.max(0, count) : 0;
+  if (env === 'electron' && window.electronBridge?.setStreamingState) {
+    await window.electronBridge.setStreamingState(effectiveCount).catch(() => undefined);
+    return;
+  }
+  if (env === 'capacitor') {
+    await NativeStream.setBackgroundGenerationState({
+      active: effectiveCount > 0,
+      count: effectiveCount,
+    }).catch(() => undefined);
+  }
+}
+
+export async function getAndroidBatteryStatus(): Promise<{
+  ignoring: boolean;
+  manufacturer?: string;
+  supported: boolean;
+}> {
+  if (getRuntimeEnvironment() !== 'capacitor') {
+    return { ignoring: true, supported: false };
+  }
+  try {
+    const res = await NativeStream.getBatteryOptimizationStatus();
+    return {
+      ignoring: Boolean(res.ignoring),
+      manufacturer: res.manufacturer,
+      supported: true,
+    };
+  } catch {
+    return { ignoring: true, supported: false };
+  }
+}
+
+export async function openAndroidBatterySettings(): Promise<boolean> {
+  if (getRuntimeEnvironment() !== 'capacitor') return false;
+  try {
+    await NativeStream.openBatteryOptimizationSettings();
+    return true;
+  } catch {
+    return false;
+  }
 }

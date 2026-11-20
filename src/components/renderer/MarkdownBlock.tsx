@@ -123,6 +123,7 @@ export const MarkdownBlock: React.FC<MarkdownBlockProps> = memo(
                 caption={parseCaptionFromMeta(meta)}
                 theme={theme}
                 isStreaming={isStreaming}
+                frameless={Boolean(appearance.hideMediaFrames)}
                 onInspect={onInspect}
               />
             );
@@ -134,13 +135,21 @@ export const MarkdownBlock: React.FC<MarkdownBlockProps> = memo(
                 code={rawCode}
                 theme={theme}
                 isStreaming={isStreaming}
+                frameless={Boolean(appearance.hideMediaFrames)}
                 onInspect={onInspect}
               />
             );
           }
 
           if (lang === 'echarts' || lang === 'chart') {
-            return <EChartsBlock code={rawCode} theme={theme} isStreaming={isStreaming} />;
+            return (
+              <EChartsBlock
+                code={rawCode}
+                theme={theme}
+                isStreaming={isStreaming}
+                frameless={Boolean(appearance.hideMediaFrames)}
+              />
+            );
           }
 
           if (
@@ -156,6 +165,7 @@ export const MarkdownBlock: React.FC<MarkdownBlockProps> = memo(
                 accentColor={appearance.accentColor}
                 isStreaming={isStreaming}
                 defaultPreview
+                frameless={Boolean(appearance.hideMediaFrames)}
                 onInspect={onInspect}
               />
             );
@@ -265,5 +275,6 @@ export const MarkdownBlock: React.FC<MarkdownBlockProps> = memo(
     prev.appearance.codeTheme === next.appearance.codeTheme &&
     prev.appearance.showLineNumbers === next.appearance.showLineNumbers &&
     prev.appearance.autoPreviewArtifacts === next.appearance.autoPreviewArtifacts &&
+    prev.appearance.hideMediaFrames === next.appearance.hideMediaFrames &&
     prev.appearance.accentColor === next.appearance.accentColor
 );

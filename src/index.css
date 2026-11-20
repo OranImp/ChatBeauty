@@ -96,8 +96,9 @@
 }
 
 html,
-body,
-#root {
+body {
+  position: fixed;
+  inset: 0;
   height: 100%;
   width: 100%;
   margin: 0;
@@ -106,8 +107,18 @@ body,
   color: var(--fg);
   font-family: var(--chat-font-family);
   overflow: hidden;
+  overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  height: var(--app-height, 100dvh);
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .safe-top {

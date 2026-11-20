@@ -94,7 +94,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             className="w-10 h-10 flex items-center justify-center text-fg active:bg-white/10 transition"
             aria-label="新建对话"
           >
-            <SquarePen className="w-[18px] h-[18px]" />
+            <SquarePen className="w-5 h-5" />
           </button>
           <div className="w-px h-4 bg-borderc" />
           <button
@@ -103,13 +103,13 @@ export const TopBar: React.FC<TopBarProps> = ({
             className="w-10 h-10 flex items-center justify-center text-fg active:bg-white/10 transition"
             aria-label="更多操作"
           >
-            <MoreVertical className="w-[18px] h-[18px]" />
+            <MoreVertical className="w-5 h-5" />
           </button>
         </div>
       </div>
 
       {/* Desktop clean header bar */}
-      <div className="hidden md:flex items-center justify-between px-4 h-[50px] border-b border-borderc bg-bg/85 backdrop-blur-md">
+      <div className="hidden md:flex items-center justify-between px-4 h-[52px] border-b border-borderc bg-bg/85 backdrop-blur-md">
         <div className="flex items-center gap-2.5 min-w-0">
           {!sidebarOpen && (
             <button
@@ -118,10 +118,10 @@ export const TopBar: React.FC<TopBarProps> = ({
               className="p-2 rounded-xl text-muted hover:text-fg hover:bg-surface transition"
               title="展开侧边栏"
             >
-              <PanelLeft className="w-4 h-4" />
+              <PanelLeft className="w-[18px] h-[18px]" />
             </button>
           )}
-          <span className="text-sm font-medium text-fg truncate max-w-[42vw]">
+          <span className="text-[15px] font-medium text-fg truncate max-w-[42vw]">
             {activeConv?.title || 'ChatBeauty'}
           </span>
         </div>
@@ -131,7 +131,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             <button
               type="button"
               onClick={() => onOpenSettings('providers')}
-              className="hidden lg:flex items-center px-2.5 py-1 rounded-lg border border-borderc bg-surface/60 hover:bg-elevated text-[11px] font-mono text-muted hover:text-fg max-w-[200px] truncate transition"
+              className="hidden lg:flex items-center px-2.5 py-1 rounded-lg border border-borderc bg-surface/60 hover:bg-elevated text-xs font-mono text-muted hover:text-fg max-w-[210px] truncate transition"
               title="管理模型与接口"
             >
               <span className="truncate">{headerModelId}</span>
@@ -140,10 +140,10 @@ export const TopBar: React.FC<TopBarProps> = ({
           <button
             type="button"
             onClick={() => void createConversation('新对话')}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs text-muted hover:text-fg hover:bg-surface transition"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[13px] text-muted hover:text-fg hover:bg-surface transition"
             title="新建对话 (Ctrl+N)"
           >
-            <SquarePen className="w-4 h-4" />
+            <SquarePen className="w-[18px] h-[18px]" />
             <span>新对话</span>
           </button>
           {activeConv && (
@@ -153,7 +153,7 @@ export const TopBar: React.FC<TopBarProps> = ({
               className="p-2 rounded-xl text-muted hover:text-fg hover:bg-surface transition"
               title="导出当前对话为 Markdown"
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-[18px] h-[18px]" />
             </button>
           )}
           <button
@@ -162,7 +162,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             className="p-2 rounded-xl text-muted hover:text-fg hover:bg-surface transition"
             title="设置 (Ctrl+,)"
           >
-            <Settings className="w-4 h-4" />
+            <Settings className="w-[18px] h-[18px]" />
           </button>
         </div>
       </div>

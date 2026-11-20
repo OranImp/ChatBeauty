@@ -7,6 +7,7 @@ interface MermaidBlockProps {
   code: string;
   theme: ResolvedTheme;
   isStreaming?: boolean;
+  frameless?: boolean;
   onInspect: (payload: LightboxPayload) => void;
 }
 
@@ -14,6 +15,7 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
   code,
   theme,
   isStreaming,
+  frameless = false,
   onInspect,
 }) => {
   const reactId = useId().replace(/:/g, '');
@@ -96,11 +98,25 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
   };
 
   return (
-    <div className="my-4 rounded-2xl border border-borderc bg-surface/40 overflow-hidden">
-      <div className="flex items-center justify-between px-3.5 py-2 border-b border-borderc bg-surface/60">
-        <span className="text-[11px] font-mono font-medium tracking-wide text-muted uppercase">
-          Mermaid 图表
-        </span>
+    <div
+      className={
+        frameless
+          ? 'my-4 rounded-xl overflow-hidden group/media relative'
+          : 'my-4 rounded-2xl border border-borderc bg-surface/40 overflow-hidden'
+      }
+    >
+      <div
+        className={
+          frameless
+            ? 'absolute top-2 right-2 z-20 flex items-center gap-1 rounded-xl border border-borderc bg-elevated/90 backdrop-blur-md px-1.5 py-1 opacity-0 group-hover/media:opacity-100 focus-within:opacity-100 transition-opacity duration-200 shadow-sm pointer-events-none group-hover/media:pointer-events-auto focus-within:pointer-events-auto'
+            : 'flex items-center justify-between px-3.5 py-2 border-b border-borderc bg-surface/60'
+        }
+      >
+        {!frameless && (
+          <span className="text-[11px] font-mono font-medium tracking-wide text-muted uppercase">
+            Mermaid 图表
+          </span>
+        )}
         <div className="flex items-center gap-1">
           <button
             type="button"

@@ -11,8 +11,11 @@ import {
   type ModelProfileSyncSettings,
   type WebDavSyncSettings,
 } from '@/types/settings';
-import { BUILTIN_PROMPT_PRESETS, DEFAULT_PROMPT_SETTINGS } from '@/services/prompts/presets';
-import { createDemoShowcaseData, DEMO_CONVERSATION_ID } from '@/components/chat/DemoShowcase';
+import {
+  BUILTIN_PROMPT_PRESETS,
+  DEFAULT_PROMPT_SETTINGS,
+  DEFAULT_RENDER_ENHANCEMENT_PROMPT,
+} from '@/services/prompts/presets';
 
 export interface KvRecord {
   key: string;
@@ -74,14 +77,6 @@ export async function ensureDatabaseSeeded(): Promise<void> {
           await db.promptPresets.bulkPut(BUILTIN_PROMPT_PRESETS);
         }
 
-        const existingConvs = await db.conversations.count();
-        if (existingConvs === 0) {
-          const demo = createDemoShowcaseData();
-          await db.conversations.put(demo.conversation);
-          await db.messages.bulkPut(demo.messages);
-          await setKv(KV_KEYS.ACTIVE_CONVERSATION, demo.conversation.id);
-        }
-
         await setKv(KV_KEYS.APPEARANCE, DEFAULT_APPEARANCE_SETTINGS);
         await setKv(KV_KEYS.GENERATION, DEFAULT_GENERATION_SETTINGS);
         await setKv(KV_KEYS.PROMPT, DEFAULT_PROMPT_SETTINGS);
@@ -110,12 +105,16 @@ export async function ensureDatabaseSeeded(): Promise<void> {
       });
     }
 
-    // Refresh built-in showcase conversation if present so symbol-free & continuous-slider demo takes effect
-    const existingDemo = await db.conversations.get(DEMO_CONVERSATION_ID);
-    if (existingDemo?.isDemo) {
-      const demo = createDemoShowcaseData(existingDemo.createdAt + 120000);
-      await db.conversations.put({ ...existingDemo, title: demo.conversation.title });
-      await db.messages.bulkPut(demo.messages);
+    // Upgrade unmodified legacy built-in render prompt with SVG wire-collision avoidance rule
+    const savedPrompt = await getKv<PromptSettings>(KV_KEYS.PROMPT, DEFAULT_PROMPT_SETTINGS);
+    if (
+      savedPrompt.renderEnhancementPrompt?.includes('仔细计算坐标确保文字与连线**互不遮挡、居中对齐**') &&
+      !savedPrompt.renderEnhancementPrompt.includes('垂直支路元件')
+    ) {
+      await setKv(KV_KEYS.PROMPT, {
+        ...savedPrompt,
+        renderEnhancementPrompt: DEFAULT_RENDER_ENHANCEMENT_PROMPT,
+      });
     }
   }
 }
