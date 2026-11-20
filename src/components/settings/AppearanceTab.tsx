@@ -52,11 +52,11 @@ export const AppearanceTab: React.FC = () => {
   }, [runtimeEnv]);
 
   return (
-    <div className="space-y-6 text-[13.5px]">
+    <div className="space-y-6 text-[13.5px] min-w-0 max-w-full">
       {/* Theme Selection */}
-      <div className="space-y-2">
+      <div className="space-y-2 min-w-0">
         <div className="font-semibold text-fg">界面主题</div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 min-w-0">
           {THEMES.map((t) => {
             const active = appearance.theme === t.id;
             return (
@@ -113,8 +113,8 @@ export const AppearanceTab: React.FC = () => {
       </div>
 
       {/* Typography & KaTeX Calibration */}
-      <div className="rounded-2xl border border-borderc bg-surface/40 p-4 space-y-4">
-        <div className="flex items-center justify-between">
+      <div className="rounded-2xl border border-borderc bg-surface/40 p-3.5 sm:p-4 space-y-4 min-w-0 max-w-full">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="font-semibold text-fg">阅读排版与公式校准</span>
           <button
             type="button"
@@ -187,7 +187,7 @@ export const AppearanceTab: React.FC = () => {
             />
           </div>
 
-          <label className="space-y-1">
+          <label className="space-y-1 min-w-0">
             <span className="text-muted">正文字体风格</span>
             <select
               value={appearance.fontFamily}
@@ -196,7 +196,7 @@ export const AppearanceTab: React.FC = () => {
                   fontFamily: e.target.value as 'system' | 'serif' | 'mono' | 'custom',
                 })
               }
-              className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc text-fg"
+              className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc text-fg"
             >
               <option value="system">现代无衬线（Inter + 系统中文）</option>
               <option value="serif">社论衬线体（Newsreader + 学术中文）</option>
@@ -205,7 +205,7 @@ export const AppearanceTab: React.FC = () => {
             </select>
           </label>
 
-          <label className="space-y-1">
+          <label className="space-y-1 min-w-0">
             <span className="text-muted">代码高亮主题</span>
             <select
               value={appearance.codeTheme}
@@ -218,7 +218,7 @@ export const AppearanceTab: React.FC = () => {
                     | 'github-light',
                 })
               }
-              className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc text-fg"
+              className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc text-fg"
             >
               <option value="auto">跟随界面主题自动匹配</option>
               <option value="github-dark-default">GitHub Dark Default</option>

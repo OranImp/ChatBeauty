@@ -16,6 +16,7 @@ export interface ChatStreamRequest {
   modelParams?: CustomModelParams;
   conversationParams?: CustomModelParams;
   reasoningProfile?: ModelReasoningProfile;
+  sessionId?: string;
 }
 
 export interface ChatStreamCallbacks {

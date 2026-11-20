@@ -25,6 +25,7 @@ import {
   DEFAULT_PROMPT_SETTINGS,
 } from '@/services/prompts/presets';
 import { getProviderAdapter, PROTOCOL_TEMPLATES } from '@/services/llm/registry';
+import { toStableSessionId } from '@/services/llm/adapters/shared';
 import {
   coerceReasoningEffort,
   parseModelProfileRulesJson,
@@ -295,6 +296,7 @@ export const useAppStore = create<AppState>((set, get) => {
           modelParams: modelDef?.params,
           conversationParams: conversation.customParams,
           reasoningProfile: profile,
+          sessionId: toStableSessionId(conversation.id),
         },
         {
           onReasoningDelta: (delta) => {
@@ -841,6 +843,7 @@ export const useAppStore = create<AppState>((set, get) => {
             reasoningEffort: 'off',
             reasoningBudgetTokens: 0,
           },
+          sessionId: toStableSessionId(`test_${provider.id}`),
         },
         {
           onTextDelta: (d) => {

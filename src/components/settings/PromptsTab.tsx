@@ -50,17 +50,17 @@ export const PromptsTab: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6 text-[13.5px]">
+    <div className="space-y-6 text-[13.5px] min-w-0 max-w-full">
       {savedNotice && (
-        <div className="px-3 py-2 rounded-xl border border-borderc bg-surface text-[13.5px] text-fg">
+        <div className="px-3 py-2 rounded-xl border border-borderc bg-surface text-[13.5px] text-fg break-words">
           {savedNotice}
         </div>
       )}
 
       {/* Rendering Enhancement Protocol Card */}
-      <div className="rounded-2xl border border-borderc bg-surface/40 p-4 space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="space-y-1">
+      <div className="rounded-2xl border border-borderc bg-surface/40 p-3.5 sm:p-4 space-y-3 min-w-0 max-w-full">
+        <div className="flex flex-wrap items-start justify-between gap-2.5 min-w-0">
+          <div className="space-y-1 min-w-0 flex-1">
             <div className="text-[15px] font-semibold text-fg">
               视觉与学术渲染增强协议
             </div>
@@ -123,9 +123,9 @@ export const PromptsTab: React.FC = () => {
       </div>
 
       {/* Persona Presets Manager */}
-      <div className="rounded-2xl border border-borderc bg-surface/40 p-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
+      <div className="rounded-2xl border border-borderc bg-surface/40 p-3.5 sm:p-4 space-y-4 min-w-0 max-w-full">
+        <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
+          <div className="min-w-0">
             <div className="text-[15px] font-semibold text-fg">角色与学习系统提示词预设</div>
             <div className="text-[13px] text-muted">内置多套学术与教学预设，支持任意编辑或新建</div>
           </div>

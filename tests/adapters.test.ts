@@ -16,6 +16,12 @@ import {
   PROTOCOL_TEMPLATES,
   PROVIDER_BRAND_PRESETS,
 } from '@/services/llm/registry';
+import {
+  AUTO_SESSION_HEADER_PLACEHOLDER,
+  buildPreviewHeadersJson,
+  extractExtraHeadersFromPreviewJson,
+  toStableSessionId,
+} from '@/services/llm/adapters/shared';
 import { BUILTIN_REASONING_PROFILES } from '@/services/llm/modelProfiles';
 
 const userMessages: Message[] = [
@@ -987,5 +993,151 @@ describe('LLM Protocol Adapters', () => {
       expect(preset.suggestedModels.length).toBeGreaterThan(0);
       expect(preset.suggestedModels.some((m) => m.id === preset.defaultModel)).toBe(true);
     }
+    const opencodeGo = PROVIDER_BRAND_PRESETS.find((p) => p.id === 'opencode-go');
+    expect(opencodeGo).toBeDefined();
+    expect(opencodeGo?.baseUrl).toContain('opencode.ai');
+  });
+
+  it('generates deterministic per-conversation session IDs via toStableSessionId', () => {
+    const a1 = toStableSessionId('conv-alpha');
+    const a2 = toStableSessionId('conv-alpha');
+    const b1 = toStableSessionId('conv-beta');
+    const empty = toStableSessionId('');
+    expect(a1).toBe(a2);
+    expect(a1).toMatch(/^ses_/);
+    expect(b1).toMatch(/^ses_/);
+    expect(a1).not.toBe(b1);
+    expect(empty).toMatch(/^ses_/);
+  });
+
+  it('automatically injects fixed x-opencode-session and x-opencode-client for OpenCode Go across protocols while honoring overrides', async () => {
+    mockStreamRequest.mockResolvedValue({ status: 200, headers: {}, bodyText: '' });
+
+    const opencodePresetProvider: ProviderConfig = {
+      id: 'p-oc-go',
+      name: 'OpenCode Go',
+      presetId: 'opencode-go',
+      protocol: 'openai-chat',
+      baseUrl: 'https://opencode.ai/zen/go/v1',
+      apiKey: 'oc-secret-key',
+      defaultModel: 'kimi-k3',
+      models: [],
+      enabled: true,
+      createdAt: 1,
+    };
+
+    const fixedSession = toStableSessionId('chat-room-42');
+    await getProviderAdapter('openai-chat').chatStream(
+      {
+        provider: opencodePresetProvider,
+        modelId: 'kimi-k3',
+        systemPrompt: '',
+        messages: userMessages,
+        generation: DEFAULT_GENERATION_SETTINGS,
+        sessionId: fixedSession,
+      },
+      { onReasoningDelta: () => {}, onTextDelta: () => {} },
+      new AbortController().signal
+    );
+
+    const openAiReq = mockStreamRequest.mock.calls[0][0] as { headers: Record<string, string> };
+    expect(openAiReq.headers['x-opencode-session']).toBe(fixedSession);
+    expect(openAiReq.headers['x-opencode-client']).toBe('chatbeauty');
+    expect(openAiReq.headers['Authorization']).toBe('Bearer oc-secret-key');
+
+    // Also match custom providers without presetId that point to opencode.ai on Anthropic protocol
+    const customOpenCodeAnthropic: ProviderConfig = {
+      id: 'p-oc-custom',
+      name: 'Custom OpenCode Claude',
+      protocol: 'anthropic',
+      baseUrl: 'https://opencode.ai/zen/go/v1',
+      apiKey: 'oc-ant-key',
+      defaultModel: 'claude-sonnet-4-5',
+      models: [],
+      enabled: true,
+      createdAt: 1,
+    };
+
+    await getProviderAdapter('anthropic').chatStream(
+      {
+        provider: customOpenCodeAnthropic,
+        modelId: 'claude-sonnet-4-5',
+        systemPrompt: '',
+        messages: userMessages,
+        generation: DEFAULT_GENERATION_SETTINGS,
+        sessionId: fixedSession,
+      },
+      { onReasoningDelta: () => {}, onTextDelta: () => {} },
+      new AbortController().signal
+    );
+
+    const antReq = mockStreamRequest.mock.calls[1][0] as { headers: Record<string, string> };
+    expect(antReq.headers['x-opencode-session']).toBe(fixedSession);
+    expect(antReq.headers['x-api-key']).toBe('oc-ant-key');
+
+    // User extraHeaders override should take precedence over generated sessionId
+    await getProviderAdapter('openai-chat').chatStream(
+      {
+        provider: {
+          ...opencodePresetProvider,
+          extraHeaders: { 'x-opencode-session': 'ses_explicit_override' },
+        },
+        modelId: 'kimi-k3',
+        systemPrompt: '',
+        messages: userMessages,
+        generation: DEFAULT_GENERATION_SETTINGS,
+        sessionId: fixedSession,
+      },
+      { onReasoningDelta: () => {}, onTextDelta: () => {} },
+      new AbortController().signal
+    );
+
+    const overrideReq = mockStreamRequest.mock.calls[2][0] as { headers: Record<string, string> };
+    expect(overrideReq.headers['x-opencode-session']).toBe('ses_explicit_override');
+  });
+
+  it('syncs live preview headers JSON from provider fields while keeping only custom/overridden entries in extraHeaders', () => {
+    const baseOpenAi: ProviderConfig = {
+      id: 'p-live',
+      name: 'Live Test',
+      protocol: 'openai-chat',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-first',
+      defaultModel: 'gpt-4o',
+      models: [],
+      enabled: true,
+      createdAt: 1,
+    };
+
+    const preview1 = JSON.parse(buildPreviewHeadersJson(baseOpenAi)) as Record<string, string>;
+    expect(preview1['Content-Type']).toBe('application/json');
+    expect(preview1['Authorization']).toBe('Bearer sk-first');
+
+    // Add a custom header alongside untouched defaults -> extraction omits untouched defaults
+    const editedJson = JSON.stringify({ ...preview1, 'X-Custom-Routing': 'canary' }, null, 2);
+    const extractedCustom = extractExtraHeadersFromPreviewJson(editedJson, baseOpenAi);
+    expect(extractedCustom).toEqual({ 'X-Custom-Routing': 'canary' });
+
+    // Switching protocol + apiKey + opencode.ai updates defaults live while preserving X-Custom-Routing
+    const switchedProvider: ProviderConfig = {
+      ...baseOpenAi,
+      protocol: 'anthropic',
+      baseUrl: 'https://opencode.ai/zen/go/v1',
+      apiKey: 'sk-ant-second',
+    };
+    const preview2 = JSON.parse(
+      buildPreviewHeadersJson(switchedProvider, extractedCustom)
+    ) as Record<string, string>;
+    expect(preview2['x-api-key']).toBe('sk-ant-second');
+    expect(preview2['Authorization']).toBeUndefined();
+    expect(preview2['x-opencode-session']).toBe(AUTO_SESSION_HEADER_PLACEHOLDER);
+    expect(preview2['X-Custom-Routing']).toBe('canary');
+
+    // Placeholder session header must not pollute persisted extraHeaders
+    const extractedAfterSwitch = extractExtraHeadersFromPreviewJson(
+      JSON.stringify(preview2, null, 2),
+      switchedProvider
+    );
+    expect(extractedAfterSwitch).toEqual({ 'X-Custom-Routing': 'canary' });
   });
 });

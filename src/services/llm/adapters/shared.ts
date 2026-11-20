@@ -4,6 +4,7 @@ import type {
   Message,
   ModelCapabilities,
   ModelDefinition,
+  ProviderConfig,
   ReasoningEffort,
 } from '@/types/chat';
 import type { GenerationSettings } from '@/types/settings';
@@ -249,6 +250,139 @@ export function parseHttpHeadersJson(raw: string): Record<string, string> {
       throw new Error(`Header "${k}" 的值必须为字符串`);
     }
     out[k] = v;
+  }
+  return out;
+}
+
+export const AUTO_SESSION_HEADER_PLACEHOLDER = '<自动按会话固定ID>';
+
+export function toStableSessionId(conversationId?: string): string {
+  const cleaned = (conversationId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+  if (!cleaned) return 'ses_chatbeauty_default';
+  return cleaned.startsWith('ses_') ? cleaned : `ses_${cleaned}`;
+}
+
+export function isOpenCodeProvider(
+  provider: Pick<ProviderConfig, 'presetId' | 'baseUrl'>
+): boolean {
+  if (provider.presetId === 'opencode-go' || provider.presetId === 'opencode-zen') {
+    return true;
+  }
+  return /opencode\.ai/i.test(provider.baseUrl || '');
+}
+
+export function buildProviderDefaultHeaders(
+  provider: Pick<ProviderConfig, 'protocol' | 'baseUrl' | 'apiKey' | 'presetId'>,
+  options?: {
+    includeContentType?: boolean;
+    sessionId?: string;
+    forPreview?: boolean;
+    isWebRuntime?: boolean;
+  }
+): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (options?.includeContentType !== false) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  const apiKey = (provider.apiKey || '').trim();
+  if (provider.protocol === 'gemini') {
+    if (apiKey) headers['x-goog-api-key'] = apiKey;
+  } else if (provider.protocol === 'anthropic') {
+    if (apiKey) headers['x-api-key'] = apiKey;
+    headers['anthropic-version'] = '2023-06-01';
+    if (options?.isWebRuntime) {
+      headers['anthropic-dangerous-direct-browser-access'] = 'true';
+    }
+  } else {
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  if (isOpenCodeProvider(provider)) {
+    headers['x-opencode-session'] = options?.forPreview
+      ? AUTO_SESSION_HEADER_PLACEHOLDER
+      : options?.sessionId || toStableSessionId();
+    headers['x-opencode-client'] = 'chatbeauty';
+  }
+
+  return headers;
+}
+
+export function mergeHeadersCaseInsensitive(
+  base: Record<string, string>,
+  extra?: Record<string, string>
+): Record<string, string> {
+  const out: Record<string, string> = { ...base };
+  if (!extra) return out;
+  for (const [k, v] of Object.entries(extra)) {
+    const trimmedKey = k.trim();
+    if (!trimmedKey || typeof v !== 'string') continue;
+    const lower = trimmedKey.toLowerCase();
+    for (const existingKey of Object.keys(out)) {
+      if (existingKey.toLowerCase() === lower) {
+        delete out[existingKey];
+      }
+    }
+    out[trimmedKey] = v;
+  }
+  return out;
+}
+
+export function buildEffectiveProviderHeaders(
+  provider: Pick<ProviderConfig, 'protocol' | 'baseUrl' | 'apiKey' | 'presetId' | 'extraHeaders'>,
+  options?: {
+    includeContentType?: boolean;
+    sessionId?: string;
+    isWebRuntime?: boolean;
+  }
+): Record<string, string> {
+  const defaults = buildProviderDefaultHeaders(provider, options);
+  const filteredExtra: Record<string, string> = {};
+  if (provider.extraHeaders) {
+    for (const [k, v] of Object.entries(provider.extraHeaders)) {
+      if (v === AUTO_SESSION_HEADER_PLACEHOLDER) continue;
+      filteredExtra[k] = v;
+    }
+  }
+  return mergeHeadersCaseInsensitive(defaults, filteredExtra);
+}
+
+export function buildPreviewHeadersJson(
+  provider: Pick<ProviderConfig, 'protocol' | 'baseUrl' | 'apiKey' | 'presetId'>,
+  extraHeaders?: Record<string, string>
+): string {
+  const defaults = buildProviderDefaultHeaders(provider, {
+    includeContentType: true,
+    forPreview: true,
+  });
+  const merged = mergeHeadersCaseInsensitive(defaults, extraHeaders);
+  return JSON.stringify(merged, null, 2);
+}
+
+export function extractExtraHeadersFromPreviewJson(
+  rawJson: string,
+  provider: Pick<ProviderConfig, 'protocol' | 'baseUrl' | 'apiKey' | 'presetId'>
+): Record<string, string> {
+  const parsed = parseHttpHeadersJson(rawJson);
+  const defaults = buildProviderDefaultHeaders(provider, {
+    includeContentType: true,
+    forPreview: true,
+  });
+  const defaultByLower = new Map<string, string>();
+  for (const [k, v] of Object.entries(defaults)) {
+    defaultByLower.set(k.toLowerCase(), v);
+  }
+
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(parsed)) {
+    const trimmedKey = k.trim();
+    if (!trimmedKey) continue;
+    if (v === AUTO_SESSION_HEADER_PLACEHOLDER) continue;
+    const lower = trimmedKey.toLowerCase();
+    if (defaultByLower.has(lower) && defaultByLower.get(lower) === v) {
+      continue;
+    }
+    out[trimmedKey] = v;
   }
   return out;
 }

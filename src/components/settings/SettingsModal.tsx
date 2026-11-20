@@ -55,19 +55,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       aria-modal="true"
     >
       <div
-        className={`w-full sm:max-w-3xl h-[92dvh] sm:h-[82vh] rounded-t-3xl sm:rounded-3xl border border-borderc bg-bg flex flex-col overflow-hidden shadow-2xl transition-all duration-[250ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        className={`w-full max-w-full sm:max-w-3xl h-[92dvh] sm:h-[82vh] rounded-t-3xl sm:rounded-3xl border border-borderc bg-bg flex flex-col overflow-hidden shadow-2xl transition-all duration-[250ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
           modalPresence.visible
             ? 'opacity-100 translate-y-0 sm:scale-100'
             : 'opacity-0 translate-y-8 sm:translate-y-3 sm:scale-[0.97]'
         }`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-borderc shrink-0">
-          <div className="font-semibold text-[17px] text-fg">ChatBeauty 设置</div>
+        <div className="flex items-center justify-between px-4 sm:px-5 py-3.5 sm:py-4 border-b border-borderc shrink-0">
+          <div className="font-semibold text-[16px] sm:text-[17px] text-fg truncate">ChatBeauty 设置</div>
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl text-muted hover:text-fg hover:bg-surface active:scale-95 transition"
+            className="p-2 rounded-xl text-muted hover:text-fg hover:bg-surface active:scale-95 transition shrink-0"
             aria-label="关闭设置"
           >
             <X className="w-[18px] h-[18px]" />
@@ -75,7 +75,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-borderc bg-surface/35 overflow-x-auto no-scrollbar shrink-0">
+        <div className="flex items-center gap-1 sm:gap-1.5 px-3 sm:px-4 py-2 sm:py-2.5 border-b border-borderc bg-surface/35 overflow-x-auto no-scrollbar shrink-0">
           {TABS.map(({ key, label }) => {
             const active = activeTab === key;
             return (
@@ -83,7 +83,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 key={key}
                 type="button"
                 onClick={() => onTabChange(key)}
-                className={`px-3.5 py-2 rounded-xl text-[13px] font-medium whitespace-nowrap active:scale-95 transition ${
+                className={`px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs sm:text-[13px] font-medium whitespace-nowrap active:scale-95 transition shrink-0 ${
                   active
                     ? 'bg-accent text-accentfg shadow-sm'
                     : 'text-muted hover:text-fg hover:bg-fg/5'
@@ -96,8 +96,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 safe-bottom">
-          <div key={activeTab} className="cb-panel-enter">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 p-3.5 sm:p-6 safe-bottom">
+          <div key={activeTab} className="cb-panel-enter min-w-0 max-w-full">
             {activeTab === 'providers' && <ProvidersTab />}
             {activeTab === 'prompts' && <PromptsTab />}
             {activeTab === 'appearance' && <AppearanceTab />}
@@ -106,8 +106,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Subtle License & Font Attribution Footer */}
-        <div className="px-5 py-2 border-t border-borderc bg-surface/25 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted font-mono shrink-0">
-          <div className="flex flex-wrap items-center gap-2.5">
+        <div className="px-3.5 sm:px-5 py-2 border-t border-borderc bg-surface/25 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted font-mono shrink-0">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
             <span>ChatBeauty v0.4.1 · MIT License</span>
             <button
               type="button"
@@ -119,7 +119,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <span>渲染效果示例</span>
             </button>
           </div>
-          <span className="truncate">Inter / Newsreader / JetBrains Mono (SIL OFL)</span>
+          <span className="hidden sm:inline truncate">Inter / Newsreader / JetBrains Mono (SIL OFL)</span>
         </div>
       </div>
     </div>

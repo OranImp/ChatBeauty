@@ -3,6 +3,7 @@ import type { ChatStreamCallbacks, ChatStreamRequest, LLMProviderAdapter } from 
 import { SSEParser } from '@/services/llm/sseParser';
 import { getRuntimeEnvironment, simpleRequest, streamRequest } from '@/services/transport/streamHttp';
 import {
+  buildEffectiveProviderHeaders,
   deepMergePayload,
   extractDataUrlParts,
   extractTextFromParts,
@@ -10,6 +11,7 @@ import {
   resolveThinkingBudget,
   sliceContextMessages,
   toModelDefinition,
+  toStableSessionId,
   trimBaseUrl,
 } from './shared';
 import {
@@ -170,15 +172,11 @@ export class AnthropicAdapter implements LLMProviderAdapter {
 
     payload = deepMergePayload(payload, effective.extraBody);
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'x-api-key': req.provider.apiKey.trim(),
-      'anthropic-version': '2023-06-01',
-      ...(getRuntimeEnvironment() === 'web'
-        ? { 'anthropic-dangerous-direct-browser-access': 'true' }
-        : {}),
-      ...req.provider.extraHeaders,
-    };
+    const headers = buildEffectiveProviderHeaders(req.provider, {
+      includeContentType: true,
+      sessionId: req.sessionId,
+      isWebRuntime: getRuntimeEnvironment() === 'web',
+    });
 
     const parser = new SSEParser();
     let inputTokens = 0;
@@ -258,14 +256,11 @@ export class AnthropicAdapter implements LLMProviderAdapter {
     const res = await simpleRequest({
       url: buildAnthropicEndpoint(provider.baseUrl, '/models'),
       method: 'GET',
-      headers: {
-        'x-api-key': provider.apiKey.trim(),
-        'anthropic-version': '2023-06-01',
-        ...(getRuntimeEnvironment() === 'web'
-          ? { 'anthropic-dangerous-direct-browser-access': 'true' }
-          : {}),
-        ...provider.extraHeaders,
-      },
+      headers: buildEffectiveProviderHeaders(provider, {
+        includeContentType: false,
+        sessionId: toStableSessionId(`models_${provider.id}`),
+        isWebRuntime: getRuntimeEnvironment() === 'web',
+      }),
       signal,
     });
     if (res.status < 200 || res.status >= 300) {

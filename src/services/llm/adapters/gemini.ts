@@ -3,6 +3,7 @@ import type { ChatStreamCallbacks, ChatStreamRequest, LLMProviderAdapter } from 
 import { SSEParser } from '@/services/llm/sseParser';
 import { simpleRequest, streamRequest } from '@/services/transport/streamHttp';
 import {
+  buildEffectiveProviderHeaders,
   deepMergePayload,
   extractDataUrlParts,
   extractTextFromParts,
@@ -10,6 +11,7 @@ import {
   resolveThinkingBudget,
   sliceContextMessages,
   toModelDefinition,
+  toStableSessionId,
   trimBaseUrl,
 } from './shared';
 import {
@@ -139,11 +141,10 @@ export class GeminiAdapter implements LLMProviderAdapter {
 
     payload = deepMergePayload(payload, effective.extraBody);
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': req.provider.apiKey.trim(),
-      ...req.provider.extraHeaders,
-    };
+    const headers = buildEffectiveProviderHeaders(req.provider, {
+      includeContentType: true,
+      sessionId: req.sessionId,
+    });
 
     const parser = new SSEParser();
 
@@ -224,10 +225,10 @@ export class GeminiAdapter implements LLMProviderAdapter {
     const res = await simpleRequest({
       url: buildGeminiModelsEndpoint(provider.baseUrl),
       method: 'GET',
-      headers: {
-        'x-goog-api-key': provider.apiKey.trim(),
-        ...provider.extraHeaders,
-      },
+      headers: buildEffectiveProviderHeaders(provider, {
+        includeContentType: false,
+        sessionId: toStableSessionId(`models_${provider.id}`),
+      }),
       signal,
     });
     if (res.status < 200 || res.status >= 300) {

@@ -3,11 +3,13 @@ import type { ChatStreamCallbacks, ChatStreamRequest, LLMProviderAdapter } from 
 import { SSEParser } from '@/services/llm/sseParser';
 import { simpleRequest, streamRequest } from '@/services/transport/streamHttp';
 import {
+  buildEffectiveProviderHeaders,
   deepMergePayload,
   extractTextFromParts,
   resolveEffectiveParams,
   sliceContextMessages,
   toModelDefinition,
+  toStableSessionId,
   trimBaseUrl,
 } from './shared';
 import {
@@ -119,11 +121,10 @@ export class OpenAIResponsesAdapter implements LLMProviderAdapter {
 
     payload = deepMergePayload(payload, effective.extraBody);
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${req.provider.apiKey.trim()}`,
-      ...req.provider.extraHeaders,
-    };
+    const headers = buildEffectiveProviderHeaders(req.provider, {
+      includeContentType: true,
+      sessionId: req.sessionId,
+    });
 
     const parser = new SSEParser();
 
@@ -215,10 +216,10 @@ export class OpenAIResponsesAdapter implements LLMProviderAdapter {
     const res = await simpleRequest({
       url: buildModelsEndpoint(provider.baseUrl),
       method: 'GET',
-      headers: {
-        Authorization: `Bearer ${provider.apiKey.trim()}`,
-        ...provider.extraHeaders,
-      },
+      headers: buildEffectiveProviderHeaders(provider, {
+        includeContentType: false,
+        sessionId: toStableSessionId(`models_${provider.id}`),
+      }),
       signal,
     });
     if (res.status < 200 || res.status >= 300) {

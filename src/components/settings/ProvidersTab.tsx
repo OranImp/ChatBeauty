@@ -21,7 +21,12 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { PROTOCOL_TEMPLATES } from '@/services/llm/registry';
-import { parseHttpHeadersJson, toModelDefinition, trimBaseUrl } from '@/services/llm/adapters/shared';
+import {
+  buildPreviewHeadersJson,
+  extractExtraHeadersFromPreviewJson,
+  toModelDefinition,
+  trimBaseUrl,
+} from '@/services/llm/adapters/shared';
 import {
   benchmarkProviderEndpoint,
   type EndpointBenchmarkResult,
@@ -30,7 +35,6 @@ import { triggerDownload } from '@/components/renderer/svgUtils';
 import type {
   CustomModelParams,
   ModelDefinition,
-  ProtocolType,
   ProviderConfig,
 } from '@/types/chat';
 import { SmoothSlider } from '@/components/ui/SmoothSlider';
@@ -43,6 +47,7 @@ import {
   resolveModelReasoningProfile,
 } from '@/services/llm/modelProfiles';
 import { ProviderWizard } from './ProviderWizard';
+import { ProtocolSelector } from './ProtocolSelector';
 
 function pruneParams(params?: CustomModelParams): CustomModelParams | undefined {
   if (!params) return undefined;
@@ -107,7 +112,9 @@ export const ProvidersTab: React.FC = () => {
 
   const [view, setView] = useState<'list' | 'wizard' | 'edit'>('list');
   const [draft, setDraft] = useState<ProviderConfig | null>(null);
+  const [customExtraHeaders, setCustomExtraHeaders] = useState<Record<string, string>>({});
   const [headersText, setHeadersText] = useState('{}');
+  const [headersErr, setHeadersErr] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
   const [newModelId, setNewModelId] = useState('');
   const [modelSearch, setModelSearch] = useState('');
@@ -146,9 +153,38 @@ export const ProvidersTab: React.FC = () => {
     setRemoteUrlInput(modelProfileSync.remoteUrl);
   }, [modelProfileSync.remoteUrl]);
 
+  useEffect(() => {
+    if (view !== 'edit' || !draft || headersErr) return;
+    setHeadersText(buildPreviewHeadersJson(draft, customExtraHeaders));
+    // Re-sync live request headers preview whenever provider fields change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, draft?.protocol, draft?.baseUrl, draft?.apiKey, draft?.presetId]);
+
+  const handleHeadersJsonChange = (nextText: string) => {
+    setHeadersText(nextText);
+    if (!draft) return;
+    try {
+      const nextExtra = extractExtraHeadersFromPreviewJson(nextText, draft);
+      setCustomExtraHeaders(nextExtra);
+      setHeadersErr(null);
+    } catch (err) {
+      setHeadersErr(err instanceof Error ? err.message : '自定义 Headers JSON 格式无效');
+    }
+  };
+
+  const resetAutoHeaders = () => {
+    if (!draft) return;
+    setCustomExtraHeaders({});
+    setHeadersErr(null);
+    setHeadersText(buildPreviewHeadersJson(draft, {}));
+  };
+
   const openEditor = (p: ProviderConfig) => {
+    const initialExtra = p.extraHeaders || {};
     setDraft(structuredClone(p));
-    setHeadersText(JSON.stringify(p.extraHeaders || {}, null, 2));
+    setCustomExtraHeaders(initialExtra);
+    setHeadersErr(null);
+    setHeadersText(buildPreviewHeadersJson(p, initialExtra));
     setShowKey(false);
     setModelSearch('');
     setNewBackupUrl('');
@@ -309,9 +345,13 @@ export const ProvidersTab: React.FC = () => {
 
   const handleSave = async () => {
     if (!draft) return;
+    if (headersErr) {
+      setStatusMsg({ ok: false, text: headersErr });
+      return;
+    }
     let parsedHeaders: Record<string, string>;
     try {
-      parsedHeaders = parseHttpHeadersJson(headersText);
+      parsedHeaders = extractExtraHeadersFromPreviewJson(headersText, draft);
     } catch (err) {
       setStatusMsg({
         ok: false,
@@ -349,15 +389,22 @@ export const ProvidersTab: React.FC = () => {
     };
     await saveProvider(updated);
     setDraft(structuredClone(updated));
+    setCustomExtraHeaders(parsedHeaders);
+    setHeadersErr(null);
+    setHeadersText(buildPreviewHeadersJson(updated, parsedHeaders));
     setStatusMsg({ ok: true, text: '接口与模型参数配置已保存' });
     setTimeout(() => setStatusMsg(null), 2200);
   };
 
   const handleFetchModels = async () => {
     if (!draft) return;
+    if (headersErr) {
+      setStatusMsg({ ok: false, text: headersErr });
+      return;
+    }
     let parsedHeaders: Record<string, string>;
     try {
-      parsedHeaders = parseHttpHeadersJson(headersText);
+      parsedHeaders = extractExtraHeadersFromPreviewJson(headersText, draft);
     } catch (err) {
       setStatusMsg({
         ok: false,
@@ -396,9 +443,13 @@ export const ProvidersTab: React.FC = () => {
 
   const handleTest = async () => {
     if (!draft) return;
+    if (headersErr) {
+      setStatusMsg({ ok: false, text: headersErr });
+      return;
+    }
     let parsedHeaders: Record<string, string>;
     try {
-      parsedHeaders = parseHttpHeadersJson(headersText);
+      parsedHeaders = extractExtraHeadersFromPreviewJson(headersText, draft);
     } catch (err) {
       setStatusMsg({
         ok: false,
@@ -610,8 +661,8 @@ export const ProvidersTab: React.FC = () => {
     };
 
     return (
-      <div className="cb-panel-enter space-y-4 text-[13.5px]">
-        <div className="flex items-center justify-between">
+      <div className="cb-panel-enter space-y-4 text-[13.5px] min-w-0 max-w-full">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <button
             type="button"
             onClick={() => setView('list')}
@@ -634,42 +685,35 @@ export const ProvidersTab: React.FC = () => {
           </button>
         </div>
 
-        <div className="rounded-2xl border border-borderc bg-surface/45 p-4 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="space-y-1">
-              <span className="text-muted">配置名称</span>
+        <div className="rounded-2xl border border-borderc bg-surface/45 p-3 sm:p-4 space-y-4 min-w-0">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 min-w-0">
+            <label className="space-y-1 min-w-0">
+              <span className="text-muted text-xs">配置名称</span>
               <input
                 value={draft.name}
                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc text-fg focus:outline-none focus:border-fg/40"
+                className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc text-fg focus:outline-none focus:border-fg/40"
               />
             </label>
 
-            <label className="space-y-1">
-              <span className="text-muted">调用协议</span>
-              <select
-                value={draft.protocol}
-                onChange={(e) => {
-                  const proto = e.target.value as ProtocolType;
-                  setDraft({
-                    ...draft,
-                    protocol: proto,
-                    baseUrl: PROTOCOL_TEMPLATES[proto].defaultBaseUrl,
-                  });
-                }}
-                className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc text-fg focus:outline-none focus:border-fg/40"
-              >
-                {(Object.keys(PROTOCOL_TEMPLATES) as ProtocolType[]).map((proto) => (
-                  <option key={proto} value={proto}>
-                    {PROTOCOL_TEMPLATES[proto].label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <ProtocolSelector
+              label="调用协议"
+              value={draft.protocol}
+              onChange={(proto) => {
+                const prevDefault = PROTOCOL_TEMPLATES[draft.protocol].defaultBaseUrl;
+                const shouldSwapBase =
+                  !draft.baseUrl.trim() || trimBaseUrl(draft.baseUrl) === trimBaseUrl(prevDefault);
+                setDraft({
+                  ...draft,
+                  protocol: proto,
+                  baseUrl: shouldSwapBase ? PROTOCOL_TEMPLATES[proto].defaultBaseUrl : draft.baseUrl,
+                });
+              }}
+            />
           </div>
 
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
+          <div className="space-y-1.5 min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-muted">Base URL（支持任意兼容中转站地址）</span>
               <div className="flex items-center gap-2">
                 {primaryBench && (
@@ -711,14 +755,14 @@ export const ProvidersTab: React.FC = () => {
           </div>
 
           {/* Backup Endpoints */}
-          <div className="rounded-xl border border-borderc bg-bg/50 p-3 space-y-2">
-            <div className="flex items-center justify-between">
+          <div className="rounded-xl border border-borderc bg-bg/50 p-3 space-y-2 min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-muted text-xs font-medium">备用端点（中转站多线路测速与一键切换）</span>
               <span className="text-[11px] text-muted">{(draft.backupBaseUrls || []).length} 个备用</span>
             </div>
 
             {(draft.backupBaseUrls || []).length > 0 && (
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 min-w-0">
                 {(draft.backupBaseUrls || []).map((url) => {
                   const key = getUrlKey(draft, url);
                   const bench = benchmarkByUrl[key];
@@ -726,12 +770,12 @@ export const ProvidersTab: React.FC = () => {
                   return (
                     <div
                       key={url}
-                      className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl border border-borderc bg-surface/50"
+                      className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl border border-borderc bg-surface/50 min-w-0"
                     >
-                      <span className="font-mono text-xs text-fg truncate flex-1 min-w-[140px]">
+                      <span className="font-mono text-xs text-fg break-all sm:truncate flex-1 min-w-0">
                         {url}
                       </span>
-                      <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                         {bench && (
                           <span
                             className={`text-[11px] font-mono px-1.5 py-0.5 rounded border ${
@@ -782,7 +826,7 @@ export const ProvidersTab: React.FC = () => {
               </div>
             )}
 
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2 min-w-0">
               <input
                 value={newBackupUrl}
                 onChange={(e) => setNewBackupUrl(e.target.value)}
@@ -793,19 +837,19 @@ export const ProvidersTab: React.FC = () => {
                   }
                 }}
                 placeholder="添加备用 Base URL，例如 https://backup.example.com/v1"
-                className="flex-1 px-3 py-1.5 rounded-xl bg-bg border border-borderc text-fg font-mono text-xs focus:outline-none focus:border-fg/40"
+                className="w-full sm:flex-1 min-w-0 px-3 py-1.5 rounded-xl bg-bg border border-borderc text-fg font-mono text-xs focus:outline-none focus:border-fg/40"
               />
               <button
                 type="button"
                 onClick={addBackupEndpoint}
-                className="px-3 py-1.5 rounded-xl bg-elevated border border-borderc text-fg text-xs hover:border-fg/35 shrink-0"
+                className="px-3 py-1.5 rounded-xl bg-elevated border border-borderc text-fg text-xs hover:border-fg/35 shrink-0 self-start sm:self-auto"
               >
                 添加备用
               </button>
             </div>
           </div>
 
-          <label className="block space-y-1">
+          <label className="block space-y-1 min-w-0">
             <span className="text-muted">API Key</span>
             <div className="relative">
               <input
@@ -813,7 +857,7 @@ export const ProvidersTab: React.FC = () => {
                 value={draft.apiKey}
                 onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
                 placeholder="sk-... / AIza... / sk-ant-..."
-                className="w-full pl-3 pr-10 py-2 rounded-xl bg-bg border border-borderc text-fg font-mono focus:outline-none focus:border-fg/40"
+                className="w-full min-w-0 pl-3 pr-10 py-2 rounded-xl bg-bg border border-borderc text-fg font-mono focus:outline-none focus:border-fg/40"
               />
               <button
                 type="button"
@@ -825,8 +869,8 @@ export const ProvidersTab: React.FC = () => {
             </div>
           </label>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
+          <div className="space-y-2 min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-muted">
                 模型列表（点击名称设为默认，点击右侧图标配置专属参数与思考系列）
               </span>
@@ -845,8 +889,8 @@ export const ProvidersTab: React.FC = () => {
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div className="flex gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 min-w-0">
+              <div className="flex gap-2 min-w-0">
                 <input
                   value={newModelId}
                   onChange={(e) => setNewModelId(e.target.value)}
@@ -857,7 +901,7 @@ export const ProvidersTab: React.FC = () => {
                     }
                   }}
                   placeholder={`手动添加模型 ID，如 ${PROTOCOL_TEMPLATES[draft.protocol].placeholderModel}`}
-                  className="flex-1 px-3 py-1.5 rounded-xl bg-bg border border-borderc text-fg font-mono focus:outline-none focus:border-fg/40"
+                  className="flex-1 min-w-0 px-3 py-1.5 rounded-xl bg-bg border border-borderc text-fg font-mono focus:outline-none focus:border-fg/40"
                 />
                 <button
                   type="button"
@@ -868,13 +912,13 @@ export const ProvidersTab: React.FC = () => {
                 </button>
               </div>
 
-              <div className="relative flex items-center">
+              <div className="relative flex items-center min-w-0">
                 <Search className="w-4 h-4 text-muted absolute left-3 pointer-events-none" />
                 <input
                   value={modelSearch}
                   onChange={(e) => setModelSearch(e.target.value)}
                   placeholder="搜索模型 ID 或名称..."
-                  className="w-full pl-9 pr-14 py-1.5 rounded-xl bg-bg border border-borderc text-fg focus:outline-none focus:border-fg/40"
+                  className="w-full min-w-0 pl-9 pr-14 py-1.5 rounded-xl bg-bg border border-borderc text-fg focus:outline-none focus:border-fg/40"
                 />
                 {modelSearch.trim() && (
                   <span className="absolute right-2.5 text-[11px] text-muted tabular-nums">
@@ -1150,21 +1194,37 @@ export const ProvidersTab: React.FC = () => {
             </div>
           </div>
 
-          <details>
-            <summary className="cursor-pointer text-muted hover:text-fg">
-              高级：自定义请求头 (JSON)
+          <details className="min-w-0">
+            <summary className="cursor-pointer text-muted hover:text-fg select-none">
+              高级：自定义请求头 (JSON，随协议 / URL / API Key 实时更新)
             </summary>
-            <textarea
-              rows={2}
-              value={headersText}
-              onChange={(e) => setHeadersText(e.target.value)}
-              className="mt-2 w-full px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-fg focus:outline-none focus:border-fg/40"
-            />
+            <div className="mt-2 space-y-1.5 min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
+                <span>自动生成协议默认头；修改或新增键值对将在保存时一并生效。</span>
+                <button
+                  type="button"
+                  onClick={resetAutoHeaders}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-borderc bg-bg hover:bg-elevated text-fg transition shrink-0"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>恢复自动头</span>
+                </button>
+              </div>
+              <textarea
+                rows={5}
+                value={headersText}
+                onChange={(e) => handleHeadersJsonChange(e.target.value)}
+                className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
+              />
+              {headersErr && (
+                <div className="text-[11px] text-rose-400 break-words">{headersErr}</div>
+              )}
+            </div>
           </details>
 
           {statusMsg && (
             <div
-              className={`px-3 py-2 rounded-xl border ${
+              className={`px-3 py-2 rounded-xl border break-words ${
                 statusMsg.ok
                   ? 'border-borderc bg-surface text-fg'
                   : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
@@ -1203,16 +1263,16 @@ export const ProvidersTab: React.FC = () => {
   }
 
   return (
-    <div className="cb-panel-enter space-y-4 text-[13.5px]">
+    <div className="cb-panel-enter space-y-4 text-[13.5px] min-w-0 max-w-full">
       {/* CC-Switch Switchboard Header & Toolbar */}
-      <div className="flex flex-wrap items-start justify-between gap-3 pb-1">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-3 pb-1 min-w-0">
+        <div className="min-w-0">
           <div className="text-[15px] font-semibold text-fg">模型供应商切换台</div>
           <div className="text-muted text-xs mt-0.5">
             仿 CC-Switch 多线路控制台：支持品牌预设、端点测速、备用 URL 切换与 JSON 批量导入导出。
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
           {providers.length > 0 && (
             <button
               type="button"
@@ -1306,15 +1366,15 @@ export const ProvidersTab: React.FC = () => {
             return (
               <div
                 key={p.id}
-                className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-2xl border transition ${
+                className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 sm:px-4 sm:py-3 rounded-2xl border overflow-hidden min-w-0 transition ${
                   isActive
                     ? 'border-accent/45 bg-elevated/80'
                     : 'border-borderc bg-surface/45 hover:bg-surface/80'
                 }`}
               >
                 <div className="min-w-0 space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold text-[14px] text-fg truncate">{p.name}</span>
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="font-semibold text-[14px] text-fg truncate max-w-full">{p.name}</span>
                     {isActive && (
                       <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
@@ -1345,7 +1405,7 @@ export const ProvidersTab: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                <div className="flex flex-wrap items-center gap-1.5 min-w-0 max-w-full">
                   {!isActive && (
                     <button
                       type="button"
@@ -1561,17 +1621,17 @@ export const ProvidersTab: React.FC = () => {
               </div>
             </div>
 
-            <div className="space-y-1 pt-2 border-t border-borderc">
-              <div className="flex items-center justify-between text-muted">
+            <div className="space-y-1 pt-2 border-t border-borderc min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-muted">
                 <span>全局默认自定义请求体 JSON (extraBody)</span>
-                {globalExtraErr && <span className="text-rose-400">{globalExtraErr}</span>}
+                {globalExtraErr && <span className="text-rose-400 break-words">{globalExtraErr}</span>}
               </div>
               <textarea
                 rows={2}
                 value={globalExtraText}
                 onChange={(e) => handleGlobalExtraChange(e.target.value)}
                 placeholder='{"user": "chatbeauty-study"}'
-                className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-fg focus:outline-none focus:border-fg/40"
+                className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-fg focus:outline-none focus:border-fg/40"
               />
             </div>
           </div>
@@ -1579,51 +1639,51 @@ export const ProvidersTab: React.FC = () => {
       </div>
 
       {/* Collapsible Live Model Reasoning Profile Rules */}
-      <div className="rounded-2xl border border-borderc bg-surface/35 overflow-hidden">
+      <div className="rounded-2xl border border-borderc bg-surface/35 overflow-hidden min-w-0">
         <button
           type="button"
           onClick={() => setRulesOpen((v) => !v)}
-          className="w-full flex items-center justify-between px-4 py-3.5 text-left font-semibold text-fg hover:bg-fg/[0.03] transition"
+          className="w-full min-w-0 flex items-center justify-between gap-2 px-3 sm:px-4 py-3.5 text-left font-semibold text-fg hover:bg-fg/[0.03] transition"
         >
-          <span className="flex items-center gap-2">
+          <span className="flex flex-wrap items-center gap-2 min-w-0">
             <span>已知模型思考强度规则库（可实时更新）</span>
-            <span className="text-[10px] font-mono font-normal px-2 py-0.5 rounded-full bg-fg/10 text-muted">
+            <span className="text-[10px] font-mono font-normal px-2 py-0.5 rounded-full bg-fg/10 text-muted max-w-full">
               内置 {BUILTIN_MODEL_PROFILE_RULES.length} · 在线 {modelProfileSync.remoteRules.length} ·
               自定义 {modelProfileSync.customRules.length}
             </span>
           </span>
           <ChevronRight
-            className={`w-4 h-4 text-muted transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+            className={`w-4 h-4 text-muted shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
               rulesOpen ? 'rotate-90 text-fg' : ''
             }`}
           />
         </button>
         <Collapsible open={rulesOpen}>
-          <div className="px-4 pb-4 pt-3 border-t border-borderc space-y-3">
+          <div className="px-3 sm:px-4 pb-4 pt-3 border-t border-borderc space-y-3 min-w-0">
             <div className="text-muted leading-relaxed">
               切换模型时将按「模型专属指定 → 自定义规则 → 在线同步规则 → 内置规则」顺序实时分配该系列支持的思考强度档位（支持正则匹配与中转站前缀如{' '}
-              <code>openai/gpt-5.2</code>）。
+              <code className="break-all">openai/gpt-5.2</code>）。
             </div>
 
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-muted">
+            <div className="space-y-1.5 min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-muted">
                 <span>在线规则库 URL</span>
                 {modelProfileSync.lastStatus && (
-                  <span className="text-[11px] font-mono">{modelProfileSync.lastStatus}</span>
+                  <span className="text-[11px] font-mono break-all">{modelProfileSync.lastStatus}</span>
                 )}
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2 min-w-0">
                 <input
                   value={remoteUrlInput}
                   onChange={(e) => setRemoteUrlInput(e.target.value)}
                   placeholder="https://raw.githubusercontent.com/.../model-profiles.json"
-                  className="flex-1 px-3 py-1.5 rounded-xl bg-bg border border-borderc font-mono text-fg focus:outline-none focus:border-fg/40"
+                  className="w-full sm:flex-1 min-w-0 px-3 py-1.5 rounded-xl bg-bg border border-borderc font-mono text-fg focus:outline-none focus:border-fg/40"
                 />
                 <button
                   type="button"
                   disabled={syncingRules}
                   onClick={() => void handleSyncRemoteRules()}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-elevated border border-borderc hover:border-fg/35 text-fg shrink-0 active:scale-95 transition disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-elevated border border-borderc hover:border-fg/35 text-fg shrink-0 self-start sm:self-auto active:scale-95 transition disabled:opacity-50"
                 >
                   {syncingRules ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />

@@ -91,10 +91,10 @@ export const DataSyncTab: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6 text-[13.5px]">
+    <div className="space-y-6 text-[13.5px] min-w-0 max-w-full">
       {notice && (
         <div
-          className={`px-3 py-2 rounded-xl border ${
+          className={`px-3 py-2 rounded-xl border break-words ${
             notice.ok
               ? 'border-borderc bg-surface text-fg'
               : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
@@ -105,7 +105,7 @@ export const DataSyncTab: React.FC = () => {
       )}
 
       {/* Local Backup */}
-      <div className="rounded-2xl border border-borderc bg-surface/40 p-4 space-y-3">
+      <div className="rounded-2xl border border-borderc bg-surface/40 p-3.5 sm:p-4 space-y-3 min-w-0 max-w-full">
         <div className="font-semibold text-sm text-fg">本地数据管理与导出</div>
         <p className="text-muted">
           所有聊天记录、API 密钥与自定义提示词均默认保存在本机 IndexedDB，支持一键全量 JSON 导入/导出。
@@ -169,10 +169,10 @@ export const DataSyncTab: React.FC = () => {
       </div>
 
       {/* Reserved WebDAV Sync Interface */}
-      <div className="rounded-2xl border border-borderc bg-surface/40 p-4 space-y-3.5">
-        <div className="flex items-center justify-between">
+      <div className="rounded-2xl border border-borderc bg-surface/40 p-3.5 sm:p-4 space-y-3.5 min-w-0 max-w-full">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="font-semibold text-[15px] text-fg">WebDAV 跨端同步</div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <span className="text-muted">启用</span>
             <ToggleSwitch
               checked={webdav.enabled}
