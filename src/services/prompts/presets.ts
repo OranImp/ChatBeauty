@@ -103,12 +103,22 @@ export function composeSystemPrompt(options: {
   customSystemPrompt?: string;
   renderEnabled: boolean;
   renderPrompt: string;
+  retrievedMemoriesText?: string;
+  contextSummary?: string;
 }): string {
   const parts: string[] = [];
   const base = (options.customSystemPrompt ?? options.presetContent ?? '').trim();
   if (base) parts.push(base);
   if (options.renderEnabled && options.renderPrompt.trim()) {
     parts.push(options.renderPrompt.trim());
+  }
+  if (options.retrievedMemoriesText?.trim()) {
+    parts.push(
+      `【按需检索的用户长期记忆（仅在相关时自然参考，勿生硬复述）】\n${options.retrievedMemoriesText.trim()}`
+    );
+  }
+  if (options.contextSummary?.trim()) {
+    parts.push(`【较早对话的上下文压缩摘要】\n${options.contextSummary.trim()}`);
   }
   return parts.join('\n\n');
 }

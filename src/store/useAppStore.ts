@@ -8,13 +8,18 @@ import type {
   ProviderConfig,
 } from '@/types/chat';
 import type { PromptSettings, SystemPromptPreset } from '@/types/prompt';
+import type { MemoryEntry } from '@/types/memory';
 import {
   DEFAULT_APPEARANCE_SETTINGS,
+  DEFAULT_CONTEXT_SETTINGS,
   DEFAULT_GENERATION_SETTINGS,
+  DEFAULT_MEMORY_SETTINGS,
   DEFAULT_MODEL_PROFILE_SYNC_SETTINGS,
   DEFAULT_WEBDAV_SETTINGS,
   type AppearanceSettings,
+  type ContextSettings,
   type GenerationSettings,
+  type MemorySettings,
   type ModelProfileRule,
   type ModelProfileSyncSettings,
   type WebDavSyncSettings,
@@ -25,13 +30,37 @@ import {
   DEFAULT_PROMPT_SETTINGS,
 } from '@/services/prompts/presets';
 import { getProviderAdapter, PROTOCOL_TEMPLATES } from '@/services/llm/registry';
-import { toStableSessionId } from '@/services/llm/adapters/shared';
+import { extractTextFromParts, toStableSessionId } from '@/services/llm/adapters/shared';
+import {
+  buildCompactionPrompt,
+  buildFallbackLocalSummary,
+  computeContextUsageStats,
+  selectActiveHistoryMessages,
+} from '@/services/llm/contextManager';
+import {
+  buildMemoryExtractionPrompt,
+  detectMemoryTrigger,
+  detectSensitiveInfo,
+  extractMemoriesLocal,
+  formatMemoriesForPrompt,
+  MEMORY_FILE_HEADER,
+  mergeMemoryEntries,
+  parseLlmMemoryExtraction,
+  parseMemoryDocument,
+  retrieveRelevantMemories,
+  serializeMemoryDocument,
+} from '@/services/memory/memoryEngine';
 import {
   coerceReasoningEffort,
   parseModelProfileRulesJson,
   resolveModelReasoningProfile,
 } from '@/services/llm/modelProfiles';
-import { simpleRequest, syncBackgroundStreamingState } from '@/services/transport/streamHttp';
+import {
+  readNativeMemoryFile,
+  simpleRequest,
+  syncBackgroundStreamingState,
+  writeNativeMemoryFile,
+} from '@/services/transport/streamHttp';
 import { createDemoShowcaseData, DEMO_CONVERSATION_ID } from '@/components/chat/DemoShowcase';
 
 function uid(prefix: string): string {
@@ -39,6 +68,7 @@ function uid(prefix: string): string {
 }
 
 const deletedConvIds = new Set<string>();
+let memoryNoticeTimer: ReturnType<typeof setTimeout> | null = null;
 
 function resolveValidProviderAndModel(
   conv: Conversation | undefined,
@@ -86,6 +116,12 @@ interface AppState {
   promptSettings: PromptSettings;
   webdav: WebDavSyncSettings;
   modelProfileSync: ModelProfileSyncSettings;
+  contextSettings: ContextSettings;
+  memorySettings: MemorySettings;
+  memoryDocument: string;
+  memoryEntries: MemoryEntry[];
+  compactingByConv: Record<string, boolean>;
+  memoryNotice: string | null;
 
   activeConversationId: string | null;
   activeProviderId: string | null;
@@ -129,6 +165,7 @@ interface AppState {
   regenerateMessage: (assistantMessageId: string) => Promise<void>;
   editAndResend: (userMessageId: string, newText: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
+  compactConversation: (conversationId: string) => Promise<{ ok: boolean; message: string }>;
 
   saveProvider: (provider: ProviderConfig) => Promise<void>;
   deleteProvider: (id: string) => Promise<void>;
@@ -147,6 +184,14 @@ interface AppState {
   updateModelProfileSync: (patch: Partial<ModelProfileSyncSettings>) => Promise<void>;
   syncRemoteModelProfiles: (urlOverride?: string) => Promise<{ count: number }>;
   saveCustomModelProfileRules: (rules: ModelProfileRule[]) => Promise<void>;
+
+  updateContextSettings: (patch: Partial<ContextSettings>) => Promise<void>;
+  updateMemorySettings: (patch: Partial<MemorySettings>) => Promise<void>;
+  saveMemoryDocument: (markdown: string) => Promise<void>;
+  upsertMemoryEntry: (entry: MemoryEntry) => Promise<void>;
+  deleteMemoryEntry: (id: string) => Promise<void>;
+  clearAllMemories: () => Promise<void>;
+  clearMemoryNotice: () => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => {
@@ -162,6 +207,272 @@ export const useAppStore = create<AppState>((set, get) => {
       },
     }));
     return list;
+  };
+
+  const flashMemoryNotice = (msg: string) => {
+    if (memoryNoticeTimer) clearTimeout(memoryNoticeTimer);
+    set({ memoryNotice: msg });
+    memoryNoticeTimer = setTimeout(() => {
+      set((s) => (s.memoryNotice === msg ? { memoryNotice: null } : s));
+    }, 4200);
+  };
+
+  const persistMemoryEntries = async (entries: MemoryEntry[], explicitDoc?: string) => {
+    const doc = explicitDoc !== undefined ? explicitDoc : serializeMemoryDocument(entries);
+    const parsedEntries = explicitDoc !== undefined ? parseMemoryDocument(doc) : entries;
+    await setKv(KV_KEYS.MEMORY_DOCUMENT, doc);
+    void writeNativeMemoryFile(doc);
+    set({ memoryDocument: doc, memoryEntries: parsedEntries });
+  };
+
+  const isConvDeleted = (convId: string) =>
+    deletedConvIds.has(convId) || !get().conversations.some((c) => c.id === convId);
+
+  const performCompaction = async (
+    conversation: Conversation,
+    allMessages: Message[],
+    providerOverride?: ProviderConfig,
+    modelIdOverride?: string,
+    outerSignal?: AbortSignal
+  ): Promise<{ ok: boolean; message: string; updatedConv: Conversation }> => {
+    const state = get();
+    if (state.compactingByConv[conversation.id]) {
+      return { ok: false, message: '正在压缩上下文中…', updatedConv: conversation };
+    }
+
+    const activeMessages = selectActiveHistoryMessages(
+      allMessages,
+      conversation.compactedUntilMessageId
+    );
+    const keepRecent = Math.max(2, state.contextSettings.keepRecentMessages || 10);
+    if (activeMessages.length <= keepRecent) {
+      return {
+        ok: false,
+        message: `当前活跃上下文仅 ${activeMessages.length} 条，不超过保留条数（${keepRecent} 条），无需压缩`,
+        updatedConv: conversation,
+      };
+    }
+
+    const toCompact = activeMessages.slice(0, activeMessages.length - keepRecent);
+    const lastCompactedMsg = toCompact[toCompact.length - 1];
+
+    set((s) => ({
+      compactingByConv: { ...s.compactingByConv, [conversation.id]: true },
+    }));
+
+    try {
+      const prompt = buildCompactionPrompt(conversation.contextSummary, toCompact);
+      let summaryText = '';
+
+      const resolved =
+        providerOverride && modelIdOverride
+          ? { provider: providerOverride, modelId: modelIdOverride }
+          : resolveValidProviderAndModel(
+              conversation,
+              state.providers,
+              state.activeProviderId,
+              state.activeModelId
+            );
+
+      if (resolved.provider && resolved.provider.apiKey.trim() && resolved.modelId) {
+        const timeoutCtrl = new AbortController();
+        const timer = setTimeout(() => timeoutCtrl.abort(), 16000);
+        const onOuterAbort = () => timeoutCtrl.abort();
+        outerSignal?.addEventListener('abort', onOuterAbort, { once: true });
+
+        try {
+          const adapter = getProviderAdapter(resolved.provider.protocol);
+          const now = Date.now();
+          const compactUserMsg: Message = {
+            id: uid('compact'),
+            conversationId: conversation.id,
+            role: 'user',
+            parts: [{ type: 'text', text: prompt }],
+            createdAt: now,
+            updatedAt: now,
+            status: 'done',
+          };
+          await adapter.chatStream(
+            {
+              provider: resolved.provider,
+              modelId: resolved.modelId,
+              systemPrompt: '你是精确、凝练的对话上下文摘要器。只输出结构化摘要要点。',
+              messages: [compactUserMsg],
+              generation: {
+                ...state.generation,
+                temperature: 0.2,
+                maxTokens: 1024,
+                reasoningEffort: 'off',
+              },
+              sessionId: toStableSessionId(`${conversation.id}:compact`),
+            },
+            {
+              onReasoningDelta: () => {},
+              onTextDelta: (delta) => {
+                summaryText += delta;
+              },
+            },
+            timeoutCtrl.signal
+          );
+        } catch {
+          if (outerSignal?.aborted) {
+            throw new DOMException('Aborted', 'AbortError');
+          }
+          summaryText = '';
+        } finally {
+          clearTimeout(timer);
+          outerSignal?.removeEventListener('abort', onOuterAbort);
+        }
+      }
+
+      const finalSummary =
+        summaryText.trim() || buildFallbackLocalSummary(conversation.contextSummary, toCompact);
+
+      const allUsableCount = allMessages.filter(
+        (m) => m.role === 'user' || m.role === 'assistant'
+      ).length;
+      const prevCompactedTotal = Math.max(
+        conversation.compactedCount ?? 0,
+        allUsableCount - activeMessages.length
+      );
+
+      const updatedConv: Conversation = {
+        ...conversation,
+        contextSummary: finalSummary,
+        compactedUntilMessageId: lastCompactedMsg.id,
+        compactedCount: prevCompactedTotal + toCompact.length,
+        updatedAt: Date.now(),
+      };
+
+      if (!isConvDeleted(conversation.id)) {
+        await db.conversations.put(updatedConv);
+        set((s) => ({
+          conversations: s.conversations
+            .map((c) => (c.id === updatedConv.id ? updatedConv : c))
+            .sort((a, b) => b.updatedAt - a.updatedAt),
+        }));
+      }
+
+      return {
+        ok: true,
+        message: `已压缩 ${toCompact.length} 条较早消息，保留最近 ${keepRecent} 条活跃上下文`,
+        updatedConv,
+      };
+    } finally {
+      set((s) => {
+        const nextCompacting = { ...s.compactingByConv };
+        delete nextCompacting[conversation.id];
+        return { compactingByConv: nextCompacting };
+      });
+    }
+  };
+
+  const extractAndSaveMemory = async (
+    userText: string,
+    convId: string,
+    provider: ProviderConfig,
+    modelId: string
+  ) => {
+    const state = get();
+    if (!state.memorySettings.enabled || !state.memorySettings.autoExtract) return;
+    const trigger = detectMemoryTrigger(userText);
+    if (!trigger) return;
+
+    const sensCheck = detectSensitiveInfo(userText);
+    let extracted: MemoryEntry[] = [];
+
+    if (provider.apiKey.trim() && modelId) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 9000);
+      let rawOut = '';
+      try {
+        const adapter = getProviderAdapter(provider.protocol);
+        const now = Date.now();
+        const promptMsg: Message = {
+          id: uid('mem_req'),
+          conversationId: convId,
+          role: 'user',
+          parts: [
+            {
+              type: 'text',
+              text: buildMemoryExtractionPrompt(
+                userText,
+                state.memorySettings.recordSensitiveInfo
+              ),
+            },
+          ],
+          createdAt: now,
+          updatedAt: now,
+          status: 'done',
+        };
+        await adapter.chatStream(
+          {
+            provider,
+            modelId,
+            systemPrompt:
+              '你是用户的长期记忆整理助手。仅按要求输出 JSON 数组，不要输出多余解释。',
+            messages: [promptMsg],
+            generation: {
+              ...state.generation,
+              temperature: 0.1,
+              maxTokens: 512,
+              reasoningEffort: 'off',
+            },
+            sessionId: toStableSessionId(`${convId}:memory`),
+          },
+          {
+            onReasoningDelta: () => {},
+            onTextDelta: (delta) => {
+              rawOut += delta;
+            },
+          },
+          ctrl.signal
+        );
+        extracted = parseLlmMemoryExtraction(
+          rawOut,
+          get().memorySettings.recordSensitiveInfo,
+          convId
+        );
+      } catch {
+        extracted = [];
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    const latestBeforeMerge = get();
+    if (!latestBeforeMerge.memorySettings.enabled || !latestBeforeMerge.memorySettings.autoExtract) {
+      return;
+    }
+
+    if (extracted.length === 0) {
+      extracted = extractMemoriesLocal(userText, latestBeforeMerge.memorySettings, convId);
+    }
+
+    if (extracted.length === 0) {
+      if (sensCheck.isSensitive && !latestBeforeMerge.memorySettings.recordSensitiveInfo) {
+        flashMemoryNotice('检测到敏感隐私信息，已按设置跳过记忆写入');
+      }
+      return;
+    }
+
+    const merged = mergeMemoryEntries(
+      latestBeforeMerge.memoryEntries,
+      extracted,
+      latestBeforeMerge.memorySettings.recordSensitiveInfo
+    );
+
+    if (merged.addedCount > 0 || merged.updatedCount > 0) {
+      await persistMemoryEntries(merged.entries);
+      const changed = merged.addedCount + merged.updatedCount;
+      const suffix = merged.skippedSensitiveCount > 0 ? '（已自动过滤敏感条目）' : '';
+      flashMemoryNotice(`已写入 ${changed} 条长期记忆${suffix}`);
+    } else if (
+      merged.skippedSensitiveCount > 0 ||
+      (sensCheck.isSensitive && !latestBeforeMerge.memorySettings.recordSensitiveInfo)
+    ) {
+      flashMemoryNotice('检测到敏感隐私信息，已按设置跳过记忆写入');
+    }
   };
 
   const runAssistantStream = async (
@@ -203,7 +514,6 @@ export const useAppStore = create<AppState>((set, get) => {
       get().appearance.backgroundGeneration ?? true
     );
 
-    // Build effective system prompt
     const presetId = conversation.systemPromptPresetId || state.promptSettings.defaultPresetId;
     const preset = state.promptPresets.find((p) => p.id === presetId);
     const renderEnabled =
@@ -211,12 +521,22 @@ export const useAppStore = create<AppState>((set, get) => {
         ? conversation.enableRenderPrompt
         : state.promptSettings.renderEnhancementEnabled;
 
-    const systemPrompt = composeSystemPrompt({
+    const systemPromptBase = composeSystemPrompt({
       presetContent: preset?.content,
       customSystemPrompt: conversation.customSystemPrompt,
       renderEnabled,
       renderPrompt: state.promptSettings.renderEnhancementPrompt,
     });
+
+    const latestUserMsg = [...historyBeforeReply].reverse().find((m) => m.role === 'user');
+    const latestQueryText = latestUserMsg ? extractTextFromParts(latestUserMsg.parts) : '';
+    const relevantMemories = retrieveRelevantMemories(
+      get().memoryEntries,
+      latestQueryText,
+      historyBeforeReply,
+      get().memorySettings
+    );
+    const retrievedMemoriesText = formatMemoriesForPrompt(relevantMemories);
 
     let reasoningText = '';
     let answerText = '';
@@ -225,12 +545,8 @@ export const useAppStore = create<AppState>((set, get) => {
     let usage: Message['usage'] | undefined;
     let lastFlush = 0;
 
-    const isConvDeleted = () =>
-      deletedConvIds.has(conversation.id) ||
-      !get().conversations.some((c) => c.id === conversation.id);
-
     const syncAssistantMessage = (status: Message['status'], error?: string, forceDb = false) => {
-      if (isConvDeleted()) return;
+      if (isConvDeleted(conversation.id)) return;
 
       const parts: Message['parts'] = [];
       if (reasoningText) {
@@ -270,8 +586,50 @@ export const useAppStore = create<AppState>((set, get) => {
     };
 
     try {
-      const adapter = getProviderAdapter(provider.protocol);
       const modelDef = provider.models.find((m) => m.id === modelId);
+      let effectiveConv =
+        get().conversations.find((c) => c.id === conversation.id) ?? conversation;
+
+      const preflightStats = computeContextUsageStats({
+        messages: historyBeforeReply,
+        compactedUntilMessageId: effectiveConv.compactedUntilMessageId,
+        contextSummary: effectiveConv.contextSummary,
+        systemPromptBase,
+        retrievedMemoriesText,
+        modelId,
+        modelDef,
+        contextSettings: get().contextSettings,
+        maxContextMessages: get().generation.maxContextMessages,
+      });
+
+      if (preflightStats.willAutoCompact) {
+        const compactRes = await performCompaction(
+          effectiveConv,
+          historyBeforeReply,
+          provider,
+          modelId,
+          controller.signal
+        );
+        if (compactRes.ok) {
+          effectiveConv = compactRes.updatedConv;
+        }
+      }
+
+      const activeHistory = selectActiveHistoryMessages(
+        historyBeforeReply,
+        effectiveConv.compactedUntilMessageId
+      );
+
+      const systemPrompt = composeSystemPrompt({
+        presetContent: preset?.content,
+        customSystemPrompt: effectiveConv.customSystemPrompt,
+        renderEnabled,
+        renderPrompt: get().promptSettings.renderEnhancementPrompt,
+        retrievedMemoriesText,
+        contextSummary: effectiveConv.contextSummary,
+      });
+
+      const adapter = getProviderAdapter(provider.protocol);
       const { profile } = resolveModelReasoningProfile({
         modelId,
         protocol: provider.protocol,
@@ -280,7 +638,7 @@ export const useAppStore = create<AppState>((set, get) => {
         remoteRules: state.modelProfileSync.remoteRules,
       });
       const effectiveReasoning = coerceReasoningEffort(
-        conversation.reasoningEffort ?? state.generation.reasoningEffort,
+        effectiveConv.reasoningEffort ?? state.generation.reasoningEffort,
         profile
       );
       await adapter.chatStream(
@@ -288,15 +646,15 @@ export const useAppStore = create<AppState>((set, get) => {
           provider,
           modelId,
           systemPrompt,
-          messages: historyBeforeReply,
+          messages: activeHistory,
           generation: {
             ...state.generation,
             reasoningEffort: effectiveReasoning,
           },
           modelParams: modelDef?.params,
-          conversationParams: conversation.customParams,
+          conversationParams: effectiveConv.customParams,
           reasoningProfile: profile,
-          sessionId: toStableSessionId(conversation.id),
+          sessionId: toStableSessionId(effectiveConv.id),
         },
         {
           onReasoningDelta: (delta) => {
@@ -330,7 +688,7 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     } finally {
       const updatedAt = Date.now();
-      const deleted = isConvDeleted();
+      const deleted = isConvDeleted(conversation.id);
       if (!deleted) {
         await db.conversations.update(conversation.id, { updatedAt });
       }
@@ -368,6 +726,12 @@ export const useAppStore = create<AppState>((set, get) => {
     promptSettings: DEFAULT_PROMPT_SETTINGS,
     webdav: DEFAULT_WEBDAV_SETTINGS,
     modelProfileSync: DEFAULT_MODEL_PROFILE_SYNC_SETTINGS,
+    contextSettings: DEFAULT_CONTEXT_SETTINGS,
+    memorySettings: DEFAULT_MEMORY_SETTINGS,
+    memoryDocument: MEMORY_FILE_HEADER,
+    memoryEntries: parseMemoryDocument(MEMORY_FILE_HEADER),
+    compactingByConv: {},
+    memoryNotice: null,
     activeConversationId: null,
     activeProviderId: null,
     activeModelId: null,
@@ -377,6 +741,19 @@ export const useAppStore = create<AppState>((set, get) => {
 
     initApp: async () => {
       const loaded = await loadInitialState();
+      let memoryDoc = loaded.memoryDocument;
+      if (!memoryDoc || !memoryDoc.trim()) {
+        const nativeDoc = await readNativeMemoryFile();
+        if (nativeDoc && nativeDoc.trim()) {
+          memoryDoc = nativeDoc;
+          await setKv(KV_KEYS.MEMORY_DOCUMENT, nativeDoc);
+        }
+      }
+      if (!memoryDoc || !memoryDoc.trim()) {
+        memoryDoc = MEMORY_FILE_HEADER;
+      }
+      const memoryEntries = parseMemoryDocument(memoryDoc);
+
       let activeConvId = loaded.activeConversationId;
       if (!activeConvId || !loaded.conversations.some((c) => c.id === activeConvId)) {
         activeConvId = loaded.conversations[0]?.id ?? null;
@@ -404,6 +781,10 @@ export const useAppStore = create<AppState>((set, get) => {
         promptSettings: loaded.promptSettings,
         webdav: loaded.webdav,
         modelProfileSync: loaded.modelProfileSync,
+        contextSettings: loaded.contextSettings,
+        memorySettings: loaded.memorySettings,
+        memoryDocument: memoryDoc,
+        memoryEntries,
         activeConversationId: activeConvId,
         activeProviderId: activeProv?.id ?? null,
         activeModelId: activeModel,
@@ -617,6 +998,9 @@ export const useAppStore = create<AppState>((set, get) => {
         },
       }));
 
+      if (trimmed) {
+        void extractAndSaveMemory(trimmed, updatedConv.id, provider, modelId);
+      }
       await runAssistantStream(updatedConv, nextHistory, provider, modelId);
     },
 
@@ -651,16 +1035,34 @@ export const useAppStore = create<AppState>((set, get) => {
 
       const historyBefore = msgs.slice(0, targetIdx);
       const removedIds = msgs.slice(targetIdx).map((m) => m.id);
-      await db.messages.bulkDelete(removedIds);
+      const invalidateCompaction =
+        Boolean(conv.compactedUntilMessageId) &&
+        !historyBefore.some((m) => m.id === conv.compactedUntilMessageId);
+      const nextConv: Conversation = invalidateCompaction
+        ? {
+            ...conv,
+            contextSummary: undefined,
+            compactedUntilMessageId: undefined,
+            compactedCount: undefined,
+          }
+        : conv;
+
+      await db.transaction('rw', [db.messages, db.conversations], async () => {
+        await db.messages.bulkDelete(removedIds);
+        if (invalidateCompaction) await db.conversations.put(nextConv);
+      });
 
       set((s) => ({
+        conversations: invalidateCompaction
+          ? s.conversations.map((c) => (c.id === convId ? nextConv : c))
+          : s.conversations,
         messagesByConv: {
           ...s.messagesByConv,
           [convId]: historyBefore,
         },
       }));
 
-      await runAssistantStream(conv, historyBefore, provider, modelId);
+      await runAssistantStream(nextConv, historyBefore, provider, modelId);
     },
 
     editAndResend: async (userMessageId, newText) => {
@@ -694,33 +1096,106 @@ export const useAppStore = create<AppState>((set, get) => {
         updatedAt: Date.now(),
       };
       const removedIds = msgs.slice(targetIdx + 1).map((m) => m.id);
+      const prefixBeforeEdit = msgs.slice(0, targetIdx);
+      const invalidateCompaction =
+        Boolean(conv.compactedUntilMessageId) &&
+        !prefixBeforeEdit.some((m) => m.id === conv.compactedUntilMessageId);
+      const nextConv: Conversation = invalidateCompaction
+        ? {
+            ...conv,
+            contextSummary: undefined,
+            compactedUntilMessageId: undefined,
+            compactedCount: undefined,
+          }
+        : conv;
 
-      await db.transaction('rw', [db.messages], async () => {
+      await db.transaction('rw', [db.messages, db.conversations], async () => {
         await db.messages.put(updatedUserMsg);
         if (removedIds.length > 0) await db.messages.bulkDelete(removedIds);
+        if (invalidateCompaction) await db.conversations.put(nextConv);
       });
 
-      const nextHistory = [...msgs.slice(0, targetIdx), updatedUserMsg];
+      const nextHistory = [...prefixBeforeEdit, updatedUserMsg];
       set((s) => ({
+        conversations: invalidateCompaction
+          ? s.conversations.map((c) => (c.id === convId ? nextConv : c))
+          : s.conversations,
         messagesByConv: {
           ...s.messagesByConv,
           [convId]: nextHistory,
         },
       }));
 
-      await runAssistantStream(conv, nextHistory, provider, modelId);
+      void extractAndSaveMemory(trimmed, nextConv.id, provider, modelId);
+      await runAssistantStream(nextConv, nextHistory, provider, modelId);
     },
 
     deleteMessage: async (messageId) => {
-      const convId = get().activeConversationId;
+      const state = get();
+      const convId = state.activeConversationId;
       if (!convId) return;
-      await db.messages.delete(messageId);
+      const conv = state.conversations.find((c) => c.id === convId);
+      const prevMsgs = state.messagesByConv[convId] || [];
+      const remaining = prevMsgs.filter((m) => m.id !== messageId);
+
+      let nextConv = conv;
+      let convChanged = false;
+      if (conv && conv.compactedUntilMessageId === messageId) {
+        convChanged = true;
+        const deletedIdx = prevMsgs.findIndex((m) => m.id === messageId);
+        const prevUsableBeforeBoundary = prevMsgs
+          .slice(0, Math.max(0, deletedIdx))
+          .filter((m) => m.role === 'user' || m.role === 'assistant');
+        const prevBoundary = prevUsableBeforeBoundary[prevUsableBeforeBoundary.length - 1];
+        if (prevBoundary) {
+          nextConv = {
+            ...conv,
+            compactedUntilMessageId: prevBoundary.id,
+            compactedCount: Math.max(1, (conv.compactedCount ?? 1) - 1),
+          };
+        } else {
+          nextConv = {
+            ...conv,
+            contextSummary: undefined,
+            compactedUntilMessageId: undefined,
+            compactedCount: undefined,
+          };
+        }
+      }
+
+      await db.transaction('rw', [db.messages, db.conversations], async () => {
+        await db.messages.delete(messageId);
+        if (convChanged && nextConv) await db.conversations.put(nextConv);
+      });
+
       set((s) => ({
+        conversations:
+          convChanged && nextConv
+            ? s.conversations.map((c) => (c.id === convId ? nextConv : c))
+            : s.conversations,
         messagesByConv: {
           ...s.messagesByConv,
-          [convId]: (s.messagesByConv[convId] || []).filter((m) => m.id !== messageId),
+          [convId]: remaining,
         },
       }));
+    },
+
+    compactConversation: async (conversationId) => {
+      const state = get();
+      const conv = state.conversations.find((c) => c.id === conversationId);
+      if (!conv) return { ok: false, message: '未找到对话' };
+      if (state.abortControllers[conversationId]) {
+        return { ok: false, message: '对话正在生成中，请稍候再压缩' };
+      }
+      const msgs = state.messagesByConv[conversationId] || [];
+      const { provider, modelId } = resolveValidProviderAndModel(
+        conv,
+        state.providers,
+        state.activeProviderId,
+        state.activeModelId
+      );
+      const res = await performCompaction(conv, msgs, provider, modelId);
+      return { ok: res.ok, message: res.message };
     },
 
     saveProvider: async (provider) => {
@@ -974,5 +1449,47 @@ export const useAppStore = create<AppState>((set, get) => {
       set({ modelProfileSync: next });
       return { count: rules.length };
     },
+
+    updateContextSettings: async (patch) => {
+      let next!: ContextSettings;
+      set((s) => {
+        next = { ...s.contextSettings, ...patch };
+        return { contextSettings: next };
+      });
+      await setKv(KV_KEYS.CONTEXT, next);
+    },
+
+    updateMemorySettings: async (patch) => {
+      let next!: MemorySettings;
+      set((s) => {
+        next = { ...s.memorySettings, ...patch };
+        return { memorySettings: next };
+      });
+      await setKv(KV_KEYS.MEMORY_SETTINGS, next);
+    },
+
+    saveMemoryDocument: async (markdown) => {
+      await persistMemoryEntries(parseMemoryDocument(markdown), markdown);
+    },
+
+    upsertMemoryEntry: async (entry) => {
+      const state = get();
+      const exists = state.memoryEntries.some((m) => m.id === entry.id);
+      const nextEntries = exists
+        ? state.memoryEntries.map((m) => (m.id === entry.id ? entry : m))
+        : [entry, ...state.memoryEntries];
+      await persistMemoryEntries(nextEntries);
+    },
+
+    deleteMemoryEntry: async (id) => {
+      const nextEntries = get().memoryEntries.filter((m) => m.id !== id);
+      await persistMemoryEntries(nextEntries);
+    },
+
+    clearAllMemories: async () => {
+      await persistMemoryEntries([], `${MEMORY_FILE_HEADER}\n`);
+    },
+
+    clearMemoryNotice: () => set({ memoryNotice: null }),
   };
 });

@@ -2,12 +2,16 @@ import { db, getKv, KV_KEYS, setKv } from './database';
 import type { Conversation, Message } from '@/types/chat';
 import {
   DEFAULT_APPEARANCE_SETTINGS,
+  DEFAULT_CONTEXT_SETTINGS,
   DEFAULT_GENERATION_SETTINGS,
+  DEFAULT_MEMORY_SETTINGS,
   DEFAULT_MODEL_PROFILE_SYNC_SETTINGS,
   DEFAULT_WEBDAV_SETTINGS,
   type AppBackupV1,
   type AppearanceSettings,
+  type ContextSettings,
   type GenerationSettings,
+  type MemorySettings,
   type ModelProfileSyncSettings,
   type WebDavSyncSettings,
 } from '@/types/settings';
@@ -25,6 +29,9 @@ export async function exportFullBackup(): Promise<AppBackupV1> {
     prompt,
     webdav,
     modelProfiles,
+    context,
+    memory,
+    memoryDocument,
   ] = await Promise.all([
     db.conversations.toArray(),
     db.messages.toArray(),
@@ -38,6 +45,9 @@ export async function exportFullBackup(): Promise<AppBackupV1> {
       KV_KEYS.MODEL_PROFILES,
       DEFAULT_MODEL_PROFILE_SYNC_SETTINGS
     ),
+    getKv<ContextSettings>(KV_KEYS.CONTEXT, DEFAULT_CONTEXT_SETTINGS),
+    getKv<MemorySettings>(KV_KEYS.MEMORY_SETTINGS, DEFAULT_MEMORY_SETTINGS),
+    getKv<string>(KV_KEYS.MEMORY_DOCUMENT, ''),
   ]);
 
   return {
@@ -48,12 +58,15 @@ export async function exportFullBackup(): Promise<AppBackupV1> {
     messages,
     providers,
     promptPresets,
+    memoryDocument,
     settings: {
       appearance,
       generation,
       prompt,
       webdav,
       modelProfiles,
+      context,
+      memory,
     },
   };
 }
@@ -84,6 +97,12 @@ export async function importFullBackup(
       if (data.providers?.length) await db.providers.bulkPut(data.providers);
       if (data.promptPresets?.length) await db.promptPresets.bulkPut(data.promptPresets);
 
+      if (typeof data.memoryDocument === 'string') {
+        if (mode === 'replace' || data.memoryDocument.trim()) {
+          await setKv(KV_KEYS.MEMORY_DOCUMENT, data.memoryDocument);
+        }
+      }
+
       if (data.settings) {
         if (data.settings.appearance) await setKv(KV_KEYS.APPEARANCE, data.settings.appearance);
         if (data.settings.generation) await setKv(KV_KEYS.GENERATION, data.settings.generation);
@@ -99,6 +118,12 @@ export async function importFullBackup(
         }
         if (data.settings.modelProfiles) {
           await setKv(KV_KEYS.MODEL_PROFILES, data.settings.modelProfiles);
+        }
+        if (data.settings.context) {
+          await setKv(KV_KEYS.CONTEXT, data.settings.context);
+        }
+        if (data.settings.memory) {
+          await setKv(KV_KEYS.MEMORY_SETTINGS, data.settings.memory);
         }
       }
 

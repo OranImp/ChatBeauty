@@ -31,7 +31,7 @@ export const AboutTab: React.FC<AboutTabProps> = ({ onOpenDemo }) => {
         <SettingsRow
           icon={<Info className="w-4 h-4" />}
           title="当前版本"
-          trailing={<span className="font-mono text-xs text-muted">v0.4.2</span>}
+          trailing={<span className="font-mono text-xs text-muted">v0.5.0</span>}
         />
         <SettingsRow
           icon={<FileText className="w-4 h-4" />}

@@ -67,6 +67,9 @@ export interface Conversation {
   systemPromptPresetId?: string;
   customSystemPrompt?: string;
   enableRenderPrompt?: boolean;
+  contextSummary?: string;
+  compactedUntilMessageId?: string;
+  compactedCount?: number;
   isDemo?: boolean;
 }
 

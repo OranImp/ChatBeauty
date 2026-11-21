@@ -55,5 +55,9 @@ contextBridge.exposeInMainWorld('electronBridge', {
     return () => ipcRenderer.removeListener('app:paste-clipboard-image', handler);
   },
 
+  readMemoryFile: () => ipcRenderer.invoke('memory:read-file'),
+
+  writeMemoryFile: (content: string) => ipcRenderer.invoke('memory:write-file', content),
+
   quitApp: () => ipcRenderer.invoke('app:quit'),
 });

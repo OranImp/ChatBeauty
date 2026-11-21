@@ -37,12 +37,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
     appearance,
     abortControllers,
     streamingByConv,
+    compactingByConv,
+    memoryNotice,
     sendMessage,
     stopStreaming,
     regenerateMessage,
     editAndResend,
     deleteMessage,
     updateAppearance,
+    clearMemoryNotice,
   } = useAppStore();
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -183,6 +186,38 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
         </div>
       )}
 
+      {memoryNotice && (
+        <div className="cb-panel-enter mx-4 mt-2 px-3.5 py-2 rounded-xl border border-accent/35 bg-accent/10 text-xs text-fg flex items-center justify-between gap-2">
+          <span>{memoryNotice}</span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                clearMemoryNotice();
+                onOpenSettings('memory');
+              }}
+              className="text-accent font-medium underline"
+            >
+              管理记忆
+            </button>
+            <button
+              type="button"
+              onClick={clearMemoryNotice}
+              className="text-muted hover:text-fg"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activeConv && compactingByConv[activeConv.id] && (
+        <div className="cb-panel-enter mx-4 mt-2 px-3.5 py-2 rounded-xl border border-borderc bg-surface/90 text-xs text-muted flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-accent animate-pulse shrink-0" />
+          <span>正在自动摘要并压缩较早对话上下文，界面历史将完整保留…</span>
+        </div>
+      )}
+
       {errorBanner && (
         <div className="cb-panel-enter mx-4 mt-2 px-3.5 py-2 rounded-xl border border-amber-500/35 bg-amber-500/10 text-xs text-amber-200 flex items-center justify-between gap-2">
           <span>{errorBanner}</span>
@@ -253,32 +288,42 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
               </div>
             ) : (
               messages.map((msg) => (
-                <MessageItem
-                  key={msg.id}
-                  message={msg}
-                  theme={theme}
-                  appearance={appearance}
-                  onInspect={onInspect}
-                  onRegenerate={(id) =>
-                    void regenerateMessage(id).catch((e) => {
-                      if (e instanceof Error && e.message === 'NO_PROVIDER_CONFIGURED') {
-                        onOpenSettings('providers');
-                      } else if (e instanceof Error) {
-                        setErrorBanner(e.message);
-                      }
-                    })
-                  }
-                  onEditResend={(id, newText) =>
-                    void editAndResend(id, newText).catch((e) => {
-                      if (e instanceof Error && e.message === 'NO_PROVIDER_CONFIGURED') {
-                        onOpenSettings('providers');
-                      } else if (e instanceof Error) {
-                        setErrorBanner(e.message);
-                      }
-                    })
-                  }
-                  onDelete={(id) => void deleteMessage(id)}
-                />
+                <React.Fragment key={msg.id}>
+                  <MessageItem
+                    message={msg}
+                    theme={theme}
+                    appearance={appearance}
+                    onInspect={onInspect}
+                    onRegenerate={(id) =>
+                      void regenerateMessage(id).catch((e) => {
+                        if (e instanceof Error && e.message === 'NO_PROVIDER_CONFIGURED') {
+                          onOpenSettings('providers');
+                        } else if (e instanceof Error) {
+                          setErrorBanner(e.message);
+                        }
+                      })
+                    }
+                    onEditResend={(id, newText) =>
+                      void editAndResend(id, newText).catch((e) => {
+                        if (e instanceof Error && e.message === 'NO_PROVIDER_CONFIGURED') {
+                          onOpenSettings('providers');
+                        } else if (e instanceof Error) {
+                          setErrorBanner(e.message);
+                        }
+                      })
+                    }
+                    onDelete={(id) => void deleteMessage(id)}
+                  />
+                  {activeConv?.compactedUntilMessageId === msg.id && (
+                    <div className="my-4 flex items-center gap-3 text-[11px] text-muted/85 select-none">
+                      <div className="flex-1 h-px bg-borderc/70" />
+                      <span className="px-2.5 py-1 rounded-full bg-surface/80 border border-borderc/70 font-mono text-center">
+                        以上 {activeConv.compactedCount ?? '较早'} 条消息已自动压缩为上下文摘要（界面保留完整历史）
+                      </span>
+                      <div className="flex-1 h-px bg-borderc/70" />
+                    </div>
+                  )}
+                </React.Fragment>
               ))
             )}
           </div>

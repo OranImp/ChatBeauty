@@ -141,7 +141,7 @@ export const SettingsNavRow: React.FC<SettingsNavRowProps> = ({
       </div>
       <div className="flex items-center gap-1.5 shrink-0 min-w-0">
         {value !== undefined && value !== null && value !== '' && (
-          <span className="text-xs text-muted truncate max-w-[120px] sm:max-w-[180px]">
+          <span className="text-xs text-muted truncate max-w-[100px] sm:max-w-[180px]">
             {value}
           </span>
         )}

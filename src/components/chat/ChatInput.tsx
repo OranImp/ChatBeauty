@@ -1,9 +1,12 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUp,
+  Brain,
   ChevronDown,
   ImagePlus,
+  Loader2,
   Mic,
+  Minimize2,
   Plus,
   RotateCcw,
   SlidersHorizontal,
@@ -22,6 +25,9 @@ import type { LightboxPayload } from '@/components/renderer/LightboxModal';
 import type { CustomModelParams } from '@/types/chat';
 import { DEFAULT_GENERATION_SETTINGS } from '@/types/settings';
 import { PROTOCOL_TEMPLATES } from '@/services/llm/registry';
+import { computeContextUsageStats, selectActiveHistoryMessages } from '@/services/llm/contextManager';
+import { formatMemoriesForPrompt, retrieveRelevantMemories } from '@/services/memory/memoryEngine';
+import { composeSystemPrompt } from '@/services/prompts/presets';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { SmoothSlider } from '@/components/ui/SmoothSlider';
 import type { SettingsTabKey } from '@/components/settings/SettingsModal';
@@ -40,7 +46,13 @@ interface ChatInputProps {
   onInspect?: (payload: LightboxPayload) => void;
 }
 
-type ComposerMenu = 'plus' | 'model' | 'reasoning' | 'params';
+type ComposerMenu = 'plus' | 'model' | 'reasoning' | 'params' | 'context';
+
+function formatCompactTokens(tokens: number): string {
+  if (tokens >= 100000) return `${Math.round(tokens / 1000)}K`;
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
+  return String(tokens);
+}
 
 const SOURCE_LABELS: Record<ProfileMatchSource, string> = {
   'model-override': '模型自定义',
@@ -60,17 +72,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const {
     appearance,
     conversations,
+    messagesByConv,
     activeConversationId,
     providers,
     activeProviderId,
     activeModelId,
     generation,
+    contextSettings,
+    memorySettings,
+    memoryEntries,
+    compactingByConv,
     promptPresets,
     promptSettings,
     modelProfileSync,
     updateConversationConfig,
     setActiveProviderModel,
     updateGeneration,
+    compactConversation,
   } = useAppStore();
 
   const [text, setText] = useState('');
@@ -81,9 +99,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [renderedMenu, setRenderedMenu] = useState<ComposerMenu | null>(null);
   const [reservedHint, setReservedHint] = useState<string | null>(null);
   const [renderedHint, setRenderedHint] = useState<string | null>(null);
+  const [compactFeedback, setCompactFeedback] = useState<{ ok: boolean; text: string } | null>(null);
   const [extraJsonText, setExtraJsonText] = useState('{}');
   const [extraJsonError, setExtraJsonError] = useState<string | null>(null);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const switchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingMenuRef = useRef<ComposerMenu | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -97,18 +118,36 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     setRenderedHint(reservedHint);
   }
 
+  const closeAllMenus = () => {
+    if (switchTimerRef.current) {
+      clearTimeout(switchTimerRef.current);
+      switchTimerRef.current = null;
+    }
+    pendingMenuRef.current = null;
+    setActiveMenu(null);
+  };
+
   useEffect(() => {
     if (!activeMenu) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setActiveMenu(null);
+      if (e.key === 'Escape') closeAllMenus();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [activeMenu]);
 
   useEffect(() => {
+    const onExternalOverlay = (e: Event) => {
+      const detail = (e as CustomEvent<{ source?: string }>).detail;
+      if (detail?.source !== 'composer') {
+        closeAllMenus();
+      }
+    };
+    window.addEventListener('cb:overlay-open', onExternalOverlay);
     return () => {
+      window.removeEventListener('cb:overlay-open', onExternalOverlay);
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+      if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
     };
   }, []);
 
@@ -163,8 +202,41 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   const toggleMenu = (target: ComposerMenu) => {
-    setRenderedMenu(target);
-    setActiveMenu((m) => (m === target ? null : target));
+    setCompactFeedback(null);
+    if (activeMenu === target && !pendingMenuRef.current) {
+      closeAllMenus();
+      return;
+    }
+
+    if (switchTimerRef.current) {
+      clearTimeout(switchTimerRef.current);
+      switchTimerRef.current = null;
+    }
+
+    if (activeMenu === null) {
+      pendingMenuRef.current = null;
+      setRenderedMenu(target);
+      setActiveMenu(target);
+      window.dispatchEvent(new CustomEvent('cb:overlay-open', { detail: { source: 'composer' } }));
+      return;
+    }
+
+    // Sequential switch: collapse current popover first, then expand the newly selected one
+    pendingMenuRef.current = target;
+    setActiveMenu(null);
+    const reduced =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    switchTimerRef.current = setTimeout(() => {
+      switchTimerRef.current = null;
+      const next = pendingMenuRef.current;
+      pendingMenuRef.current = null;
+      if (!next) return;
+      setRenderedMenu(next);
+      setActiveMenu(next);
+      window.dispatchEvent(new CustomEvent('cb:overlay-open', { detail: { source: 'composer' } }));
+    }, reduced ? 0 : 145);
   };
 
   const patchConvParams = (patch: Partial<CustomModelParams>) => {
@@ -284,6 +356,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   }, []);
 
   const handleSubmit = () => {
+    closeAllMenus();
     if (isStreaming) {
       onStop();
       return;
@@ -342,17 +415,82 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       reasoningProfile.supportsSamplingWhenThinking === false) ||
     (effectiveReasoning === 'off' && reasoningProfile.supportsSamplingWhenOff === false);
 
+  const convMessages = activeConv ? messagesByConv[activeConv.id] || [] : [];
+  const activePresetObj = promptPresets.find((p) => p.id === activePresetId);
+  const systemPromptBase = useMemo(
+    () =>
+      composeSystemPrompt({
+        presetContent: activePresetObj?.content,
+        customSystemPrompt: activeConv?.customSystemPrompt,
+        renderEnabled,
+        renderPrompt: promptSettings.renderEnhancementPrompt,
+      }),
+    [
+      activePresetObj?.content,
+      activeConv?.customSystemPrompt,
+      renderEnabled,
+      promptSettings.renderEnhancementPrompt,
+    ]
+  );
+
+  const relevantMemories = useMemo(
+    () => retrieveRelevantMemories(memoryEntries, text, convMessages, memorySettings),
+    [memoryEntries, text, convMessages, memorySettings]
+  );
+  const retrievedMemoriesText = useMemo(
+    () => formatMemoriesForPrompt(relevantMemories),
+    [relevantMemories]
+  );
+
+  const contextStats = useMemo(
+    () =>
+      computeContextUsageStats({
+        messages: convMessages,
+        compactedUntilMessageId: activeConv?.compactedUntilMessageId,
+        contextSummary: activeConv?.contextSummary,
+        systemPromptBase,
+        retrievedMemoriesText,
+        draftText: text,
+        draftImageCount: attachedImages.length,
+        modelId: currentModelId,
+        modelDef: currentModelDef,
+        contextSettings,
+        maxContextMessages: generation.maxContextMessages,
+      }),
+    [
+      convMessages,
+      activeConv?.compactedUntilMessageId,
+      activeConv?.contextSummary,
+      systemPromptBase,
+      retrievedMemoriesText,
+      text,
+      attachedImages.length,
+      currentModelId,
+      currentModelDef,
+      contextSettings,
+      generation.maxContextMessages,
+    ]
+  );
+
+  const activeWindowMessagesCount = useMemo(
+    () => selectActiveHistoryMessages(convMessages, activeConv?.compactedUntilMessageId).length,
+    [convMessages, activeConv?.compactedUntilMessageId]
+  );
+  const isCompacting = Boolean(activeConv && compactingByConv[activeConv.id]);
+
   const popoverPanelWidth =
     renderedMenu === 'model' || renderedMenu === 'params'
-      ? 'left-0 w-72 sm:w-80 max-w-[calc(100vw-24px)]'
+      ? 'left-0 w-72 sm:w-80 max-w-[calc(100vw-24px)] origin-bottom-left'
       : renderedMenu === 'reasoning'
-        ? 'left-0 sm:left-24 w-72 max-w-[calc(100vw-24px)]'
-        : 'left-0 w-72 max-w-[calc(100vw-24px)]';
+        ? 'left-0 sm:left-24 w-72 max-w-[calc(100vw-24px)] origin-bottom-left'
+        : renderedMenu === 'context'
+          ? 'right-0 w-72 sm:w-80 max-w-[calc(100vw-24px)] origin-bottom-right'
+          : 'left-0 w-72 max-w-[calc(100vw-24px)] origin-bottom-left';
 
   let modelRowIdx = 0;
 
   return (
-    <div className="relative z-20 px-3 sm:px-6 pt-1 pb-2 safe-bottom shrink-0">
+    <div className="relative z-20 px-2 sm:px-6 pt-1 pb-2 safe-bottom shrink-0">
       <div className="mx-auto relative" style={{ maxWidth: 'var(--chat-max-width)' }}>
         {hintPresence.mounted && renderedHint && (
           <div className="absolute -top-11 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
@@ -367,19 +505,20 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         )}
 
         {activeMenu && (
-          <div className="fixed inset-0 z-20" onClick={() => setActiveMenu(null)} />
+          <div className="fixed inset-0 z-20" onClick={() => closeAllMenus()} />
         )}
 
-        {/* Animated Popover Menu (Plus / Model / Reasoning / Custom Params) */}
+        {/* Animated Popover Menu (Plus / Model / Reasoning / Custom Params / Context) */}
         {menuPresence.mounted && renderedMenu && (
           <div
-            className={`absolute ${popoverPanelWidth} bottom-full mb-2 z-40 rounded-2xl border border-borderc bg-elevated/95 backdrop-blur-xl shadow-2xl text-xs origin-bottom-left ${
+            key={renderedMenu}
+            className={`absolute ${popoverPanelWidth} bottom-full mb-2 z-40 rounded-2xl border border-borderc bg-elevated/95 backdrop-blur-xl shadow-2xl text-xs ${
               menuPresence.state === 'open'
                 ? 'cb-popover-in'
                 : 'cb-popover-out pointer-events-none'
             }`}
           >
-            <div key={renderedMenu} className="cb-panel-enter">
+            <div>
             {renderedMenu === 'plus' && (
               <div className="p-3 space-y-3">
                 <div className="flex items-center justify-between">
@@ -752,6 +891,132 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 </div>
               </div>
             )}
+
+            {renderedMenu === 'context' && (
+              <div className="p-3.5 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-fg">上下文占用统计</span>
+                  <span
+                    className={`font-mono text-[11px] px-2 py-0.5 rounded-full ${
+                      contextStats.ratio >= contextStats.threshold
+                        ? 'bg-rose-500/15 text-rose-400'
+                        : contextStats.ratio >= 0.6
+                          ? 'bg-amber-500/15 text-amber-300'
+                          : 'bg-surface text-muted'
+                    }`}
+                  >
+                    {contextStats.percent}%
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="h-2 rounded-full bg-surface border border-borderc overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        contextStats.ratio >= contextStats.threshold
+                          ? 'bg-rose-500'
+                          : contextStats.ratio >= 0.6
+                            ? 'bg-amber-400'
+                            : 'bg-accent'
+                      }`}
+                      style={{ width: `${Math.min(100, Math.max(2, contextStats.percent))}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] font-mono text-muted">
+                    <span>
+                      {contextStats.usedTokens.toLocaleString()} /{' '}
+                      {contextStats.maxTokens.toLocaleString()} tok
+                    </span>
+                    <span>
+                      {contextSettings.autoCompactEnabled
+                        ? `阈值 ${Math.round(contextStats.threshold * 100)}%`
+                        : '自动压缩关'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 pt-2 border-t border-borderc text-[11.5px]">
+                  <div className="flex items-center justify-between text-muted">
+                    <span>系统提示词</span>
+                    <span className="font-mono tabular-nums text-fg">
+                      {contextStats.systemTokens.toLocaleString()} tok
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-muted">
+                    <span>按需记忆注入（{relevantMemories.length} 条）</span>
+                    <span className="font-mono tabular-nums text-fg">
+                      {contextStats.memoryTokens.toLocaleString()} tok
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-muted">
+                    <span>早期摘要（已压缩 {contextStats.compactedMessageCount} 条）</span>
+                    <span className="font-mono tabular-nums text-fg">
+                      {contextStats.summaryTokens.toLocaleString()} tok
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-muted">
+                    <span>活跃对话（{contextStats.activeMessageCount} 条）</span>
+                    <span className="font-mono tabular-nums text-fg">
+                      {contextStats.historyTokens.toLocaleString()} tok
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-muted">
+                    <span>当前输入草稿</span>
+                    <span className="font-mono tabular-nums text-fg">
+                      {contextStats.draftTokens.toLocaleString()} tok
+                    </span>
+                  </div>
+                </div>
+
+                {compactFeedback && (
+                  <div
+                    className={`px-2.5 py-1.5 rounded-xl border text-[11px] ${
+                      compactFeedback.ok
+                        ? 'border-borderc bg-surface text-fg'
+                        : 'border-amber-500/35 bg-amber-500/10 text-amber-300'
+                    }`}
+                  >
+                    {compactFeedback.text}
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={
+                      !activeConv ||
+                      isStreaming ||
+                      isCompacting ||
+                      activeWindowMessagesCount <= contextSettings.keepRecentMessages
+                    }
+                    onClick={() => {
+                      if (!activeConv) return;
+                      void compactConversation(activeConv.id).then((res) =>
+                        setCompactFeedback({ ok: res.ok, text: res.message })
+                      );
+                    }}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-borderc bg-surface hover:bg-bg text-fg disabled:opacity-45 disabled:cursor-not-allowed transition"
+                  >
+                    {isCompacting ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Minimize2 className="w-3.5 h-3.5" />
+                    )}
+                    <span>{isCompacting ? '压缩中…' : '立即压缩'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeAllMenus();
+                      onOpenSettings('generation');
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-accent/15 text-accent font-medium hover:bg-accent/25 transition"
+                  >
+                    压缩设置
+                  </button>
+                </div>
+              </div>
+            )}
             </div>
           </div>
         )}
@@ -772,7 +1037,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               void addImageFiles(e.dataTransfer.files);
             }
           }}
-          className={`relative z-30 rounded-[24px] border bg-surface/95 backdrop-blur-xl px-3.5 pt-3 pb-2.5 shadow-[0_8px_30px_rgba(0,0,0,0.32)] transition-colors ${
+          className={`relative z-30 rounded-[24px] border bg-surface/95 backdrop-blur-xl px-2.5 sm:px-3.5 pt-3 pb-2.5 shadow-[0_8px_30px_rgba(0,0,0,0.32)] transition-colors ${
             isDragOver
               ? 'border-accent ring-2 ring-accent/25'
               : 'border-borderc focus-within:border-fg/25'
@@ -885,13 +1150,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             className="w-full bg-transparent text-[15px] text-fg placeholder:text-muted/80 px-1 resize-none focus:outline-none max-h-[160px] leading-relaxed no-scrollbar"
           />
 
-          <div className="flex items-center justify-between gap-1.5 sm:gap-2 mt-2 pt-1">
+          <div className="flex items-center justify-between gap-1 sm:gap-2 mt-2 pt-1 min-w-0">
             {/* Left controls: +, Upload Image, Monospace Model Pill, Dynamic Reasoning Pill, Custom Params Pill */}
-            <div className="flex items-center gap-1 sm:gap-1.5 flex-1 min-w-0">
+            <div className="flex items-center gap-1 sm:gap-1.5 flex-1 min-w-0 overflow-x-auto no-scrollbar">
               <button
                 type="button"
                 onClick={() => toggleMenu('plus')}
-                className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center hover:text-fg hover:bg-fg/10 active:scale-95 shrink-0 transition ${
+                className={`w-[28px] h-[28px] sm:w-8 sm:h-8 rounded-full flex items-center justify-center hover:text-fg hover:bg-fg/10 active:scale-95 shrink-0 transition ${
                   activeMenu === 'plus' ? 'bg-fg/10 text-fg' : 'text-muted'
                 }`}
                 aria-label="更多能力与提示词"
@@ -907,7 +1172,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="relative w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-muted hover:text-fg hover:bg-fg/10 active:scale-95 shrink-0 transition"
+                className="relative w-[28px] h-[28px] sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-muted hover:text-fg hover:bg-fg/10 active:scale-95 shrink-0 transition"
                 title="上传图片（支持拖拽与 Ctrl+V 粘贴）"
                 aria-label="上传图片"
               >
@@ -922,7 +1187,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => toggleMenu('model')}
-                className={`flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full border bg-bg/55 hover:bg-elevated active:scale-95 text-xs font-mono text-fg min-w-[76px] max-w-[140px] sm:max-w-[185px] lg:max-w-[220px] transition ${
+                className={`flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 py-1 rounded-full border bg-bg/55 hover:bg-elevated active:scale-95 text-[11px] sm:text-xs font-mono text-fg min-w-0 max-w-[72px] sm:max-w-[185px] lg:max-w-[220px] shrink-0 transition ${
                   activeMenu === 'model' ? 'border-fg/30 bg-elevated' : 'border-borderc'
                 }`}
                 title="切换模型"
@@ -939,7 +1204,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => toggleMenu('reasoning')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-full border bg-bg/55 hover:bg-elevated active:scale-95 text-xs shrink-0 transition ${
+                className={`flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 py-1 rounded-full border bg-bg/55 hover:bg-elevated active:scale-95 text-[11px] sm:text-xs shrink-0 transition ${
                   activeMenu === 'reasoning'
                     ? 'border-fg/30 bg-elevated text-fg'
                     : 'border-borderc text-muted hover:text-fg'
@@ -953,7 +1218,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   <span>内置推理</span>
                 ) : (
                   <>
-                    <span>推理</span>
+                    <Brain className="w-3 h-3 sm:hidden shrink-0" />
+                    <span className="hidden sm:inline">推理</span>
                     <span className="font-mono text-fg/90">
                       {activeLevel?.label ?? effectiveReasoning}
                     </span>
@@ -969,7 +1235,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => toggleMenu('params')}
-                className={`relative w-7 h-7 rounded-full border flex items-center justify-center active:scale-95 shrink-0 transition ${
+                className={`relative w-[28px] h-[28px] sm:w-7 sm:h-7 rounded-full border flex items-center justify-center active:scale-95 shrink-0 transition ${
                   activeMenu === 'params'
                     ? 'border-fg/30 bg-elevated text-fg'
                     : 'border-borderc bg-bg/55 hover:bg-elevated text-muted hover:text-fg'
@@ -985,8 +1251,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               </button>
             </div>
 
-            {/* Right controls: Shortcut hint + Reserved Mic + Accent Send/Stop */}
-            <div className="flex items-center gap-1.5 shrink-0">
+            {/* Right controls: Shortcut hint + Reserved Mic + Context Ring + Accent Send/Stop */}
+            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
               {appearance.sendOnEnter && (
                 <span className="hidden lg:inline text-[11px] font-mono text-muted/60 pr-1 select-none">
                   Enter 发送
@@ -1001,11 +1267,68 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 <Mic className="w-[17px] h-[17px]" />
               </button>
 
+              {(() => {
+                const radius = 10;
+                const circumference = 2 * Math.PI * radius;
+                const offset = circumference * (1 - Math.min(1, Math.max(0, contextStats.ratio)));
+                const ringColor =
+                  contextStats.ratio >= contextStats.threshold
+                    ? 'text-rose-400'
+                    : contextStats.ratio >= 0.6
+                      ? 'text-amber-400'
+                      : 'text-fg/80';
+                return (
+                  <button
+                    type="button"
+                    onClick={() => toggleMenu('context')}
+                    className={`relative w-[28px] h-[28px] sm:w-8 sm:h-8 rounded-full flex items-center justify-center active:scale-95 transition shrink-0 ${
+                      activeMenu === 'context'
+                        ? 'bg-elevated ring-1 ring-borderc'
+                        : 'hover:bg-fg/10'
+                    }`}
+                    title={`上下文占用 ${contextStats.percent}% (${formatCompactTokens(contextStats.usedTokens)} / ${formatCompactTokens(contextStats.maxTokens)})`}
+                    aria-label="上下文占用情况"
+                    aria-expanded={activeMenu === 'context'}
+                  >
+                    {isCompacting ? (
+                      <Loader2 className="w-4 h-4 text-accent animate-spin" />
+                    ) : (
+                      <svg
+                        viewBox="0 0 28 28"
+                        className={`w-[22px] h-[22px] sm:w-[24px] sm:h-[24px] -rotate-90 ${ringColor}`}
+                        aria-hidden="true"
+                      >
+                        <circle
+                          cx="14"
+                          cy="14"
+                          r={radius}
+                          fill="none"
+                          stroke="currentColor"
+                          strokeOpacity="0.16"
+                          strokeWidth="2.6"
+                        />
+                        <circle
+                          cx="14"
+                          cy="14"
+                          r={radius}
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.6"
+                          strokeLinecap="round"
+                          strokeDasharray={circumference}
+                          strokeDashoffset={offset}
+                        />
+                      </svg>
+                    )}
+                  </button>
+                );
+              })()}
+
               <button
                 type="button"
                 onClick={handleSubmit}
                 disabled={!isStreaming && !text.trim() && attachedImages.length === 0}
-                className={`w-8 h-8 rounded-full flex items-center justify-center transition ${
+                className={`w-[32px] h-[32px] sm:w-8 sm:h-8 rounded-full flex items-center justify-center transition ${
                   isStreaming || text.trim() || attachedImages.length > 0
                     ? 'bg-accent text-accentfg active:scale-95'
                     : 'bg-fg/10 text-muted cursor-not-allowed'

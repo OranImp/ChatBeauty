@@ -37,6 +37,17 @@ export const TopBar: React.FC<TopBarProps> = ({
   const morePresence = usePresence(moreMenuOpen, 170);
 
   useEffect(() => {
+    const onOverlayOpen = (e: Event) => {
+      const source = (e as CustomEvent<string>).detail;
+      if (source !== 'topbar-more') {
+        setMoreMenuOpen(false);
+      }
+    };
+    window.addEventListener('cb:overlay-open', onOverlayOpen);
+    return () => window.removeEventListener('cb:overlay-open', onOverlayOpen);
+  }, []);
+
+  useEffect(() => {
     if (!moreMenuOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setMoreMenuOpen(false);
@@ -100,7 +111,15 @@ export const TopBar: React.FC<TopBarProps> = ({
           <div className="w-px h-4 bg-borderc" />
           <button
             type="button"
-            onClick={() => setMoreMenuOpen((v) => !v)}
+            onClick={() =>
+              setMoreMenuOpen((v) => {
+                const next = !v;
+                if (next) {
+                  window.dispatchEvent(new CustomEvent('cb:overlay-open', { detail: 'topbar-more' }));
+                }
+                return next;
+              })
+            }
             className="w-10 h-10 flex items-center justify-center text-fg active:bg-white/10 transition"
             aria-label="更多操作"
           >

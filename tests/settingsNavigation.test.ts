@@ -2,7 +2,13 @@
 import { act, createElement, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_APPEARANCE_SETTINGS, DEFAULT_GENERATION_SETTINGS } from '@/types/settings';
+import {
+  DEFAULT_APPEARANCE_SETTINGS,
+  DEFAULT_CONTEXT_SETTINGS,
+  DEFAULT_GENERATION_SETTINGS,
+  DEFAULT_MEMORY_SETTINGS,
+} from '@/types/settings';
+import { MEMORY_FILE_HEADER } from '@/services/memory/memoryEngine';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -54,6 +60,12 @@ const mockStore = {
     renderEnhancementPrompt: 'DEFAULT_ENHANCE_PROMPT',
   },
   appearance: DEFAULT_APPEARANCE_SETTINGS,
+  contextSettings: DEFAULT_CONTEXT_SETTINGS,
+  memorySettings: DEFAULT_MEMORY_SETTINGS,
+  memoryDocument: MEMORY_FILE_HEADER,
+  memoryEntries: [],
+  compactingByConv: {},
+  memoryNotice: null,
   webdav: {
     enabled: false,
     endpoint: '',
@@ -70,9 +82,17 @@ const mockStore = {
   fetchProviderModels: vi.fn(async () => []),
   testProviderConnection: vi.fn(async () => ({ ok: true, message: 'ok' })),
   updateGeneration: vi.fn(async () => undefined),
+  updateContextSettings: vi.fn(async () => undefined),
   updateModelProfileSync: vi.fn(async () => undefined),
   syncRemoteModelProfiles: vi.fn(async () => ({ ok: true, message: 'ok', count: 0 })),
   saveCustomModelProfileRules: vi.fn(async () => undefined),
+  updateMemorySettings: vi.fn(async () => undefined),
+  saveMemoryDocument: vi.fn(async () => undefined),
+  upsertMemoryEntry: vi.fn(async () => undefined),
+  deleteMemoryEntry: vi.fn(async () => undefined),
+  clearAllMemories: vi.fn(async () => undefined),
+  clearMemoryNotice: vi.fn(),
+  compactConversation: vi.fn(async () => ({ ok: true, message: 'ok' })),
   savePromptPreset: vi.fn(async () => undefined),
   deletePromptPreset: vi.fn(async () => undefined),
   resetBuiltinPreset: vi.fn(async () => undefined),
@@ -134,7 +154,7 @@ describe('Settings two-level ChatGPT navigation', () => {
     container.remove();
   });
 
-  it('renders 3 grouped categories and all 7 Level-1 entries on Desktop', () => {
+  it('renders full-screen settings with 3 grouped categories and all 8 Level-1 entries on Desktop', () => {
     setViewportWidth(1280);
     const onTabChange = vi.fn();
 
@@ -149,13 +169,18 @@ describe('Settings two-level ChatGPT navigation', () => {
       );
     });
 
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog?.className).toContain('fixed inset-0');
+    expect(container.querySelector('button[aria-label="返回对话"]')).not.toBeNull();
+
     const text = container.textContent || '';
     for (const group of ['模型与对话', '通用与外观', '数据与关于']) {
       expect(text).toContain(group);
     }
     for (const item of [
       '模型供应商',
-      '采样与推理规则',
+      '采样与上下文',
+      '记忆库',
       '个性化与提示词',
       '通用与外观',
       '排版与进阶样式',
@@ -164,6 +189,41 @@ describe('Settings two-level ChatGPT navigation', () => {
     ]) {
       expect(text).toContain(item);
     }
+  });
+
+  it('navigates into 采样与上下文 (10 keep-recent default) and 记忆库 cleanly on Desktop', () => {
+    setViewportWidth(1280);
+
+    function ControlledDesktopModal() {
+      const [tab, setTab] = useState<SettingsTabKey>('generation');
+      return createElement(SettingsModal, {
+        open: true,
+        activeTab: tab,
+        onTabChange: setTab,
+        onClose: vi.fn(),
+      });
+    }
+
+    act(() => {
+      root.render(createElement(ControlledDesktopModal));
+    });
+
+    expect(container.textContent).toContain('上下文统计与自动压缩');
+    expect(container.textContent).toContain('10 条');
+    expect(container.textContent).toContain('80%');
+
+    const memBtn = Array.from(container.querySelectorAll('nav button')).find((b) =>
+      b.textContent?.includes('记忆库')
+    ) as HTMLButtonElement | undefined;
+    expect(memBtn).toBeDefined();
+
+    act(() => {
+      memBtn!.click();
+    });
+
+    expect(container.textContent).toContain('启用记忆库');
+    expect(container.textContent).toContain('允许记录敏感信息');
+    expect(container.textContent).toContain('单文件源码');
   });
 
   it('opens Level-1 menu on mobile when initialMobileRoot=true, drills into Level-2, and navigates back cleanly', () => {

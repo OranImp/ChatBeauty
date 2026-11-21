@@ -1,0 +1,150 @@
+import { describe, expect, it } from 'vitest';
+import {
+  buildCompactionPrompt,
+  buildFallbackLocalSummary,
+  computeContextUsageStats,
+  estimateTokens,
+  inferModelContextWindow,
+  selectActiveHistoryMessages,
+} from '@/services/llm/contextManager';
+import { DEFAULT_CONTEXT_SETTINGS } from '@/types/settings';
+import type { Message } from '@/types/chat';
+
+function makeMsg(
+  id: string,
+  role: 'user' | 'assistant',
+  text: string,
+  usage?: Message['usage']
+): Message {
+  return {
+    id,
+    conversationId: 'conv_1',
+    role,
+    parts: [{ type: 'text', text }],
+    createdAt: 1000,
+    updatedAt: 1000,
+    status: 'done',
+    usage,
+  };
+}
+
+describe('contextManager — token accounting & auto-compaction', () => {
+  it('defaults keepRecentMessages to 10 and autoCompactThreshold to 80%', () => {
+    expect(DEFAULT_CONTEXT_SETTINGS.autoCompactEnabled).toBe(true);
+    expect(DEFAULT_CONTEXT_SETTINGS.autoCompactThreshold).toBe(0.8);
+    expect(DEFAULT_CONTEXT_SETTINGS.keepRecentMessages).toBe(10);
+  });
+
+  it('infers model context windows accurately with override priority', () => {
+    expect(inferModelContextWindow('gemini-2.5-pro')).toBe(1_000_000);
+    expect(inferModelContextWindow('claude-sonnet-4-5')).toBe(200_000);
+    expect(inferModelContextWindow('gpt-5.2')).toBe(256_000);
+    expect(inferModelContextWindow('deepseek-chat')).toBe(128_000);
+    expect(
+      inferModelContextWindow('custom-model', {
+        id: 'custom-model',
+        name: 'custom-model',
+        capabilities: { chat: true },
+        contextLength: 65536,
+      })
+    ).toBe(65536);
+    expect(
+      inferModelContextWindow('gemini-2.5-pro', undefined, {
+        customMaxContextTokens: 32000,
+        defaultContextWindow: 128000,
+      })
+    ).toBe(32000);
+  });
+
+  it('slices active history strictly after compactedUntilMessageId while preserving full array', () => {
+    const msgs = Array.from({ length: 14 }, (_, i) =>
+      makeMsg(`m${i + 1}`, i % 2 === 0 ? 'user' : 'assistant', `第 ${i + 1} 条测试对话内容`)
+    );
+    expect(selectActiveHistoryMessages(msgs).length).toBe(14);
+    const active = selectActiveHistoryMessages(msgs, 'm4');
+    expect(active.length).toBe(10);
+    expect(active[0].id).toBe('m5');
+    expect(active[active.length - 1].id).toBe('m14');
+  });
+
+  it('triggers willAutoCompact when occupancy exceeds threshold and active messages > keepRecentMessages', () => {
+    const msgs = Array.from({ length: 12 }, (_, i) =>
+      makeMsg(`m${i + 1}`, i % 2 === 0 ? 'user' : 'assistant', '这是一段较长的连续推演上下文。'.repeat(40))
+    );
+
+    const stats = computeContextUsageStats({
+      messages: msgs,
+      systemPromptBase: 'System base prompt',
+      retrievedMemoriesText: '- [画像] 化学工程学生',
+      draftText: '请继续补充机理分析',
+      modelId: 'gpt-4o',
+      contextSettings: {
+        ...DEFAULT_CONTEXT_SETTINGS,
+        customMaxContextTokens: 2048,
+        autoCompactThreshold: 0.8,
+        keepRecentMessages: 10,
+      },
+      maxContextMessages: 32,
+    });
+
+    expect(stats.ratio).toBeGreaterThanOrEqual(0.8);
+    expect(stats.willAutoCompact).toBe(true);
+    expect(stats.activeMessageCount).toBe(12);
+    expect(stats.memoryTokens).toBeGreaterThan(0);
+    expect(stats.draftTokens).toBeGreaterThan(0);
+  });
+
+  it('does not trigger auto-compaction when active messages <= keepRecentMessages (10)', () => {
+    const msgs = Array.from({ length: 10 }, (_, i) =>
+      makeMsg(`m${i + 1}`, i % 2 === 0 ? 'user' : 'assistant', '非常长的文本'.repeat(120))
+    );
+    const stats = computeContextUsageStats({
+      messages: msgs,
+      systemPromptBase: 'Sys',
+      modelId: 'gpt-4o',
+      contextSettings: {
+        ...DEFAULT_CONTEXT_SETTINGS,
+        customMaxContextTokens: 2048,
+        autoCompactThreshold: 0.8,
+        keepRecentMessages: 10,
+      },
+      maxContextMessages: 32,
+    });
+
+    expect(stats.ratio).toBeGreaterThanOrEqual(0.8);
+    expect(stats.willAutoCompact).toBe(false);
+  });
+
+  it('calibrates total tokens against the latest assistant server usage + tail delta', () => {
+    const msgs = [
+      makeMsg('m1', 'user', 'hi'),
+      makeMsg('m2', 'assistant', 'hello', { inputTokens: 1500, outputTokens: 200 }),
+      makeMsg('m3', 'user', 'follow up question'),
+    ];
+    const draft = 'draft text';
+    const stats = computeContextUsageStats({
+      messages: msgs,
+      systemPromptBase: 'Sys',
+      draftText: draft,
+      modelId: 'deepseek-chat',
+      contextSettings: DEFAULT_CONTEXT_SETTINGS,
+      maxContextMessages: 20,
+    });
+
+    expect(stats.usedTokens).toBeGreaterThanOrEqual(1700 + estimateTokens('follow up question') + estimateTokens(draft));
+  });
+
+  it('builds structured compaction prompts and bounded fallback summaries', () => {
+    const msgs = [
+      makeMsg('m1', 'user', '我们需要推导热力学第一定律'),
+      makeMsg('m2', 'assistant', '核心方程为 ΔU = Q + W'),
+    ];
+    const prompt = buildCompactionPrompt('之前讨论了封闭体系定义', msgs);
+    expect(prompt).toContain('之前讨论了封闭体系定义');
+    expect(prompt).toContain('ΔU = Q + W');
+
+    const fallback = buildFallbackLocalSummary('之前摘要', msgs);
+    expect(fallback).toContain('之前摘要');
+    expect(fallback).toContain('热力学第一定律');
+  });
+});

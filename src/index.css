@@ -558,6 +558,28 @@ body {
   }
 }
 
+@keyframes cbFullscreenIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes cbFullscreenOut {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.994);
+  }
+}
+
 .cb-fade-up {
   animation: cbFadeUp 260ms var(--ease-spring) backwards;
   animation-delay: calc(min(var(--stagger-i, 0), 8) * 32ms);
@@ -663,6 +685,14 @@ body {
   animation: cbFloatOut 160ms ease-out forwards;
 }
 
+.cb-fullscreen-in {
+  animation: cbFullscreenIn 220ms var(--ease-spring) backwards;
+}
+
+.cb-fullscreen-out {
+  animation: cbFullscreenOut 160ms ease-out forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cb-fade-up,
   .cb-panel-enter,
@@ -686,7 +716,9 @@ body {
   .cb-lightbox-in,
   .cb-lightbox-out,
   .cb-float-in,
-  .cb-float-out {
+  .cb-float-out,
+  .cb-fullscreen-in,
+  .cb-fullscreen-out {
     animation: none !important;
   }
 

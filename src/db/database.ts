@@ -3,11 +3,15 @@ import type { Conversation, Message, ProviderConfig } from '@/types/chat';
 import type { PromptSettings, SystemPromptPreset } from '@/types/prompt';
 import {
   DEFAULT_APPEARANCE_SETTINGS,
+  DEFAULT_CONTEXT_SETTINGS,
   DEFAULT_GENERATION_SETTINGS,
+  DEFAULT_MEMORY_SETTINGS,
   DEFAULT_MODEL_PROFILE_SYNC_SETTINGS,
   DEFAULT_WEBDAV_SETTINGS,
   type AppearanceSettings,
+  type ContextSettings,
   type GenerationSettings,
+  type MemorySettings,
   type ModelProfileSyncSettings,
   type WebDavSyncSettings,
 } from '@/types/settings';
@@ -50,6 +54,9 @@ const KV_KEYS = {
   PROMPT: 'settings:prompt',
   WEBDAV: 'settings:webdav',
   MODEL_PROFILES: 'settings:modelProfiles',
+  CONTEXT: 'settings:context',
+  MEMORY_SETTINGS: 'settings:memory',
+  MEMORY_DOCUMENT: 'memory:document_v1',
   ACTIVE_CONVERSATION: 'state:activeConversationId',
   ACTIVE_PROVIDER: 'state:activeProviderId',
   ACTIVE_MODEL: 'state:activeModelId',
@@ -82,6 +89,9 @@ export async function ensureDatabaseSeeded(): Promise<void> {
         await setKv(KV_KEYS.PROMPT, DEFAULT_PROMPT_SETTINGS);
         await setKv(KV_KEYS.WEBDAV, DEFAULT_WEBDAV_SETTINGS);
         await setKv(KV_KEYS.MODEL_PROFILES, DEFAULT_MODEL_PROFILE_SYNC_SETTINGS);
+        await setKv(KV_KEYS.CONTEXT, DEFAULT_CONTEXT_SETTINGS);
+        await setKv(KV_KEYS.MEMORY_SETTINGS, DEFAULT_MEMORY_SETTINGS);
+        await setKv(KV_KEYS.MEMORY_DOCUMENT, '');
         await setKv(KV_KEYS.INITIALIZED, true);
       }
     );
@@ -128,6 +138,9 @@ export async function loadInitialState(): Promise<{
   promptSettings: PromptSettings;
   webdav: WebDavSyncSettings;
   modelProfileSync: ModelProfileSyncSettings;
+  contextSettings: ContextSettings;
+  memorySettings: MemorySettings;
+  memoryDocument: string;
   activeConversationId: string | null;
   activeProviderId: string | null;
   activeModelId: string | null;
@@ -152,6 +165,9 @@ export async function loadInitialState(): Promise<{
     promptSettings,
     webdav,
     modelProfileSync,
+    contextSettings,
+    memorySettings,
+    memoryDocument,
     activeConversationId,
     activeProviderId,
     activeModelId,
@@ -167,6 +183,9 @@ export async function loadInitialState(): Promise<{
       KV_KEYS.MODEL_PROFILES,
       DEFAULT_MODEL_PROFILE_SYNC_SETTINGS
     ),
+    getKv<ContextSettings>(KV_KEYS.CONTEXT, DEFAULT_CONTEXT_SETTINGS),
+    getKv<MemorySettings>(KV_KEYS.MEMORY_SETTINGS, DEFAULT_MEMORY_SETTINGS),
+    getKv<string>(KV_KEYS.MEMORY_DOCUMENT, ''),
     getKv<string | null>(KV_KEYS.ACTIVE_CONVERSATION, null),
     getKv<string | null>(KV_KEYS.ACTIVE_PROVIDER, null),
     getKv<string | null>(KV_KEYS.ACTIVE_MODEL, null),
@@ -188,6 +207,9 @@ export async function loadInitialState(): Promise<{
     promptSettings: { ...DEFAULT_PROMPT_SETTINGS, ...promptSettings },
     webdav: { ...DEFAULT_WEBDAV_SETTINGS, ...webdav },
     modelProfileSync: { ...DEFAULT_MODEL_PROFILE_SYNC_SETTINGS, ...modelProfileSync },
+    contextSettings: { ...DEFAULT_CONTEXT_SETTINGS, ...contextSettings },
+    memorySettings: { ...DEFAULT_MEMORY_SETTINGS, ...memorySettings },
+    memoryDocument: typeof memoryDocument === 'string' ? memoryDocument : '',
     activeConversationId,
     activeProviderId,
     activeModelId,

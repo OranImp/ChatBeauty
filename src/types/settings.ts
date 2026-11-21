@@ -1,5 +1,7 @@
 import type { Conversation, Message, ProtocolType, ProviderConfig, ReasoningEffort } from './chat';
 import type { PromptSettings, SystemPromptPreset } from './prompt';
+import type { MemorySettings } from './memory';
+export { DEFAULT_MEMORY_SETTINGS, type MemorySettings } from './memory';
 
 export type ThemeMode = 'oled' | 'dark' | 'light' | 'system';
 
@@ -87,6 +89,14 @@ export interface GenerationSettings {
   };
 }
 
+export interface ContextSettings {
+  defaultContextWindow: number;
+  autoCompactEnabled: boolean;
+  autoCompactThreshold: number;
+  keepRecentMessages: number;
+  customMaxContextTokens: number;
+}
+
 export interface WebDavSyncSettings {
   enabled: boolean;
   endpoint: string;
@@ -106,14 +116,25 @@ export interface AppBackupV1 {
   messages: Message[];
   providers: ProviderConfig[];
   promptPresets: SystemPromptPreset[];
+  memoryDocument?: string;
   settings: {
     appearance: AppearanceSettings;
     generation: GenerationSettings;
     prompt: PromptSettings;
     webdav: WebDavSyncSettings;
     modelProfiles?: ModelProfileSyncSettings;
+    context?: ContextSettings;
+    memory?: MemorySettings;
   };
 }
+
+export const DEFAULT_CONTEXT_SETTINGS: ContextSettings = {
+  defaultContextWindow: 128000,
+  autoCompactEnabled: true,
+  autoCompactThreshold: 0.8,
+  keepRecentMessages: 10,
+  customMaxContextTokens: 0,
+};
 
 export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   theme: 'dark',

@@ -52,6 +52,10 @@ export interface ElectronBridge {
   onClipboardImagePaste?: (
     cb: (data: { dataUrl: string; mimeType: string; name: string }) => void
   ) => () => void;
+  readMemoryFile?: () => Promise<{ ok: boolean; content: string | null; filePath?: string }>;
+  writeMemoryFile?: (
+    content: string
+  ) => Promise<{ ok: boolean; filePath?: string; error?: string }>;
   quitApp?: () => Promise<void>;
 }
 
@@ -405,4 +409,23 @@ export function subscribeDesktopClipboardImagePaste(
     return () => undefined;
   }
   return window.electronBridge.onClipboardImagePaste(cb);
+}
+
+export async function readNativeMemoryFile(): Promise<string | null> {
+  if (typeof window === 'undefined' || !window.electronBridge?.readMemoryFile) {
+    return null;
+  }
+  try {
+    const res = await window.electronBridge.readMemoryFile();
+    return res?.ok && typeof res.content === 'string' ? res.content : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeNativeMemoryFile(content: string): Promise<void> {
+  if (typeof window === 'undefined' || !window.electronBridge?.writeMemoryFile) {
+    return;
+  }
+  await window.electronBridge.writeMemoryFile(content).catch(() => undefined);
 }

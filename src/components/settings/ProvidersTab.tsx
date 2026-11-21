@@ -48,7 +48,11 @@ import {
 } from '@/services/llm/modelProfiles';
 import { ProviderWizard } from './ProviderWizard';
 import { ProtocolSelector } from './ProtocolSelector';
-import { SettingsCollapsibleRow, SettingsSection } from './SettingsPrimitives';
+import {
+  SettingsCollapsibleRow,
+  SettingsSection,
+  SettingsToggleRow,
+} from './SettingsPrimitives';
 
 interface ProvidersTabProps {
   section?: 'providers' | 'generation';
@@ -103,6 +107,7 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
     activeProviderId,
     activeModelId,
     generation,
+    contextSettings,
     modelProfileSync,
     saveProvider,
     deleteProvider,
@@ -110,6 +115,7 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
     fetchProviderModels,
     testProviderConnection,
     updateGeneration,
+    updateContextSettings,
     updateModelProfileSync,
     syncRemoteModelProfiles,
     saveCustomModelProfileRules,
@@ -624,11 +630,122 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
 
   if (section === 'generation') {
     const hasGlobalExtra = Boolean(globalExtraText.trim() && globalExtraText.trim() !== '{}');
+    const thresholdPercent = Math.round(contextSettings.autoCompactThreshold * 100);
+    const contextPresets: Array<{ label: string; value: number }> = [
+      { label: '自动识别', value: 0 },
+      { label: '32K', value: 32000 },
+      { label: '64K', value: 64000 },
+      { label: '128K', value: 128000 },
+      { label: '200K', value: 200000 },
+    ];
     return (
       <div
         key="providers-generation"
         className="space-y-5 text-[13.5px] min-w-0 max-w-full"
       >
+        <SettingsSection
+          title="上下文统计与自动压缩"
+          description="主页面发送按钮旁圆环实时展示占用比例；达到阈值后发送新消息前将自动摘要较早记录，界面仍保留完整历史"
+          action={
+            <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-fg/10 text-muted">
+              {contextSettings.autoCompactEnabled ? `阈值 ${thresholdPercent}%` : '自动压缩关'}
+            </span>
+          }
+        >
+          <SettingsToggleRow
+            title="启用自动上下文压缩"
+            description="当占用率达到触发阈值时自动合并较早对话为紧凑摘要，避免超长报错与注意力稀释"
+            checked={contextSettings.autoCompactEnabled}
+            onChange={(checked) => void updateContextSettings({ autoCompactEnabled: checked })}
+            ariaLabel="启用自动上下文压缩"
+          />
+
+          <div className="px-3.5 sm:px-4 py-3.5 grid grid-cols-1 sm:grid-cols-2 gap-4 min-w-0">
+            <div className="space-y-1.5 min-w-0">
+              <div className="flex justify-between text-xs text-muted">
+                <span>自动压缩触发阈值</span>
+                <span className="font-mono tabular-nums text-fg">{thresholdPercent}%</span>
+              </div>
+              <SmoothSlider
+                min={50}
+                max={95}
+                decimals={0}
+                value={thresholdPercent}
+                onChange={(val) =>
+                  void updateContextSettings({
+                    autoCompactThreshold: Math.min(0.95, Math.max(0.5, val / 100)),
+                  })
+                }
+                ariaLabel="自动压缩触发阈值"
+              />
+            </div>
+
+            <div className="space-y-1.5 min-w-0">
+              <div className="flex justify-between text-xs text-muted">
+                <span>压缩后保留最近消息数</span>
+                <span className="font-mono tabular-nums text-fg">
+                  {contextSettings.keepRecentMessages} 条
+                </span>
+              </div>
+              <SmoothSlider
+                min={2}
+                max={24}
+                decimals={0}
+                value={contextSettings.keepRecentMessages}
+                onChange={(val) => void updateContextSettings({ keepRecentMessages: val })}
+                ariaLabel="压缩后保留最近消息数"
+              />
+            </div>
+          </div>
+
+          <div className="px-3.5 sm:px-4 py-3.5 space-y-2.5 min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+              <span>上下文窗口上限（用于占用率统计与自动压缩）</span>
+              <span className="font-mono text-[11px] text-fg/80">
+                {contextSettings.customMaxContextTokens > 0
+                  ? `${contextSettings.customMaxContextTokens.toLocaleString()} tokens`
+                  : `按模型自动（回退 ${Math.round(contextSettings.defaultContextWindow / 1000)}K）`}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+              {contextPresets.map((preset) => {
+                const active = contextSettings.customMaxContextTokens === preset.value;
+                return (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() =>
+                      void updateContextSettings({ customMaxContextTokens: preset.value })
+                    }
+                    className={`px-2.5 py-1 rounded-lg border text-xs transition ${
+                      active
+                        ? 'border-accent bg-accent/15 text-fg font-medium'
+                        : 'border-borderc bg-bg text-muted hover:text-fg hover:bg-surface'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+
+              <input
+                type="number"
+                min={0}
+                step={1024}
+                value={contextSettings.customMaxContextTokens || ''}
+                onChange={(e) => {
+                  const val = Math.max(0, Math.round(Number(e.target.value) || 0));
+                  void updateContextSettings({ customMaxContextTokens: val });
+                }}
+                placeholder="自定义 (0=自动)"
+                aria-label="自定义上下文窗口上限"
+                className="w-44 sm:w-48 max-w-full px-2.5 py-1 rounded-lg bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
+              />
+            </div>
+          </div>
+        </SettingsSection>
+
         <SettingsSection
           title="全局采样参数"
           description="默认作用于所有未单独覆写的模型会话"

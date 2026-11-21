@@ -239,6 +239,7 @@ describe('MotionPrimitives', () => {
       'cb-popover-top-in',
       'cb-lightbox-in',
       'cb-float-in',
+      'cb-fullscreen-in',
     ];
 
     const exitClasses = [
@@ -250,6 +251,7 @@ describe('MotionPrimitives', () => {
       'cb-popover-top-out',
       'cb-lightbox-out',
       'cb-float-out',
+      'cb-fullscreen-out',
     ];
 
     for (const cls of enterClasses) {

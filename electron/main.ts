@@ -446,6 +446,46 @@ ipcMain.handle('app:set-streaming-state', (_event, count: number) => {
   }
 });
 
+function getMemoryFilePath(): string {
+  return path.join(app.getPath('userData'), 'chatbeauty-memory.md');
+}
+
+ipcMain.handle('memory:read-file', async () => {
+  const filePath = getMemoryFilePath();
+  try {
+    if (!fs.existsSync(filePath)) {
+      return { ok: true, content: null, filePath };
+    }
+    const content = fs.readFileSync(filePath, 'utf8');
+    return { ok: true, content, filePath };
+  } catch (err) {
+    return {
+      ok: false,
+      content: null,
+      filePath,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+});
+
+ipcMain.handle('memory:write-file', async (_event, content: string) => {
+  const filePath = getMemoryFilePath();
+  try {
+    const dir = path.dirname(filePath);
+    fs.mkdirSync(dir, { recursive: true });
+    const tmpPath = `${filePath}.tmp`;
+    fs.writeFileSync(tmpPath, typeof content === 'string' ? content : '', 'utf8');
+    fs.renameSync(tmpPath, filePath);
+    return { ok: true, filePath };
+  } catch (err) {
+    return {
+      ok: false,
+      filePath,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+});
+
 ipcMain.handle('app:quit', () => {
   isQuitting = true;
   app.quit();
