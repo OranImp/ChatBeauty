@@ -17,7 +17,7 @@ interface LightboxModalProps {
 
 export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, onClose }) => {
   const [renderedPayload, setRenderedPayload] = useState<LightboxPayload | null>(payload);
-  const lightboxPresence = usePresence(Boolean(payload), 200);
+  const lightboxPresence = usePresence(Boolean(payload), 190);
   const [displayScale, setDisplayScale] = useState(1);
   const [copied, setCopied] = useState(false);
 
@@ -241,10 +241,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex flex-col bg-black/90 backdrop-blur-md text-zinc-100 transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-        lightboxPresence.visible
-          ? 'opacity-100 scale-100'
-          : 'opacity-0 scale-[0.97] pointer-events-none'
+      className={`fixed inset-0 z-50 flex flex-col bg-black/90 backdrop-blur-md text-zinc-100 ${
+        lightboxPresence.state === 'open' ? 'cb-lightbox-in' : 'cb-lightbox-out pointer-events-none'
       }`}
       role="dialog"
       aria-modal="true"

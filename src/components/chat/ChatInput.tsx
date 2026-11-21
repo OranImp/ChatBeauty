@@ -89,6 +89,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const menuPresence = usePresence(activeMenu !== null, 170);
   const hintPresence = usePresence(Boolean(reservedHint), 180);
 
+  if (activeMenu && renderedMenu !== activeMenu) {
+    setRenderedMenu(activeMenu);
+  }
+  if (reservedHint && renderedHint !== reservedHint) {
+    setRenderedHint(reservedHint);
+  }
+
   useEffect(() => {
     if (!activeMenu) return;
     const onKey = (e: KeyboardEvent) => {
@@ -347,14 +354,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     <div className="relative z-20 px-3 sm:px-6 pt-1 pb-2 safe-bottom shrink-0">
       <div className="mx-auto relative" style={{ maxWidth: 'var(--chat-max-width)' }}>
         {hintPresence.mounted && renderedHint && (
-          <div
-            className={`absolute -top-11 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-elevated border border-borderc text-xs text-fg shadow-lg whitespace-nowrap transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-              hintPresence.visible
-                ? 'opacity-100 translate-y-0 scale-100'
-                : 'opacity-0 translate-y-1.5 scale-95 pointer-events-none'
-            }`}
-          >
-            {renderedHint}
+          <div className="absolute -top-11 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+            <div
+              className={`px-3 py-1.5 rounded-full bg-elevated border border-borderc text-xs text-fg shadow-lg whitespace-nowrap ${
+                hintPresence.state === 'open' ? 'cb-float-in' : 'cb-float-out'
+              }`}
+            >
+              {renderedHint}
+            </div>
           </div>
         )}
 
@@ -365,12 +372,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         {/* Animated Popover Menu (Plus / Model / Reasoning / Custom Params) */}
         {menuPresence.mounted && renderedMenu && (
           <div
-            className={`absolute ${popoverPanelWidth} bottom-full mb-2 z-30 rounded-2xl border border-borderc bg-elevated/95 backdrop-blur-xl shadow-2xl text-xs origin-bottom-left transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-              menuPresence.visible
-                ? 'opacity-100 translate-y-0 scale-100'
-                : 'opacity-0 translate-y-2.5 scale-[0.96] pointer-events-none'
+            className={`absolute ${popoverPanelWidth} bottom-full mb-2 z-40 rounded-2xl border border-borderc bg-elevated/95 backdrop-blur-xl shadow-2xl text-xs origin-bottom-left ${
+              menuPresence.state === 'open'
+                ? 'cb-popover-in'
+                : 'cb-popover-out pointer-events-none'
             }`}
           >
+            <div key={renderedMenu} className="cb-panel-enter">
             {renderedMenu === 'plus' && (
               <div className="p-3 space-y-3">
                 <div className="flex items-center justify-between">
@@ -743,6 +751,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 </div>
               </div>
             )}
+            </div>
           </div>
         )}
 
@@ -762,7 +771,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               void addImageFiles(e.dataTransfer.files);
             }
           }}
-          className={`rounded-[24px] border bg-surface/95 backdrop-blur-xl px-3.5 pt-3 pb-2.5 shadow-[0_8px_30px_rgba(0,0,0,0.32)] transition-colors ${
+          className={`relative z-30 rounded-[24px] border bg-surface/95 backdrop-blur-xl px-3.5 pt-3 pb-2.5 shadow-[0_8px_30px_rgba(0,0,0,0.32)] transition-colors ${
             isDragOver
               ? 'border-accent ring-2 ring-accent/25'
               : 'border-borderc focus-within:border-fg/25'
@@ -783,7 +792,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           />
 
           {imageError && (
-            <div className="mb-2 px-3 py-1.5 rounded-xl border border-rose-500/35 bg-rose-500/10 text-xs text-rose-300 flex items-center justify-between gap-2">
+            <div className="cb-panel-enter mb-2 px-3 py-1.5 rounded-xl border border-rose-500/35 bg-rose-500/10 text-xs text-rose-300 flex items-center justify-between gap-2">
               <span>{imageError}</span>
               <button
                 type="button"
@@ -799,10 +808,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           {attachedImages.length > 0 && (
             <div className="mb-2.5 space-y-1.5">
               <div className="flex flex-wrap gap-2">
-                {attachedImages.map((img) => (
+                {attachedImages.map((img, idx) => (
                   <div
                     key={img.id}
-                    className="group relative w-16 h-16 rounded-xl border border-borderc bg-bg/70 overflow-hidden shrink-0"
+                    style={{ '--stagger-i': idx } as React.CSSProperties}
+                    className="cb-list-item group relative w-16 h-16 rounded-xl border border-borderc bg-bg/70 overflow-hidden shrink-0"
                   >
                     <button
                       type="button"

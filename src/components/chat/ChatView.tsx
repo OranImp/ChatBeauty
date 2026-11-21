@@ -153,7 +153,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
   return (
     <div className="flex-1 flex flex-col min-h-0 relative">
       {showBatteryPrompt && (
-        <div className="mx-4 mt-2 px-3.5 py-2.5 rounded-xl border border-amber-500/35 bg-amber-500/10 text-xs text-fg flex flex-wrap items-center justify-between gap-2">
+        <div className="cb-panel-enter mx-4 mt-2 px-3.5 py-2.5 rounded-xl border border-amber-500/35 bg-amber-500/10 text-xs text-fg flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <BatteryCharging className="w-4 h-4 text-amber-400 shrink-0" />
             <span>
@@ -183,7 +183,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
       )}
 
       {errorBanner && (
-        <div className="mx-4 mt-2 px-3.5 py-2 rounded-xl border border-amber-500/35 bg-amber-500/10 text-xs text-amber-200 flex items-center justify-between gap-2">
+        <div className="cb-panel-enter mx-4 mt-2 px-3.5 py-2 rounded-xl border border-amber-500/35 bg-amber-500/10 text-xs text-amber-200 flex items-center justify-between gap-2">
           <span>{errorBanner}</span>
           <button
             type="button"
@@ -203,7 +203,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
           onScroll={handleScroll}
           className="flex-1 overflow-y-auto overscroll-y-contain touch-pan-y no-scrollbar px-4 sm:px-6 pt-3 pb-6"
         >
-          <div className="mx-auto w-full" style={{ maxWidth: 'var(--chat-max-width)' }}>
+          <div
+            key={activeConversationId || 'empty'}
+            className="cb-panel-enter mx-auto w-full"
+            style={{ maxWidth: 'var(--chat-max-width)' }}
+          >
             {messages.length === 0 ? (
               <div className="min-h-[60vh] flex flex-col items-center justify-center text-center py-10 space-y-6">
                 <div className="space-y-2.5">
@@ -281,18 +285,20 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
 
         {/* Animated Scroll-to-bottom circular button */}
         {scrollBtnPresence.mounted && (
-          <button
-            type="button"
-            onClick={() => scrollToBottom('smooth')}
-            className={`absolute bottom-3 left-1/2 -translate-x-1/2 z-20 w-9 h-9 rounded-full border border-borderc bg-elevated/90 backdrop-blur-md text-fg shadow-lg flex items-center justify-center hover:bg-surface active:scale-95 transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-              scrollBtnPresence.visible
-                ? 'opacity-100 translate-y-0 scale-100'
-                : 'opacity-0 translate-y-3 scale-90 pointer-events-none'
-            }`}
-            aria-label="滚动到底部"
-          >
-            <ArrowDown className="w-4 h-4" />
-          </button>
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20">
+            <button
+              type="button"
+              onClick={() => scrollToBottom('smooth')}
+              className={`w-9 h-9 rounded-full border border-borderc bg-elevated/90 backdrop-blur-md text-fg shadow-lg flex items-center justify-center hover:bg-surface active:scale-95 transition-colors ${
+                scrollBtnPresence.state === 'open'
+                  ? 'cb-float-in'
+                  : 'cb-float-out pointer-events-none'
+              }`}
+              aria-label="滚动到底部"
+            >
+              <ArrowDown className="w-4 h-4" />
+            </button>
+          </div>
         )}
       </div>
 

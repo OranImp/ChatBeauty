@@ -389,35 +389,278 @@ body {
   }
 }
 
+/* Deterministic presence & overlay keyframes */
+@keyframes cbBackdropIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes cbBackdropOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes cbModalSheetIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 28px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes cbModalSheetOut {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 24px, 0);
+  }
+}
+
+@keyframes cbModalDialogIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes cbModalDialogOut {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.97);
+  }
+}
+
+@keyframes cbDrawerIn {
+  from {
+    transform: translate3d(-100%, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes cbDrawerOut {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-100%, 0, 0);
+  }
+}
+
+@keyframes cbPopoverIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes cbPopoverOut {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0) scale(0.96);
+  }
+}
+
+@keyframes cbPopoverTopIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -8px, 0) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes cbPopoverTopOut {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, -6px, 0) scale(0.96);
+  }
+}
+
+@keyframes cbLightboxIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes cbLightboxOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+@keyframes cbFloatIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes cbFloatOut {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.92);
+  }
+}
+
 .cb-fade-up {
-  animation: cbFadeUp 260ms var(--ease-spring) both;
+  animation: cbFadeUp 260ms var(--ease-spring) backwards;
   animation-delay: calc(min(var(--stagger-i, 0), 8) * 32ms);
 }
 
 .cb-panel-enter {
-  animation: cbPanelEnter 200ms var(--ease-spring) both;
+  animation: cbPanelEnter 200ms var(--ease-spring) backwards;
 }
 
 .cb-step-forward {
-  animation: cbStepForward 230ms var(--ease-spring) both;
+  animation: cbStepForward 230ms var(--ease-spring) backwards;
 }
 
 .cb-step-backward {
-  animation: cbStepBackward 230ms var(--ease-spring) both;
+  animation: cbStepBackward 230ms var(--ease-spring) backwards;
 }
 
 .cb-list-item {
-  animation: cbListItem 190ms var(--ease-pop) both;
+  animation: cbListItem 190ms var(--ease-pop) backwards;
   animation-delay: calc(min(var(--stagger-i, 0), 8) * 24ms);
 }
 
 .cb-msg-enter {
-  animation: cbMsgEnter 220ms var(--ease-spring) both;
+  animation: cbMsgEnter 220ms var(--ease-spring) backwards;
 }
 
 .cb-indicator-in {
   transform-origin: center;
-  animation: cbIndicatorIn 200ms var(--ease-spring) both;
+  animation: cbIndicatorIn 200ms var(--ease-spring) backwards;
+}
+
+.cb-backdrop-in {
+  animation: cbBackdropIn 200ms ease-out backwards;
+}
+
+.cb-backdrop-out {
+  animation: cbBackdropOut 180ms ease-out forwards;
+}
+
+.cb-backdrop-slow-in {
+  animation: cbBackdropIn 340ms ease-out backwards;
+}
+
+.cb-backdrop-slow-out {
+  animation: cbBackdropOut 300ms ease-out forwards;
+}
+
+.cb-modal-in {
+  animation: cbModalSheetIn 250ms var(--ease-spring) backwards;
+}
+
+.cb-modal-out {
+  animation: cbModalSheetOut 180ms ease-out forwards;
+}
+
+@media (min-width: 640px) {
+  .cb-modal-in {
+    animation: cbModalDialogIn 240ms var(--ease-spring) backwards;
+  }
+
+  .cb-modal-out {
+    animation: cbModalDialogOut 180ms ease-out forwards;
+  }
+}
+
+.cb-drawer-in {
+  animation: cbDrawerIn 380ms cubic-bezier(0.32, 0.72, 0, 1) backwards;
+}
+
+.cb-drawer-out {
+  animation: cbDrawerOut 320ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+.cb-popover-in {
+  animation: cbPopoverIn 200ms var(--ease-pop) backwards;
+}
+
+.cb-popover-out {
+  animation: cbPopoverOut 150ms ease-out forwards;
+}
+
+.cb-popover-top-in {
+  animation: cbPopoverTopIn 200ms var(--ease-pop) backwards;
+}
+
+.cb-popover-top-out {
+  animation: cbPopoverTopOut 150ms ease-out forwards;
+}
+
+.cb-lightbox-in {
+  animation: cbLightboxIn 220ms var(--ease-spring) backwards;
+}
+
+.cb-lightbox-out {
+  animation: cbLightboxOut 170ms ease-out forwards;
+}
+
+.cb-float-in {
+  animation: cbFloatIn 200ms var(--ease-pop) backwards;
+}
+
+.cb-float-out {
+  animation: cbFloatOut 160ms ease-out forwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -427,7 +670,23 @@ body {
   .cb-step-backward,
   .cb-list-item,
   .cb-msg-enter,
-  .cb-indicator-in {
+  .cb-indicator-in,
+  .cb-backdrop-in,
+  .cb-backdrop-out,
+  .cb-backdrop-slow-in,
+  .cb-backdrop-slow-out,
+  .cb-modal-in,
+  .cb-modal-out,
+  .cb-drawer-in,
+  .cb-drawer-out,
+  .cb-popover-in,
+  .cb-popover-out,
+  .cb-popover-top-in,
+  .cb-popover-top-out,
+  .cb-lightbox-in,
+  .cb-lightbox-out,
+  .cb-float-in,
+  .cb-float-out {
     animation: none !important;
   }
 

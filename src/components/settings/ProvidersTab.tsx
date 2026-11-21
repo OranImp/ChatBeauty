@@ -111,10 +111,19 @@ export const ProvidersTab: React.FC = () => {
   } = useAppStore();
 
   const [view, setView] = useState<'list' | 'wizard' | 'edit'>('list');
+  const [prevView, setPrevView] = useState<'list' | 'wizard' | 'edit'>('list');
+  const [viewAnim, setViewAnim] = useState<
+    'cb-panel-enter' | 'cb-step-forward' | 'cb-step-backward'
+  >('cb-panel-enter');
+  if (view !== prevView) {
+    setPrevView(view);
+    setViewAnim(view === 'list' ? 'cb-step-backward' : 'cb-step-forward');
+  }
   const [draft, setDraft] = useState<ProviderConfig | null>(null);
   const [customExtraHeaders, setCustomExtraHeaders] = useState<Record<string, string>>({});
   const [headersText, setHeadersText] = useState('{}');
   const [headersErr, setHeadersErr] = useState<string | null>(null);
+  const [headersOpen, setHeadersOpen] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [newModelId, setNewModelId] = useState('');
   const [modelSearch, setModelSearch] = useState('');
@@ -184,6 +193,7 @@ export const ProvidersTab: React.FC = () => {
     setDraft(structuredClone(p));
     setCustomExtraHeaders(initialExtra);
     setHeadersErr(null);
+    setHeadersOpen(false);
     setHeadersText(buildPreviewHeadersJson(p, initialExtra));
     setShowKey(false);
     setModelSearch('');
@@ -609,7 +619,7 @@ export const ProvidersTab: React.FC = () => {
 
   if (view === 'wizard') {
     return (
-      <div className="cb-panel-enter">
+      <div key="providers-wizard" className={viewAnim}>
         <ProviderWizard
           onCancel={() => setView('list')}
           onComplete={handleWizardComplete}
@@ -661,7 +671,7 @@ export const ProvidersTab: React.FC = () => {
     };
 
     return (
-      <div className="cb-panel-enter space-y-4 text-[13.5px] min-w-0 max-w-full">
+      <div key={`providers-edit-${draft.id}`} className={`${viewAnim} space-y-4 text-[13.5px] min-w-0 max-w-full`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <button
             type="button"
@@ -1194,33 +1204,45 @@ export const ProvidersTab: React.FC = () => {
             </div>
           </div>
 
-          <details className="min-w-0">
-            <summary className="cursor-pointer text-muted hover:text-fg select-none">
-              高级：自定义请求头 (JSON，随协议 / URL / API Key 实时更新)
-            </summary>
-            <div className="mt-2 space-y-1.5 min-w-0">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
-                <span>自动生成协议默认头；修改或新增键值对将在保存时一并生效。</span>
-                <button
-                  type="button"
-                  onClick={resetAutoHeaders}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-borderc bg-bg hover:bg-elevated text-fg transition shrink-0"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  <span>恢复自动头</span>
-                </button>
-              </div>
-              <textarea
-                rows={5}
-                value={headersText}
-                onChange={(e) => handleHeadersJsonChange(e.target.value)}
-                className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
+          <div className="rounded-xl border border-borderc bg-bg/50 overflow-hidden min-w-0">
+            <button
+              type="button"
+              onClick={() => setHeadersOpen((v) => !v)}
+              aria-expanded={headersOpen}
+              className="w-full min-w-0 flex items-center justify-between gap-2 px-3 py-2.5 text-left text-muted hover:text-fg hover:bg-fg/[0.03] transition"
+            >
+              <span className="truncate">高级：自定义请求头 (JSON，随协议 / URL / API Key 实时更新)</span>
+              <ChevronRight
+                className={`w-4 h-4 shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                  headersOpen ? 'rotate-90 text-fg' : ''
+                }`}
               />
-              {headersErr && (
-                <div className="text-[11px] text-rose-400 break-words">{headersErr}</div>
-              )}
-            </div>
-          </details>
+            </button>
+            <Collapsible open={headersOpen}>
+              <div className="px-3 pb-3 pt-2 border-t border-borderc space-y-1.5 min-w-0">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
+                  <span>自动生成协议默认头；修改或新增键值对将在保存时一并生效。</span>
+                  <button
+                    type="button"
+                    onClick={resetAutoHeaders}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-borderc bg-bg hover:bg-elevated text-fg transition shrink-0"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>恢复自动头</span>
+                  </button>
+                </div>
+                <textarea
+                  rows={5}
+                  value={headersText}
+                  onChange={(e) => handleHeadersJsonChange(e.target.value)}
+                  className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
+                />
+                {headersErr && (
+                  <div className="text-[11px] text-rose-400 break-words">{headersErr}</div>
+                )}
+              </div>
+            </Collapsible>
+          </div>
 
           {statusMsg && (
             <div
@@ -1263,7 +1285,7 @@ export const ProvidersTab: React.FC = () => {
   }
 
   return (
-    <div className="cb-panel-enter space-y-4 text-[13.5px] min-w-0 max-w-full">
+    <div key="providers-list" className={`${viewAnim} space-y-4 text-[13.5px] min-w-0 max-w-full`}>
       {/* CC-Switch Switchboard Header & Toolbar */}
       <div className="flex flex-wrap items-start justify-between gap-3 pb-1 min-w-0">
         <div className="min-w-0">

@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
+  ChevronRight,
   Eye,
   EyeOff,
   Loader2,
@@ -23,6 +24,7 @@ import {
   toModelDefinition,
 } from '@/services/llm/adapters/shared';
 import type { ProtocolType, ProviderConfig } from '@/types/chat';
+import { Collapsible } from '@/components/ui/MotionPrimitives';
 import { ProtocolSelector } from './ProtocolSelector';
 
 interface ProviderWizardProps {
@@ -37,6 +39,8 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
   const [direction, setDirection] = useState<'forward' | 'backward'>('forward');
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'global' | 'cn' | 'infra'>('all');
   const [isCustomProvider, setIsCustomProvider] = useState(false);
+  const [backupOpen, setBackupOpen] = useState(false);
+  const [headersOpen, setHeadersOpen] = useState(false);
   const [draft, setDraft] = useState<ProviderConfig>(() => {
     const tpl = PROTOCOL_TEMPLATES['openai-chat'];
     return {
@@ -365,7 +369,10 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 min-w-0">
+            <div
+              key={categoryFilter}
+              className="cb-panel-enter grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 min-w-0"
+            >
               {filteredPresets.map((preset) => {
                 const selected = !isCustomProvider && draft.presetId === preset.id;
                 return (
@@ -480,45 +487,71 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
             </div>
           </label>
 
-          <details className="min-w-0">
-            <summary className="cursor-pointer text-muted hover:text-fg">
-              备用端点列表 (一行一个 URL，支持中转站容灾切换)
-            </summary>
-            <textarea
-              rows={2}
-              value={backupUrlsText}
-              onChange={(e) => setBackupUrlsText(e.target.value)}
-              placeholder={'https://backup-relay.example.com/v1\nhttps://relay2.example.com/v1'}
-              className="mt-2 w-full min-w-0 px-3 py-2 rounded-xl bg-surface border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
-            />
-          </details>
-
-          <details className="min-w-0">
-            <summary className="cursor-pointer text-muted hover:text-fg">
-              高级：自定义请求头 (JSON · 实时反映当前鉴权与协议头)
-            </summary>
-            <div className="mt-2 space-y-1.5 min-w-0">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                <span className="text-muted">
-                  修改上方密钥或协议会同步更新，可直接追加额外字段
-                </span>
-                <button
-                  type="button"
-                  onClick={resetAutoHeaders}
-                  className="px-2 py-0.5 rounded-lg border border-borderc bg-bg hover:bg-elevated text-muted hover:text-fg transition shrink-0"
-                >
-                  恢复自动头
-                </button>
-              </div>
-              <textarea
-                rows={5}
-                value={headersText}
-                onChange={(e) => handleHeadersJsonChange(e.target.value)}
-                className="w-full min-w-0 px-3 py-2 rounded-xl bg-surface border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
+          <div className="rounded-xl border border-borderc bg-surface/40 overflow-hidden min-w-0">
+            <button
+              type="button"
+              onClick={() => setBackupOpen((v) => !v)}
+              aria-expanded={backupOpen}
+              className="w-full min-w-0 flex items-center justify-between gap-2 px-3 py-2.5 text-left text-muted hover:text-fg hover:bg-fg/[0.03] transition"
+            >
+              <span className="truncate">备用端点列表 (一行一个 URL，支持中转站容灾切换)</span>
+              <ChevronRight
+                className={`w-4 h-4 shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                  backupOpen ? 'rotate-90 text-fg' : ''
+                }`}
               />
-              {headersErr && <div className="text-xs text-rose-400">{headersErr}</div>}
-            </div>
-          </details>
+            </button>
+            <Collapsible open={backupOpen}>
+              <div className="px-3 pb-3 pt-2 border-t border-borderc min-w-0">
+                <textarea
+                  rows={2}
+                  value={backupUrlsText}
+                  onChange={(e) => setBackupUrlsText(e.target.value)}
+                  placeholder={'https://backup-relay.example.com/v1\nhttps://relay2.example.com/v1'}
+                  className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
+                />
+              </div>
+            </Collapsible>
+          </div>
+
+          <div className="rounded-xl border border-borderc bg-surface/40 overflow-hidden min-w-0">
+            <button
+              type="button"
+              onClick={() => setHeadersOpen((v) => !v)}
+              aria-expanded={headersOpen}
+              className="w-full min-w-0 flex items-center justify-between gap-2 px-3 py-2.5 text-left text-muted hover:text-fg hover:bg-fg/[0.03] transition"
+            >
+              <span className="truncate">高级：自定义请求头 (JSON · 实时反映当前鉴权与协议头)</span>
+              <ChevronRight
+                className={`w-4 h-4 shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                  headersOpen ? 'rotate-90 text-fg' : ''
+                }`}
+              />
+            </button>
+            <Collapsible open={headersOpen}>
+              <div className="px-3 pb-3 pt-2 border-t border-borderc space-y-1.5 min-w-0">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="text-muted">
+                    修改上方密钥或协议会同步更新，可直接追加额外字段
+                  </span>
+                  <button
+                    type="button"
+                    onClick={resetAutoHeaders}
+                    className="px-2 py-0.5 rounded-lg border border-borderc bg-bg hover:bg-elevated text-muted hover:text-fg transition shrink-0"
+                  >
+                    恢复自动头
+                  </button>
+                </div>
+                <textarea
+                  rows={5}
+                  value={headersText}
+                  onChange={(e) => handleHeadersJsonChange(e.target.value)}
+                  className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
+                />
+                {headersErr && <div className="text-xs text-rose-400">{headersErr}</div>}
+              </div>
+            </Collapsible>
+          </div>
 
           {statusMsg && (
             <div

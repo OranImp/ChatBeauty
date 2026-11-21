@@ -172,10 +172,10 @@ export const TopBar: React.FC<TopBarProps> = ({
         <>
           <div className="fixed inset-0 z-30" onClick={() => setMoreMenuOpen(false)} />
           <div
-            className={`absolute right-3.5 top-14 z-40 w-44 rounded-2xl border border-borderc bg-elevated/95 backdrop-blur-xl shadow-2xl p-1.5 text-sm origin-top-right transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-              morePresence.visible
-                ? 'opacity-100 translate-y-0 scale-100'
-                : 'opacity-0 -translate-y-2 scale-[0.95] pointer-events-none'
+            className={`absolute right-3.5 top-14 z-40 w-44 rounded-2xl border border-borderc bg-elevated/95 backdrop-blur-xl shadow-2xl p-1.5 text-sm origin-top-right ${
+              morePresence.state === 'open'
+                ? 'cb-popover-top-in'
+                : 'cb-popover-top-out pointer-events-none'
             }`}
           >
             <button

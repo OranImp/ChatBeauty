@@ -50,7 +50,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [query, setQuery] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
-  const drawerPresence = usePresence(mobileOpen, 380);
+  const drawerPresence = usePresence(mobileOpen, 340);
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -276,26 +276,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <>
       {/* Desktop persistent sidebar */}
       <aside
-        className={`hidden md:block shrink-0 overflow-hidden transition-[width,opacity] duration-[300ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${
+        className={`hidden md:block shrink-0 overflow-hidden will-change-[width,opacity] transition-[width,opacity] duration-[300ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${
           desktopOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
         style={{ width: desktopOpen ? 268 : 0 }}
       >
-        <div className="w-[268px] h-full">{innerContent}</div>
+        <div
+          className={`w-[268px] h-full transition-transform duration-[300ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${
+            desktopOpen ? 'translate-x-0' : '-translate-x-4'
+          }`}
+        >
+          {innerContent}
+        </div>
       </aside>
 
       {/* Mobile slide-over drawer */}
       {drawerPresence.mounted && (
         <div className="fixed inset-0 z-50 md:hidden flex">
           <div
-            className={`fixed inset-0 bg-black/65 backdrop-blur-sm transition-opacity duration-[340ms] ease-out ${
-              drawerPresence.visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            className={`fixed inset-0 bg-black/65 backdrop-blur-sm ${
+              drawerPresence.state === 'open'
+                ? 'cb-backdrop-slow-in'
+                : 'cb-backdrop-slow-out pointer-events-none'
             }`}
             onClick={onCloseMobile}
           />
           <div
-            className={`relative z-10 w-[82vw] max-w-[300px] h-full shadow-2xl transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${
-              drawerPresence.visible ? 'translate-x-0' : '-translate-x-full'
+            className={`relative z-10 w-[82vw] max-w-[300px] h-full shadow-2xl ${
+              drawerPresence.state === 'open'
+                ? 'cb-drawer-in'
+                : 'cb-drawer-out pointer-events-none'
             }`}
           >
             {innerContent}

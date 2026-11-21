@@ -31,6 +31,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const modalPresence = usePresence(open, 200);
   const openDemoShowcase = useAppStore((s) => s.openDemoShowcase);
+  const [prevOpen, setPrevOpen] = React.useState(open);
+  const [prevTab, setPrevTab] = React.useState<SettingsTabKey>(activeTab);
+  const [tabAnim, setTabAnim] = React.useState<
+    'cb-panel-enter' | 'cb-step-forward' | 'cb-step-backward'
+  >('cb-panel-enter');
+
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open) {
+      setTabAnim('cb-panel-enter');
+      setPrevTab(activeTab);
+    }
+  } else if (activeTab !== prevTab) {
+    const prevIdx = TABS.findIndex((t) => t.key === prevTab);
+    const nextIdx = TABS.findIndex((t) => t.key === activeTab);
+    setPrevTab(activeTab);
+    setTabAnim(nextIdx > prevIdx ? 'cb-step-forward' : 'cb-step-backward');
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -45,8 +63,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-sm sm:p-4 transition-opacity duration-200 ease-out ${
-        modalPresence.visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+      className={`fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-sm sm:p-4 ${
+        modalPresence.state === 'open' ? 'cb-backdrop-in' : 'cb-backdrop-out pointer-events-none'
       }`}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -55,10 +73,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       aria-modal="true"
     >
       <div
-        className={`w-full max-w-full sm:max-w-3xl h-[92dvh] sm:h-[82vh] rounded-t-3xl sm:rounded-3xl border border-borderc bg-bg flex flex-col overflow-hidden shadow-2xl transition-all duration-[250ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
-          modalPresence.visible
-            ? 'opacity-100 translate-y-0 sm:scale-100'
-            : 'opacity-0 translate-y-8 sm:translate-y-3 sm:scale-[0.97]'
+        className={`w-full max-w-full sm:max-w-3xl h-[92dvh] sm:h-[82vh] rounded-t-3xl sm:rounded-3xl border border-borderc bg-bg flex flex-col overflow-hidden shadow-2xl ${
+          modalPresence.state === 'open' ? 'cb-modal-in' : 'cb-modal-out pointer-events-none'
         }`}
       >
         {/* Header */}
@@ -97,7 +113,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 p-3.5 sm:p-6 safe-bottom">
-          <div key={activeTab} className="cb-panel-enter min-w-0 max-w-full">
+          <div key={activeTab} className={`${tabAnim} min-w-0 max-w-full`}>
             {activeTab === 'providers' && <ProvidersTab />}
             {activeTab === 'prompts' && <PromptsTab />}
             {activeTab === 'appearance' && <AppearanceTab />}
