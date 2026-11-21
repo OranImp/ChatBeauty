@@ -24,6 +24,7 @@ import { DEFAULT_GENERATION_SETTINGS } from '@/types/settings';
 import { PROTOCOL_TEMPLATES } from '@/services/llm/registry';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { SmoothSlider } from '@/components/ui/SmoothSlider';
+import type { SettingsTabKey } from '@/components/settings/SettingsModal';
 import { usePresence } from '@/components/ui/MotionPrimitives';
 import {
   coerceReasoningEffort,
@@ -35,7 +36,7 @@ interface ChatInputProps {
   onSend: (text: string, images?: Array<Extract<ContentPart, { type: 'image' }>>) => void;
   onStop: () => void;
   isStreaming: boolean;
-  onOpenSettings: (tab?: 'providers' | 'prompts' | 'appearance' | 'data') => void;
+  onOpenSettings: (tab?: SettingsTabKey) => void;
   onInspect?: (payload: LightboxPayload) => void;
 }
 

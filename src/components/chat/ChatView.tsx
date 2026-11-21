@@ -10,6 +10,7 @@ import {
 import type { ContentPart } from '@/types/chat';
 import type { ResolvedTheme } from '@/components/renderer/svgUtils';
 import type { LightboxPayload } from '@/components/renderer/LightboxModal';
+import type { SettingsTabKey } from '@/components/settings/SettingsModal';
 import { MessageItem } from './MessageItem';
 import { ChatInput } from './ChatInput';
 import { usePresence } from '@/components/ui/MotionPrimitives';
@@ -17,7 +18,7 @@ import { usePresence } from '@/components/ui/MotionPrimitives';
 interface ChatViewProps {
   theme: ResolvedTheme;
   onInspect: (payload: LightboxPayload) => void;
-  onOpenSettings: (tab?: 'providers' | 'prompts' | 'appearance' | 'data') => void;
+  onOpenSettings: (tab?: SettingsTabKey) => void;
 }
 
 const STARTER_PROMPTS = [

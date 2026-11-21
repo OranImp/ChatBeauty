@@ -64,6 +64,7 @@ export const App: React.FC = () => {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState<boolean>(false);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTabKey>('providers');
+  const [settingsMobileRoot, setSettingsMobileRoot] = useState<boolean>(true);
   const [lightbox, setLightbox] = useState<LightboxPayload | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -202,7 +203,7 @@ export const App: React.FC = () => {
         setTimeout(() => searchInputRef.current?.focus(), 60);
       } else if (e.key === ',') {
         e.preventDefault();
-        setSettingsTab('providers');
+        setSettingsMobileRoot(true);
         setSettingsOpen(true);
       }
     };
@@ -210,8 +211,13 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [createConversation]);
 
-  const openSettings = (tab: SettingsTabKey = 'providers') => {
-    setSettingsTab(tab);
+  const openSettings = (tab?: SettingsTabKey) => {
+    if (tab) {
+      setSettingsTab(tab);
+      setSettingsMobileRoot(false);
+    } else {
+      setSettingsMobileRoot(true);
+    }
     setSettingsOpen(true);
   };
 
@@ -257,6 +263,7 @@ export const App: React.FC = () => {
       <SettingsModal
         open={settingsOpen}
         activeTab={settingsTab}
+        initialMobileRoot={settingsMobileRoot}
         onTabChange={setSettingsTab}
         onClose={() => setSettingsOpen(false)}
       />

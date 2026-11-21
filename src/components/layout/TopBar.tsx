@@ -9,12 +9,13 @@ import {
 import { useAppStore } from '@/store/useAppStore';
 import { exportConversationMarkdown } from '@/db/backup';
 import { triggerDownload } from '@/components/renderer/svgUtils';
+import type { SettingsTabKey } from '@/components/settings/SettingsModal';
 import { usePresence } from '@/components/ui/MotionPrimitives';
 
 interface TopBarProps {
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
-  onOpenSettings: (tab?: 'providers' | 'prompts' | 'appearance' | 'data') => void;
+  onOpenSettings: (tab?: SettingsTabKey) => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -158,7 +159,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           )}
           <button
             type="button"
-            onClick={() => onOpenSettings('providers')}
+            onClick={() => onOpenSettings()}
             className="p-2 rounded-xl text-muted hover:text-fg hover:bg-surface transition"
             title="设置 (Ctrl+,)"
           >
@@ -204,7 +205,7 @@ export const TopBar: React.FC<TopBarProps> = ({
               type="button"
               onClick={() => {
                 setMoreMenuOpen(false);
-                onOpenSettings('appearance');
+                onOpenSettings('general');
               }}
               style={{ '--stagger-i': 2 } as React.CSSProperties}
               className="cb-list-item w-full text-left px-3 py-2 rounded-xl hover:bg-fg/10 active:scale-[0.98] transition"

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import type { Conversation } from '@/types/chat';
+import type { SettingsTabKey } from '@/components/settings/SettingsModal';
 import { usePresence } from '@/components/ui/MotionPrimitives';
 
 interface SidebarProps {
@@ -19,7 +20,7 @@ interface SidebarProps {
   mobileOpen: boolean;
   onCloseMobile: () => void;
   onCollapseDesktop: () => void;
-  onOpenSettings: (tab?: 'providers' | 'prompts' | 'appearance' | 'data') => void;
+  onOpenSettings: (tab?: SettingsTabKey) => void;
   searchInputRef?: React.RefObject<HTMLInputElement>;
 }
 
@@ -255,7 +256,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <button
           type="button"
           onClick={() => {
-            onOpenSettings('providers');
+            onOpenSettings();
             onCloseMobile();
           }}
           className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl bg-bg/60 hover:bg-elevated border border-borderc text-[13px] transition"

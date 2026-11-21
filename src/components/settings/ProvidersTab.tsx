@@ -48,6 +48,11 @@ import {
 } from '@/services/llm/modelProfiles';
 import { ProviderWizard } from './ProviderWizard';
 import { ProtocolSelector } from './ProtocolSelector';
+import { SettingsCollapsibleRow, SettingsSection } from './SettingsPrimitives';
+
+interface ProvidersTabProps {
+  section?: 'providers' | 'generation';
+}
 
 function pruneParams(params?: CustomModelParams): CustomModelParams | undefined {
   if (!params) return undefined;
@@ -92,7 +97,7 @@ function parseOptionalNumber(raw: string): number | undefined {
   return Number.isFinite(num) ? num : undefined;
 }
 
-export const ProvidersTab: React.FC = () => {
+export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers' }) => {
   const {
     providers,
     activeProviderId,
@@ -140,9 +145,9 @@ export const ProvidersTab: React.FC = () => {
   const [benchmarkingAll, setBenchmarkingAll] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
-  // List-view accordions & rule sync states
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [rulesOpen, setRulesOpen] = useState(false);
+  // Sub-accordions inside generation & rule sync view
+  const [globalExtraOpen, setGlobalExtraOpen] = useState(false);
+  const [customRulesOpen, setCustomRulesOpen] = useState(false);
   const [globalExtraText, setGlobalExtraText] = useState(() =>
     generation.extraBody && Object.keys(generation.extraBody).length > 0
       ? JSON.stringify(generation.extraBody, null, 2)
@@ -616,6 +621,285 @@ export const ProvidersTab: React.FC = () => {
     presencePenalty: generation.enabledParams?.presencePenalty ?? false,
     frequencyPenalty: generation.enabledParams?.frequencyPenalty ?? false,
   };
+
+  if (section === 'generation') {
+    const hasGlobalExtra = Boolean(globalExtraText.trim() && globalExtraText.trim() !== '{}');
+    return (
+      <div
+        key="providers-generation"
+        className="space-y-5 text-[13.5px] min-w-0 max-w-full"
+      >
+        <SettingsSection
+          title="全局采样参数"
+          description="默认作用于所有未单独覆写的模型会话"
+        >
+          <div className="px-3.5 sm:px-4 py-3.5 grid grid-cols-1 sm:grid-cols-2 gap-4 min-w-0">
+            <div className="space-y-1.5 min-w-0">
+              <div className="flex items-center justify-between text-xs text-muted">
+                <span className="flex items-center gap-2">
+                  <span>Temperature</span>
+                  <ToggleSwitch
+                    checked={enabled.temperature}
+                    onChange={(checked) =>
+                      void updateGeneration({
+                        enabledParams: { ...enabled, temperature: checked },
+                      })
+                    }
+                    ariaLabel="启用 Temperature"
+                  />
+                </span>
+                <span className="font-mono tabular-nums text-fg">
+                  {enabled.temperature ? generation.temperature.toFixed(2) : '未发送'}
+                </span>
+              </div>
+              <SmoothSlider
+                min={0}
+                max={2}
+                decimals={2}
+                value={generation.temperature}
+                onChange={(val) => void updateGeneration({ temperature: val })}
+                ariaLabel="Temperature"
+              />
+            </div>
+
+            <div className="space-y-1.5 min-w-0">
+              <div className="flex items-center justify-between text-xs text-muted">
+                <span className="flex items-center gap-2">
+                  <span>Top-P</span>
+                  <ToggleSwitch
+                    checked={enabled.topP}
+                    onChange={(checked) =>
+                      void updateGeneration({
+                        enabledParams: { ...enabled, topP: checked },
+                      })
+                    }
+                    ariaLabel="启用 Top-P"
+                  />
+                </span>
+                <span className="font-mono tabular-nums text-fg">
+                  {enabled.topP ? generation.topP.toFixed(2) : '未发送'}
+                </span>
+              </div>
+              <SmoothSlider
+                min={0.1}
+                max={1}
+                decimals={2}
+                value={generation.topP}
+                onChange={(val) => void updateGeneration({ topP: val })}
+                ariaLabel="Top-P"
+              />
+            </div>
+
+            <div className="space-y-1.5 min-w-0">
+              <div className="flex items-center justify-between text-xs text-muted">
+                <span className="flex items-center gap-2">
+                  <span>Presence Penalty</span>
+                  <ToggleSwitch
+                    checked={enabled.presencePenalty}
+                    onChange={(checked) =>
+                      void updateGeneration({
+                        enabledParams: { ...enabled, presencePenalty: checked },
+                      })
+                    }
+                    ariaLabel="启用 Presence Penalty"
+                  />
+                </span>
+                <span className="font-mono tabular-nums text-fg">
+                  {enabled.presencePenalty
+                    ? (generation.presencePenalty ?? 0).toFixed(2)
+                    : '未发送'}
+                </span>
+              </div>
+              <SmoothSlider
+                min={-2}
+                max={2}
+                decimals={2}
+                value={generation.presencePenalty ?? 0}
+                onChange={(val) => void updateGeneration({ presencePenalty: val })}
+                ariaLabel="Presence Penalty"
+              />
+            </div>
+
+            <div className="space-y-1.5 min-w-0">
+              <div className="flex items-center justify-between text-xs text-muted">
+                <span className="flex items-center gap-2">
+                  <span>Frequency Penalty</span>
+                  <ToggleSwitch
+                    checked={enabled.frequencyPenalty}
+                    onChange={(checked) =>
+                      void updateGeneration({
+                        enabledParams: { ...enabled, frequencyPenalty: checked },
+                      })
+                    }
+                    ariaLabel="启用 Frequency Penalty"
+                  />
+                </span>
+                <span className="font-mono tabular-nums text-fg">
+                  {enabled.frequencyPenalty
+                    ? (generation.frequencyPenalty ?? 0).toFixed(2)
+                    : '未发送'}
+                </span>
+              </div>
+              <SmoothSlider
+                min={-2}
+                max={2}
+                decimals={2}
+                value={generation.frequencyPenalty ?? 0}
+                onChange={(val) => void updateGeneration({ frequencyPenalty: val })}
+                ariaLabel="Frequency Penalty"
+              />
+            </div>
+
+            <div className="space-y-1.5 min-w-0">
+              <div className="flex justify-between text-xs text-muted">
+                <span>Max Output Tokens</span>
+                <span className="font-mono tabular-nums text-fg">{generation.maxTokens}</span>
+              </div>
+              <SmoothSlider
+                min={512}
+                max={32768}
+                decimals={0}
+                value={generation.maxTokens}
+                onChange={(val) => void updateGeneration({ maxTokens: val })}
+                ariaLabel="Max Output Tokens"
+              />
+            </div>
+
+            <div className="space-y-1.5 min-w-0">
+              <div className="flex justify-between text-xs text-muted">
+                <span>上下文携带消息数</span>
+                <span className="font-mono tabular-nums text-fg">
+                  {generation.maxContextMessages} 条
+                </span>
+              </div>
+              <SmoothSlider
+                min={4}
+                max={64}
+                decimals={0}
+                value={generation.maxContextMessages}
+                onChange={(val) => void updateGeneration({ maxContextMessages: val })}
+                ariaLabel="上下文携带消息数"
+              />
+            </div>
+          </div>
+
+          <SettingsCollapsibleRow
+            title="全局默认自定义请求体 JSON (extraBody)"
+            description="可选追加到每个请求体中的 JSON 字段"
+            value={hasGlobalExtra ? '已配置' : '默认 {}'}
+            open={globalExtraOpen}
+            onToggle={() => setGlobalExtraOpen((v) => !v)}
+          >
+            <div className="space-y-1.5 min-w-0">
+              <textarea
+                rows={3}
+                value={globalExtraText}
+                onChange={(e) => handleGlobalExtraChange(e.target.value)}
+                placeholder='{"user": "chatbeauty-study"}'
+                className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
+              />
+              {globalExtraErr && (
+                <div className="text-xs text-rose-400 break-words">{globalExtraErr}</div>
+              )}
+            </div>
+          </SettingsCollapsibleRow>
+        </SettingsSection>
+
+        <SettingsSection
+          title="已知模型思考强度规则库"
+          description="按「模型专属指定 → 自定义规则 → 在线规则 → 内置规则」顺序匹配思考档位"
+          action={
+            <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-fg/10 text-muted">
+              内置 {BUILTIN_MODEL_PROFILE_RULES.length} · 在线 {modelProfileSync.remoteRules.length} ·
+              自定义 {modelProfileSync.customRules.length}
+            </span>
+          }
+        >
+          <div className="px-3.5 sm:px-4 py-3 space-y-2.5 min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+              <span>在线规则库 URL（支持正则与中转站前缀如 openai/gpt-5.2）</span>
+              {modelProfileSync.lastStatus && (
+                <span className="text-[11px] font-mono break-all text-fg/80">
+                  {modelProfileSync.lastStatus}
+                </span>
+              )}
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2 min-w-0">
+              <input
+                value={remoteUrlInput}
+                onChange={(e) => setRemoteUrlInput(e.target.value)}
+                placeholder="https://raw.githubusercontent.com/.../model-profiles.json"
+                className="w-full sm:flex-1 min-w-0 px-3 py-1.5 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
+              />
+              <button
+                type="button"
+                disabled={syncingRules}
+                onClick={() => void handleSyncRemoteRules()}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-elevated border border-borderc hover:border-fg/35 text-xs text-fg shrink-0 self-start sm:self-auto active:scale-95 transition disabled:opacity-50"
+              >
+                {syncingRules ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <CloudDownload className="w-3.5 h-3.5" />
+                )}
+                <span>同步在线规则</span>
+              </button>
+            </div>
+          </div>
+
+          <SettingsCollapsibleRow
+            title="自定义匹配规则 (JSON 数组)"
+            description="优先于内置与在线规则生效"
+            value={`${modelProfileSync.customRules.length} 条`}
+            open={customRulesOpen}
+            onToggle={() => setCustomRulesOpen((v) => !v)}
+          >
+            <div className="space-y-2.5 min-w-0">
+              <textarea
+                rows={4}
+                value={customRulesText}
+                onChange={(e) => setCustomRulesText(e.target.value)}
+                placeholder='[{"pattern": "^my-relay-model", "profileId": "openai-gpt5-xhigh"}]'
+                className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
+              />
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomRulesText('');
+                    void saveCustomModelProfileRules([]).then(() =>
+                      setRulesFeedback({ ok: true, text: '已清空自定义规则' })
+                    );
+                  }}
+                  className="px-3 py-1.5 rounded-xl border border-borderc bg-bg hover:bg-elevated text-xs text-muted hover:text-fg transition"
+                >
+                  清空规则
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSaveCustomRules()}
+                  className="px-3.5 py-1.5 rounded-xl bg-accent text-accentfg text-xs font-semibold active:scale-95 transition"
+                >
+                  应用自定义规则
+                </button>
+              </div>
+              {rulesFeedback && (
+                <div
+                  className={`px-3 py-2 rounded-xl border text-xs ${
+                    rulesFeedback.ok
+                      ? 'border-borderc bg-surface text-fg'
+                      : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
+                  }`}
+                >
+                  {rulesFeedback.text}
+                </div>
+              )}
+            </div>
+          </SettingsCollapsibleRow>
+        </SettingsSection>
+      </div>
+    );
+  }
 
   if (view === 'wizard') {
     return (
@@ -1285,27 +1569,26 @@ export const ProvidersTab: React.FC = () => {
   }
 
   return (
-    <div key="providers-list" className={`${viewAnim} space-y-4 text-[13.5px] min-w-0 max-w-full`}>
-      {/* CC-Switch Switchboard Header & Toolbar */}
-      <div className="flex flex-wrap items-start justify-between gap-3 pb-1 min-w-0">
+    <div key="providers-list" className={`${viewAnim} space-y-5 text-[13.5px] min-w-0 max-w-full`}>
+      <div className="flex flex-wrap items-center justify-between gap-2.5 min-w-0">
         <div className="min-w-0">
-          <div className="text-[15px] font-semibold text-fg">模型供应商切换台</div>
+          <div className="text-[14px] font-semibold text-fg">模型供应商与线路</div>
           <div className="text-muted text-xs mt-0.5">
-            仿 CC-Switch 多线路控制台：支持品牌预设、端点测速、备用 URL 切换与 JSON 批量导入导出。
+            支持品牌预设、备用 URL 测速切换与 JSON 批量导入导出。
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
+        <div className="flex flex-wrap items-center gap-1.5 min-w-0 max-w-full">
           {providers.length > 0 && (
             <button
               type="button"
               disabled={benchmarkingAll}
               onClick={() => void handleBenchmarkAll()}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-borderc bg-surface hover:bg-elevated text-fg transition disabled:opacity-50"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-borderc bg-surface hover:bg-elevated text-xs text-fg transition disabled:opacity-50"
             >
               {benchmarkingAll ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <Gauge className="w-4 h-4" />
+                <Gauge className="w-3.5 h-3.5" />
               )}
               <span>全部测速</span>
             </button>
@@ -1313,9 +1596,9 @@ export const ProvidersTab: React.FC = () => {
           <button
             type="button"
             onClick={() => importInputRef.current?.click()}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-borderc bg-surface hover:bg-elevated text-fg transition"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-borderc bg-surface hover:bg-elevated text-xs text-fg transition"
           >
-            <Upload className="w-4 h-4" />
+            <Upload className="w-3.5 h-3.5" />
             <span>导入 JSON</span>
           </button>
           <input
@@ -1329,18 +1612,18 @@ export const ProvidersTab: React.FC = () => {
             <button
               type="button"
               onClick={handleExportProviders}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-borderc bg-surface hover:bg-elevated text-fg transition"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-borderc bg-surface hover:bg-elevated text-xs text-fg transition"
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-3.5 h-3.5" />
               <span>导出 JSON</span>
             </button>
           )}
           <button
             type="button"
             onClick={() => setView('wizard')}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-accent text-accentfg font-semibold shrink-0 hover:opacity-90 active:scale-95 transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-accent text-accentfg text-xs font-semibold shrink-0 hover:opacity-90 active:scale-95 transition"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-3.5 h-3.5" />
             <span>添加供应商</span>
           </button>
         </div>
@@ -1348,7 +1631,7 @@ export const ProvidersTab: React.FC = () => {
 
       {listNotice && (
         <div
-          className={`px-3 py-2 rounded-xl border text-xs ${
+          className={`cb-panel-enter px-3 py-2 rounded-xl border text-xs break-words ${
             listNotice.ok
               ? 'border-borderc bg-surface text-fg'
               : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
@@ -1358,22 +1641,23 @@ export const ProvidersTab: React.FC = () => {
         </div>
       )}
 
-      {/* Configured Providers List */}
-      {providers.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-borderc p-8 text-center space-y-3">
-          <div className="text-muted">尚未添加任何大模型接口</div>
-          <button
-            type="button"
-            onClick={() => setView('wizard')}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-accentfg font-semibold active:scale-95 transition"
-          >
-            <Plus className="w-4 h-4" />
-            <span>立即配置</span>
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-2.5">
-          {providers.map((p) => {
+      <SettingsSection
+        title={providers.length > 0 ? `已配置供应商 (${providers.length})` : '已配置供应商'}
+      >
+        {providers.length === 0 ? (
+          <div className="p-6 sm:p-8 text-center space-y-3">
+            <div className="text-muted text-xs">尚未添加任何大模型接口</div>
+            <button
+              type="button"
+              onClick={() => setView('wizard')}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-accentfg text-xs font-semibold active:scale-95 transition"
+            >
+              <Plus className="w-4 h-4" />
+              <span>立即配置</span>
+            </button>
+          </div>
+        ) : (
+          providers.map((p) => {
             const isActive = p.id === activeProviderId;
             const benchKey = getUrlKey(p);
             const bench = benchmarkByUrl[benchKey];
@@ -1388,15 +1672,15 @@ export const ProvidersTab: React.FC = () => {
             return (
               <div
                 key={p.id}
-                className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 sm:px-4 sm:py-3 rounded-2xl border overflow-hidden min-w-0 transition ${
-                  isActive
-                    ? 'border-accent/45 bg-elevated/80'
-                    : 'border-borderc bg-surface/45 hover:bg-surface/80'
+                className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 sm:px-4 min-w-0 transition ${
+                  isActive ? 'bg-elevated/65' : 'hover:bg-fg/[0.02]'
                 }`}
               >
                 <div className="min-w-0 space-y-1">
                   <div className="flex flex-wrap items-center gap-2 min-w-0">
-                    <span className="font-semibold text-[14px] text-fg truncate max-w-full">{p.name}</span>
+                    <span className="font-semibold text-[14px] text-fg truncate max-w-full">
+                      {p.name}
+                    </span>
                     {isActive && (
                       <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
@@ -1427,7 +1711,7 @@ export const ProvidersTab: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-1.5 min-w-0 max-w-full">
+                <div className="flex flex-wrap items-center gap-1.5 min-w-0 max-w-full shrink-0">
                   {!isActive && (
                     <button
                       type="button"
@@ -1447,9 +1731,9 @@ export const ProvidersTab: React.FC = () => {
                     title="测速主端点"
                   >
                     {isBenching ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
-                      <Gauge className="w-4 h-4" />
+                      <Gauge className="w-3.5 h-3.5" />
                     )}
                     <span>测速</span>
                   </button>
@@ -1459,7 +1743,7 @@ export const ProvidersTab: React.FC = () => {
                     className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-borderc bg-bg hover:bg-elevated text-xs text-muted hover:text-fg transition"
                     title="复制配置"
                   >
-                    <Copy className="w-4 h-4" />
+                    <Copy className="w-3.5 h-3.5" />
                     <span>复制</span>
                   </button>
                   <button
@@ -1468,303 +1752,14 @@ export const ProvidersTab: React.FC = () => {
                     className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-borderc bg-bg hover:bg-elevated text-xs text-fg transition"
                   >
                     <span>编辑</span>
-                    <ChevronRight className="w-4 h-4 text-muted" />
+                    <ChevronRight className="w-3.5 h-3.5 text-muted" />
                   </button>
                 </div>
               </div>
             );
-          })}
-        </div>
-      )}
-
-      {/* Collapsible Global Sampling Parameters */}
-      <div className="rounded-2xl border border-borderc bg-surface/35 overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setAdvancedOpen((v) => !v)}
-          className="w-full flex items-center justify-between px-4 py-3.5 text-left font-semibold text-fg hover:bg-fg/[0.03] transition"
-        >
-          <span>高级采样参数与全局自定义请求体</span>
-          <ChevronRight
-            className={`w-4 h-4 text-muted transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-              advancedOpen ? 'rotate-90 text-fg' : ''
-            }`}
-          />
-        </button>
-        <Collapsible open={advancedOpen}>
-          <div className="px-4 pb-4 pt-3 border-t border-borderc space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-muted">
-                  <span className="flex items-center gap-2">
-                    <span>Temperature</span>
-                    <ToggleSwitch
-                      checked={enabled.temperature}
-                      onChange={(checked) =>
-                        void updateGeneration({
-                          enabledParams: { ...enabled, temperature: checked },
-                        })
-                      }
-                      ariaLabel="启用 Temperature"
-                    />
-                  </span>
-                  <span className="font-mono tabular-nums text-fg">
-                    {enabled.temperature ? generation.temperature.toFixed(2) : '未发送'}
-                  </span>
-                </div>
-                <SmoothSlider
-                  min={0}
-                  max={2}
-                  decimals={2}
-                  value={generation.temperature}
-                  onChange={(val) => void updateGeneration({ temperature: val })}
-                  ariaLabel="Temperature"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-muted">
-                  <span className="flex items-center gap-2">
-                    <span>Top-P</span>
-                    <ToggleSwitch
-                      checked={enabled.topP}
-                      onChange={(checked) =>
-                        void updateGeneration({
-                          enabledParams: { ...enabled, topP: checked },
-                        })
-                      }
-                      ariaLabel="启用 Top-P"
-                    />
-                  </span>
-                  <span className="font-mono tabular-nums text-fg">
-                    {enabled.topP ? generation.topP.toFixed(2) : '未发送'}
-                  </span>
-                </div>
-                <SmoothSlider
-                  min={0.1}
-                  max={1}
-                  decimals={2}
-                  value={generation.topP}
-                  onChange={(val) => void updateGeneration({ topP: val })}
-                  ariaLabel="Top-P"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-muted">
-                  <span className="flex items-center gap-2">
-                    <span>Presence Penalty</span>
-                    <ToggleSwitch
-                      checked={enabled.presencePenalty}
-                      onChange={(checked) =>
-                        void updateGeneration({
-                          enabledParams: { ...enabled, presencePenalty: checked },
-                        })
-                      }
-                      ariaLabel="启用 Presence Penalty"
-                    />
-                  </span>
-                  <span className="font-mono tabular-nums text-fg">
-                    {enabled.presencePenalty
-                      ? (generation.presencePenalty ?? 0).toFixed(2)
-                      : '未发送'}
-                  </span>
-                </div>
-                <SmoothSlider
-                  min={-2}
-                  max={2}
-                  decimals={2}
-                  value={generation.presencePenalty ?? 0}
-                  onChange={(val) => void updateGeneration({ presencePenalty: val })}
-                  ariaLabel="Presence Penalty"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-muted">
-                  <span className="flex items-center gap-2">
-                    <span>Frequency Penalty</span>
-                    <ToggleSwitch
-                      checked={enabled.frequencyPenalty}
-                      onChange={(checked) =>
-                        void updateGeneration({
-                          enabledParams: { ...enabled, frequencyPenalty: checked },
-                        })
-                      }
-                      ariaLabel="启用 Frequency Penalty"
-                    />
-                  </span>
-                  <span className="font-mono tabular-nums text-fg">
-                    {enabled.frequencyPenalty
-                      ? (generation.frequencyPenalty ?? 0).toFixed(2)
-                      : '未发送'}
-                  </span>
-                </div>
-                <SmoothSlider
-                  min={-2}
-                  max={2}
-                  decimals={2}
-                  value={generation.frequencyPenalty ?? 0}
-                  onChange={(val) => void updateGeneration({ frequencyPenalty: val })}
-                  ariaLabel="Frequency Penalty"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex justify-between text-muted">
-                  <span>Max Output Tokens</span>
-                  <span className="font-mono tabular-nums text-fg">{generation.maxTokens}</span>
-                </div>
-                <SmoothSlider
-                  min={512}
-                  max={32768}
-                  decimals={0}
-                  value={generation.maxTokens}
-                  onChange={(val) => void updateGeneration({ maxTokens: val })}
-                  ariaLabel="Max Output Tokens"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex justify-between text-muted">
-                  <span>上下文携带消息数</span>
-                  <span className="font-mono tabular-nums text-fg">
-                    {generation.maxContextMessages} 条
-                  </span>
-                </div>
-                <SmoothSlider
-                  min={4}
-                  max={64}
-                  decimals={0}
-                  value={generation.maxContextMessages}
-                  onChange={(val) => void updateGeneration({ maxContextMessages: val })}
-                  ariaLabel="上下文携带消息数"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1 pt-2 border-t border-borderc min-w-0">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-muted">
-                <span>全局默认自定义请求体 JSON (extraBody)</span>
-                {globalExtraErr && <span className="text-rose-400 break-words">{globalExtraErr}</span>}
-              </div>
-              <textarea
-                rows={2}
-                value={globalExtraText}
-                onChange={(e) => handleGlobalExtraChange(e.target.value)}
-                placeholder='{"user": "chatbeauty-study"}'
-                className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-fg focus:outline-none focus:border-fg/40"
-              />
-            </div>
-          </div>
-        </Collapsible>
-      </div>
-
-      {/* Collapsible Live Model Reasoning Profile Rules */}
-      <div className="rounded-2xl border border-borderc bg-surface/35 overflow-hidden min-w-0">
-        <button
-          type="button"
-          onClick={() => setRulesOpen((v) => !v)}
-          className="w-full min-w-0 flex items-center justify-between gap-2 px-3 sm:px-4 py-3.5 text-left font-semibold text-fg hover:bg-fg/[0.03] transition"
-        >
-          <span className="flex flex-wrap items-center gap-2 min-w-0">
-            <span>已知模型思考强度规则库（可实时更新）</span>
-            <span className="text-[10px] font-mono font-normal px-2 py-0.5 rounded-full bg-fg/10 text-muted max-w-full">
-              内置 {BUILTIN_MODEL_PROFILE_RULES.length} · 在线 {modelProfileSync.remoteRules.length} ·
-              自定义 {modelProfileSync.customRules.length}
-            </span>
-          </span>
-          <ChevronRight
-            className={`w-4 h-4 text-muted shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-              rulesOpen ? 'rotate-90 text-fg' : ''
-            }`}
-          />
-        </button>
-        <Collapsible open={rulesOpen}>
-          <div className="px-3 sm:px-4 pb-4 pt-3 border-t border-borderc space-y-3 min-w-0">
-            <div className="text-muted leading-relaxed">
-              切换模型时将按「模型专属指定 → 自定义规则 → 在线同步规则 → 内置规则」顺序实时分配该系列支持的思考强度档位（支持正则匹配与中转站前缀如{' '}
-              <code className="break-all">openai/gpt-5.2</code>）。
-            </div>
-
-            <div className="space-y-1.5 min-w-0">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-muted">
-                <span>在线规则库 URL</span>
-                {modelProfileSync.lastStatus && (
-                  <span className="text-[11px] font-mono break-all">{modelProfileSync.lastStatus}</span>
-                )}
-              </div>
-              <div className="flex flex-col sm:flex-row gap-2 min-w-0">
-                <input
-                  value={remoteUrlInput}
-                  onChange={(e) => setRemoteUrlInput(e.target.value)}
-                  placeholder="https://raw.githubusercontent.com/.../model-profiles.json"
-                  className="w-full sm:flex-1 min-w-0 px-3 py-1.5 rounded-xl bg-bg border border-borderc font-mono text-fg focus:outline-none focus:border-fg/40"
-                />
-                <button
-                  type="button"
-                  disabled={syncingRules}
-                  onClick={() => void handleSyncRemoteRules()}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-elevated border border-borderc hover:border-fg/35 text-fg shrink-0 self-start sm:self-auto active:scale-95 transition disabled:opacity-50"
-                >
-                  {syncingRules ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <CloudDownload className="w-3.5 h-3.5" />
-                  )}
-                  <span>同步在线规则</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-1.5 pt-2 border-t border-borderc">
-              <div className="flex items-center justify-between text-muted">
-                <span>自定义匹配规则 (JSON 数组，优先于内置/在线规则生效)</span>
-              </div>
-              <textarea
-                rows={4}
-                value={customRulesText}
-                onChange={(e) => setCustomRulesText(e.target.value)}
-                placeholder='[{"pattern": "^my-relay-model", "profileId": "openai-gpt5-xhigh"}]'
-                className="w-full px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-[11px] text-fg focus:outline-none focus:border-fg/40"
-              />
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCustomRulesText('');
-                    void saveCustomModelProfileRules([]).then(() =>
-                      setRulesFeedback({ ok: true, text: '已清空自定义规则' })
-                    );
-                  }}
-                  className="px-3 py-1.5 rounded-xl border border-borderc bg-bg hover:bg-elevated text-muted hover:text-fg transition"
-                >
-                  清空规则
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleSaveCustomRules()}
-                  className="px-3.5 py-1.5 rounded-xl bg-accent text-accentfg font-semibold active:scale-95 transition"
-                >
-                  应用自定义规则
-                </button>
-              </div>
-            </div>
-
-            {rulesFeedback && (
-              <div
-                className={`px-3 py-2 rounded-xl border ${
-                  rulesFeedback.ok
-                    ? 'border-borderc bg-surface text-fg'
-                    : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
-                }`}
-              >
-                {rulesFeedback.text}
-              </div>
-            )}
-          </div>
-        </Collapsible>
-      </div>
+          })
+        )}
+      </SettingsSection>
     </div>
   );
 };
