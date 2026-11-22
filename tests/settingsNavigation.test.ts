@@ -211,6 +211,15 @@ describe('Settings two-level ChatGPT navigation', () => {
     expect(container.textContent).toContain('上下文统计与自动压缩');
     expect(container.textContent).toContain('10 条');
     expect(container.textContent).toContain('80%');
+    const buttonTexts = Array.from(container.querySelectorAll('button')).map((b) =>
+      b.textContent?.trim()
+    );
+    expect(buttonTexts).toContain('200K');
+    expect(buttonTexts).toContain('500K');
+    expect(buttonTexts).toContain('1M');
+    expect(buttonTexts).not.toContain('32K');
+    expect(buttonTexts).not.toContain('64K');
+    expect(buttonTexts).not.toContain('128K');
 
     const memBtn = Array.from(container.querySelectorAll('nav button')).find((b) =>
       b.textContent?.includes('记忆库')

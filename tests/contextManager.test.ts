@@ -29,17 +29,34 @@ function makeMsg(
 }
 
 describe('contextManager — token accounting & auto-compaction', () => {
-  it('defaults keepRecentMessages to 10 and autoCompactThreshold to 80%', () => {
+  it('defaults keepRecentMessages to 10, autoCompactThreshold to 80%, and fallback window to 200K', () => {
     expect(DEFAULT_CONTEXT_SETTINGS.autoCompactEnabled).toBe(true);
     expect(DEFAULT_CONTEXT_SETTINGS.autoCompactThreshold).toBe(0.8);
     expect(DEFAULT_CONTEXT_SETTINGS.keepRecentMessages).toBe(10);
+    expect(DEFAULT_CONTEXT_SETTINGS.defaultContextWindow).toBe(200_000);
   });
 
-  it('infers model context windows accurately with override priority', () => {
-    expect(inferModelContextWindow('gemini-2.5-pro')).toBe(1_000_000);
-    expect(inferModelContextWindow('claude-sonnet-4-5')).toBe(200_000);
-    expect(inferModelContextWindow('gpt-5.2')).toBe(256_000);
+  it('infers late-2026 model context windows accurately with override priority', () => {
+    expect(inferModelContextWindow('gpt-6.2-sol')).toBe(500_000);
+    expect(inferModelContextWindow('gpt-6.1-terra')).toBe(500_000);
+    expect(inferModelContextWindow('gpt-6.2-astra')).toBe(256_000);
+    expect(inferModelContextWindow('gpt-6-luna')).toBe(256_000);
+    expect(inferModelContextWindow('gpt-5.4')).toBe(1_050_000);
+    expect(inferModelContextWindow('claude-fable-5-2')).toBe(1_000_000);
+    expect(inferModelContextWindow('claude-sonnet-5-5')).toBe(1_000_000);
+    expect(inferModelContextWindow('claude-opus-4-6')).toBe(1_000_000);
+    expect(inferModelContextWindow('gemini-4-argon')).toBe(1_048_576);
+    expect(inferModelContextWindow('deepseek-v4-pro')).toBe(1_000_000);
+    expect(inferModelContextWindow('deepseek-flash')).toBe(1_000_000);
+    expect(inferModelContextWindow('qwen4-max')).toBe(1_000_000);
+    expect(inferModelContextWindow('glm-5.3')).toBe(1_000_000);
+    expect(inferModelContextWindow('kimi-k3.1-pro')).toBe(1_000_000);
+    expect(inferModelContextWindow('minimax-m3')).toBe(1_000_000);
+    expect(inferModelContextWindow('doubao-seed-2.1-pro')).toBe(1_024_000);
+    expect(inferModelContextWindow('grok-4.7')).toBe(500_000);
+    expect(inferModelContextWindow('claude-haiku-4-5')).toBe(200_000);
     expect(inferModelContextWindow('deepseek-chat')).toBe(128_000);
+    expect(inferModelContextWindow('unknown-custom-model')).toBe(200_000);
     expect(
       inferModelContextWindow('custom-model', {
         id: 'custom-model',
@@ -49,11 +66,11 @@ describe('contextManager — token accounting & auto-compaction', () => {
       })
     ).toBe(65536);
     expect(
-      inferModelContextWindow('gemini-2.5-pro', undefined, {
-        customMaxContextTokens: 32000,
-        defaultContextWindow: 128000,
+      inferModelContextWindow('gemini-4-argon', undefined, {
+        customMaxContextTokens: 500000,
+        defaultContextWindow: 200000,
       })
-    ).toBe(32000);
+    ).toBe(500000);
   });
 
   it('slices active history strictly after compactedUntilMessageId while preserving full array', () => {

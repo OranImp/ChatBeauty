@@ -633,10 +633,9 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
     const thresholdPercent = Math.round(contextSettings.autoCompactThreshold * 100);
     const contextPresets: Array<{ label: string; value: number }> = [
       { label: '自动识别', value: 0 },
-      { label: '32K', value: 32000 },
-      { label: '64K', value: 64000 },
-      { label: '128K', value: 128000 },
       { label: '200K', value: 200000 },
+      { label: '500K', value: 500000 },
+      { label: '1M', value: 1000000 },
     ];
     return (
       <div
@@ -704,7 +703,11 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
               <span className="font-mono text-[11px] text-fg/80">
                 {contextSettings.customMaxContextTokens > 0
                   ? `${contextSettings.customMaxContextTokens.toLocaleString()} tokens`
-                  : `按模型自动（回退 ${Math.round(contextSettings.defaultContextWindow / 1000)}K）`}
+                  : `按模型自动（回退 ${
+                      contextSettings.defaultContextWindow >= 1_000_000
+                        ? `${Number((contextSettings.defaultContextWindow / 1_000_000).toFixed(2))}M`
+                        : `${Math.round(contextSettings.defaultContextWindow / 1000)}K`
+                    }）`}
               </span>
             </div>
 

@@ -49,7 +49,14 @@ interface ChatInputProps {
 type ComposerMenu = 'plus' | 'model' | 'reasoning' | 'params' | 'context';
 
 function formatCompactTokens(tokens: number): string {
-  if (tokens >= 100000) return `${Math.round(tokens / 1000)}K`;
+  if (tokens >= 1_000_000) {
+    const millions = tokens / 1_000_000;
+    if (tokens === 1_048_576 || Math.abs(millions - Math.round(millions)) < 0.02) {
+      return `${Math.round(millions)}M`;
+    }
+    return `${Number(millions.toFixed(2))}M`;
+  }
+  if (tokens >= 100_000) return `${Math.round(tokens / 1000)}K`;
   if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
   return String(tokens);
 }

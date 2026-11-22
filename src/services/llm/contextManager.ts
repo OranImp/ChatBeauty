@@ -66,15 +66,37 @@ export function inferModelContextWindow(
   }
 
   const id = (modelId || '').toLowerCase();
-  if (/gemini-(4|3|2\.5|2\.0|1\.5)/.test(id)) return 1_000_000;
-  if (/gpt-4\.1/.test(id)) return 1_000_000;
-  if (/claude-(opus|sonnet|haiku|3\.5|3\.7|4|5)/.test(id)) return 200_000;
-  if (/gpt-(6|5)|grok-4/.test(id)) return 256_000;
-  if (/gpt-4|o3|o4|deepseek|qwen3|glm-5|kimi|doubao-seed/.test(id)) return 128_000;
+
+  // Late-2026 Frontier 1M+ Context Tier
+  if (/gpt-5\.4/.test(id)) return 1_050_000;
+  if (/gemini-(?:4|3|2\.5|2\.0|1\.5)/.test(id)) return 1_048_576;
+  if (/doubao-seed-2\.1/.test(id)) return 1_024_000;
+  if (
+    /claude-(?:fable|mythos)/.test(id) ||
+    /claude-(?:opus|sonnet|haiku)[.-](?:5|4[.-][6-9])/.test(id)
+  ) {
+    return 1_000_000;
+  }
+  if (/deepseek-(?:v4|flash)/.test(id)) return 1_000_000;
+  if (/qwen(?:4|3\.[6-9])/.test(id)) return 1_000_000;
+  if (/glm-5\.[2-9]/.test(id)) return 1_000_000;
+  if (/kimi-k3/.test(id)) return 1_000_000;
+  if (/minimax-m3/.test(id)) return 1_000_000;
+  if (/gpt-4\.1|grok-4.*fast/.test(id)) return 1_000_000;
+
+  // 500K / 272K / 256K / 200K / 128K Tiers
+  // GPT-6 Sol/Terra use 500K & Astra/Luna/others use 256K to trigger auto-compaction before doubled long-context pricing.
+  if (/gpt-6.*(?:sol|terra)|grok-4/.test(id)) return 500_000;
+  if (/gpt-5/.test(id)) return 272_000;
+  if (/gpt-6|kimi-k2|doubao-seed|qwen3/.test(id)) return 256_000;
+  if (/o3|o4|claude-(?:opus|sonnet|haiku|3\.5|3\.7|4)|glm-5|minimax-m2/.test(id)) {
+    return 200_000;
+  }
+  if (/gpt-4|gpt-realtime|deepseek-(?:chat|reasoner|r1)|glm-4/.test(id)) return 128_000;
 
   return settings?.defaultContextWindow && settings.defaultContextWindow > 0
     ? settings.defaultContextWindow
-    : 128_000;
+    : 200_000;
 }
 
 /**

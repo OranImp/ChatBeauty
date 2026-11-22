@@ -129,7 +129,7 @@ export interface AppBackupV1 {
 }
 
 export const DEFAULT_CONTEXT_SETTINGS: ContextSettings = {
-  defaultContextWindow: 128000,
+  defaultContextWindow: 200000,
   autoCompactEnabled: true,
   autoCompactThreshold: 0.8,
   keepRecentMessages: 10,

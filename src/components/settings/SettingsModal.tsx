@@ -245,7 +245,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     general: activeThemeLabel,
     typography: `${appearance.fontSize.toFixed(0)}px · ${Math.round((appearance.uiScale ?? 1.06) * 100)}%`,
     data: webdav.enabled ? 'WebDAV 已开启' : '仅本地存储',
-    about: 'v0.5.0',
+    about: 'v0.5.1',
   };
 
   const activeMeta = ITEM_BY_KEY[resolvedSection];
@@ -326,7 +326,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </SettingsSection>
               ))}
               <div className="pt-1 pb-2 text-center text-[11px] font-mono text-muted/80">
-                ChatBeauty v0.5.0 · MIT License
+                ChatBeauty v0.5.1 · MIT License
               </div>
             </div>
           </div>
@@ -417,7 +417,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </nav>
 
             <div className="px-4 py-3 border-t border-borderc text-[11px] font-mono text-muted/80 shrink-0">
-              ChatBeauty v0.5.0 · MIT
+              ChatBeauty v0.5.1 · MIT
             </div>
           </aside>
 
