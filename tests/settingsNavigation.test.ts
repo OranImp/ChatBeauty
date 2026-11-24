@@ -116,6 +116,7 @@ vi.mock('@/services/transport/streamHttp', () => ({
 
 import { SettingsModal, type SettingsTabKey } from '@/components/settings/SettingsModal';
 import { PromptsTab } from '@/components/settings/PromptsTab';
+import { Sidebar } from '@/components/layout/Sidebar';
 
 function setViewportWidth(width: number) {
   Object.defineProperty(window, 'innerWidth', {
@@ -260,6 +261,8 @@ describe('Settings two-level ChatGPT navigation', () => {
     // Level-1 mobile screen displays grouped categories & items without Level-2 detail back button
     expect(container.querySelector('button[aria-label="返回设置"]')).toBeNull();
     expect(container.textContent).toContain('排版与进阶样式');
+    expect(container.textContent).toContain('1 个供应商');
+    expect(container.textContent).not.toContain('gpt-6.2-sol');
 
     const typographyRow = Array.from(container.querySelectorAll('button')).find((b) =>
       b.textContent?.includes('排版与进阶样式')
@@ -331,5 +334,27 @@ describe('Settings two-level ChatGPT navigation', () => {
 
     expect(container.textContent).toContain('返回预设列表');
     expect(container.textContent).toContain('系统提示词正文');
+  });
+
+  it('does not display model name inside Sidebar Settings button', () => {
+    setViewportWidth(1280);
+
+    act(() => {
+      root.render(
+        createElement(Sidebar, {
+          desktopOpen: true,
+          mobileOpen: false,
+          onCloseMobile: vi.fn(),
+          onCollapseDesktop: vi.fn(),
+          onOpenSettings: vi.fn(),
+        })
+      );
+    });
+
+    const settingsBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.trim() === '设置'
+    );
+    expect(settingsBtn).toBeDefined();
+    expect(container.textContent).not.toContain('gpt-6.2-sol');
   });
 });

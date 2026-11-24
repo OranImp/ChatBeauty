@@ -6,7 +6,8 @@ import {
   Settings,
   SquarePen,
 } from 'lucide-react';
-import { useAppStore } from '@/store/useAppStore';
+import { resolveValidProviderAndModel, useAppStore } from '@/store/useAppStore';
+import { getModelDisplayName, hasCustomModelDisplayName } from '@/services/llm/adapters/shared';
 import { exportConversationMarkdown } from '@/db/backup';
 import { triggerDownload } from '@/components/renderer/svgUtils';
 import type { SettingsTabKey } from '@/components/settings/SettingsModal';
@@ -38,7 +39,8 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   useEffect(() => {
     const onOverlayOpen = (e: Event) => {
-      const source = (e as CustomEvent<string>).detail;
+      const detail = (e as CustomEvent<string | { source?: string }>).detail;
+      const source = typeof detail === 'string' ? detail : detail?.source;
       if (source !== 'topbar-more') {
         setMoreMenuOpen(false);
       }
@@ -57,11 +59,15 @@ export const TopBar: React.FC<TopBarProps> = ({
   }, [moreMenuOpen]);
 
   const activeConv = conversations.find((c) => c.id === activeConversationId);
-  const currentProvider = providers.find(
-    (p) => p.id === (activeConv?.providerId || activeProviderId)
+  const { provider: headerProvider, modelId: headerModelId } = resolveValidProviderAndModel(
+    activeConv,
+    providers,
+    activeProviderId,
+    activeModelId
   );
-  const headerModelId =
-    activeConv?.modelId || activeModelId || currentProvider?.defaultModel || '';
+  const headerModelDef = headerProvider?.models.find((m) => m.id === headerModelId);
+  const headerModelLabel = getModelDisplayName(headerModelDef, headerModelId);
+  const headerModelHasAlias = hasCustomModelDisplayName(headerModelDef);
 
   const handleExportMd = () => {
     if (!activeConv) return;
@@ -111,15 +117,15 @@ export const TopBar: React.FC<TopBarProps> = ({
           <div className="w-px h-4 bg-borderc" />
           <button
             type="button"
-            onClick={() =>
-              setMoreMenuOpen((v) => {
-                const next = !v;
-                if (next) {
-                  window.dispatchEvent(new CustomEvent('cb:overlay-open', { detail: 'topbar-more' }));
-                }
-                return next;
-              })
-            }
+            onClick={() => {
+              const next = !moreMenuOpen;
+              setMoreMenuOpen(next);
+              if (next) {
+                window.dispatchEvent(
+                  new CustomEvent('cb:overlay-open', { detail: { source: 'topbar-more' } })
+                );
+              }
+            }}
             className="w-10 h-10 flex items-center justify-center text-fg active:bg-white/10 transition"
             aria-label="更多操作"
           >
@@ -129,32 +135,34 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
 
       {/* Desktop clean header bar */}
-      <div className="hidden md:flex items-center justify-between px-4 h-[52px] border-b border-borderc bg-bg/85 backdrop-blur-md">
-        <div className="flex items-center gap-2.5 min-w-0">
+      <div className="hidden md:flex items-center justify-between gap-3 px-4 h-[52px] border-b border-borderc bg-bg/85 backdrop-blur-md">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
           {!sidebarOpen && (
             <button
               type="button"
               onClick={onToggleSidebar}
-              className="p-2 rounded-xl text-muted hover:text-fg hover:bg-surface transition"
+              className="p-2 rounded-xl text-muted hover:text-fg hover:bg-surface transition shrink-0"
               title="展开侧边栏"
             >
               <PanelLeft className="w-[18px] h-[18px]" />
             </button>
           )}
-          <span className="text-[15px] font-medium text-fg truncate max-w-[42vw]">
+          <span className="text-[15px] font-medium text-fg truncate">
             {activeConv?.title || 'ChatBeauty'}
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           {headerModelId && (
             <button
               type="button"
               onClick={() => onOpenSettings('providers')}
-              className="hidden lg:flex items-center px-2.5 py-1 rounded-lg border border-borderc bg-surface/60 hover:bg-elevated text-xs font-mono text-muted hover:text-fg max-w-[210px] truncate transition"
-              title="管理模型与接口"
+              className={`flex items-center px-2.5 py-1 rounded-lg border border-borderc bg-surface/60 hover:bg-elevated text-xs text-muted hover:text-fg max-w-[140px] lg:max-w-[210px] truncate transition ${
+                headerModelHasAlias ? 'font-sans' : 'font-mono'
+              }`}
+              title={`管理模型与接口 (${headerModelId})`}
             >
-              <span className="truncate">{headerModelId}</span>
+              <span className="truncate">{headerModelLabel}</span>
             </button>
           )}
           <button
@@ -190,9 +198,14 @@ export const TopBar: React.FC<TopBarProps> = ({
       {/* Mobile More Menu */}
       {morePresence.mounted && (
         <>
-          <div className="fixed inset-0 z-30" onClick={() => setMoreMenuOpen(false)} />
           <div
-            className={`absolute right-3.5 top-14 z-40 w-44 rounded-2xl border border-borderc bg-elevated/95 backdrop-blur-xl shadow-2xl p-1.5 text-sm origin-top-right ${
+            className={`fixed inset-0 z-30 ${
+              morePresence.state === 'open' ? '' : 'pointer-events-none'
+            }`}
+            onClick={() => setMoreMenuOpen(false)}
+          />
+          <div
+            className={`absolute right-3.5 top-full mt-1 z-40 w-44 rounded-2xl border border-borderc bg-elevated/95 backdrop-blur-xl shadow-2xl p-1.5 text-sm origin-top-right ${
               morePresence.state === 'open'
                 ? 'cb-popover-top-in'
                 : 'cb-popover-top-out pointer-events-none'

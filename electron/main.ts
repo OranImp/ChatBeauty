@@ -13,6 +13,7 @@ import {
 } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 interface StreamStartPayload {
   requestId: string;
@@ -23,6 +24,8 @@ interface StreamStartPayload {
 }
 
 interface SimpleRequestPayload {
+  requestId?: string;
+  timeoutMs?: number;
   url: string;
   method: string;
   headers: Record<string, string>;
@@ -30,6 +33,26 @@ interface SimpleRequestPayload {
 }
 
 const activeStreams = new Map<string, AbortController>();
+const activeSimpleRequests = new Map<string, AbortController>();
+
+function assertHttpUrl(rawUrl: string): string {
+  const parsed = new URL(rawUrl);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Unsupported URL protocol: ${parsed.protocol}`);
+  }
+  return parsed.toString();
+}
+
+function abortAllActiveHttp(): void {
+  for (const ctrl of activeStreams.values()) {
+    ctrl.abort();
+  }
+  activeStreams.clear();
+  for (const ctrl of activeSimpleRequests.values()) {
+    ctrl.abort();
+  }
+  activeSimpleRequests.clear();
+}
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
@@ -175,7 +198,7 @@ function createWindow(): void {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       backgroundThrottling: false,
     },
   });
@@ -217,8 +240,19 @@ function createWindow(): void {
         : !app.isPackaged && process.argv.includes('--dev')
           ? 'http://localhost:5173'
           : null;
-    if (devBase && url.startsWith(devBase)) return;
-    if (url.startsWith('file://') && /\/dist\/index\.html([?#]|$)/i.test(url)) return;
+    try {
+      const targetUrl = new URL(url);
+      if (devBase && targetUrl.origin === new URL(devBase).origin) return;
+      const expectedFileHref = pathToFileURL(
+        path.join(__dirname, '..', 'dist', 'index.html')
+      ).href;
+      const normalizedTarget = `${targetUrl.origin === 'null' ? `file://${targetUrl.pathname}` : targetUrl.href}`.split(/[?#]/)[0];
+      if (targetUrl.protocol === 'file:' && normalizedTarget.toLowerCase() === expectedFileHref.toLowerCase()) {
+        return;
+      }
+    } catch {
+      // Block malformed navigation targets
+    }
 
     event.preventDefault();
     if (url.startsWith('http://') || url.startsWith('https://')) {
@@ -291,17 +325,19 @@ function createWindow(): void {
   });
 
   mainWindow.on('closed', () => {
+    abortAllActiveHttp();
     mainWindow = null;
   });
 }
 
 ipcMain.handle('http:stream-start', async (event, payload: StreamStartPayload) => {
   const { requestId, url, method, headers, body } = payload;
+  const safeUrl = assertHttpUrl(url);
   const controller = new AbortController();
   activeStreams.set(requestId, controller);
 
   try {
-    const response = await fetch(url, {
+    const response = await fetch(safeUrl, {
       method: method || 'POST',
       headers,
       body,
@@ -332,7 +368,17 @@ ipcMain.handle('http:stream-start', async (event, payload: StreamStartPayload) =
     void (async () => {
       try {
         while (true) {
+          if (sender.isDestroyed() || controller.signal.aborted) {
+            controller.abort();
+            await reader.cancel().catch(() => undefined);
+            break;
+          }
           const { value, done } = await reader.read();
+          if (sender.isDestroyed() || controller.signal.aborted) {
+            controller.abort();
+            await reader.cancel().catch(() => undefined);
+            break;
+          }
           if (done) {
             const tail = decoder.decode();
             if (tail && !sender.isDestroyed()) {
@@ -351,7 +397,7 @@ ipcMain.handle('http:stream-start', async (event, payload: StreamStartPayload) =
           }
         }
       } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') {
+        if (controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
           return;
         }
         if (!sender.isDestroyed()) {
@@ -390,22 +436,47 @@ ipcMain.handle('http:stream-abort', (_event, requestId: string) => {
 });
 
 ipcMain.handle('http:simple-request', async (_event, payload: SimpleRequestPayload) => {
-  const response = await fetch(payload.url, {
-    method: payload.method || 'GET',
-    headers: payload.headers,
-    body: payload.body,
-  });
-  const body = await response.text();
-  const respHeaders: Record<string, string> = {};
-  response.headers.forEach((v, k) => {
-    respHeaders[k] = v;
-  });
-  return {
-    status: response.status,
-    statusText: response.statusText,
-    headers: respHeaders,
-    body,
-  };
+  const safeUrl = assertHttpUrl(payload.url);
+  const controller = new AbortController();
+  const timeoutMs =
+    typeof payload.timeoutMs === 'number' && payload.timeoutMs > 0 ? payload.timeoutMs : 30_000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  if (payload.requestId) {
+    activeSimpleRequests.set(payload.requestId, controller);
+  }
+
+  try {
+    const response = await fetch(safeUrl, {
+      method: payload.method || 'GET',
+      headers: payload.headers,
+      body: payload.body,
+      signal: controller.signal,
+    });
+    const body = await response.text();
+    const respHeaders: Record<string, string> = {};
+    response.headers.forEach((v, k) => {
+      respHeaders[k] = v;
+    });
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      headers: respHeaders,
+      body,
+    };
+  } finally {
+    clearTimeout(timer);
+    if (payload.requestId) {
+      activeSimpleRequests.delete(payload.requestId);
+    }
+  }
+});
+
+ipcMain.handle('http:simple-abort', (_event, requestId: string) => {
+  const ctrl = activeSimpleRequests.get(requestId);
+  if (ctrl) {
+    ctrl.abort();
+    activeSimpleRequests.delete(requestId);
+  }
 });
 
 ipcMain.handle(
@@ -515,6 +586,7 @@ if (!gotTheLock) {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  abortAllActiveHttp();
   if (suspendBlockerId !== null && powerSaveBlocker.isStarted(suspendBlockerId)) {
     powerSaveBlocker.stop(suspendBlockerId);
     suspendBlockerId = null;
@@ -524,7 +596,10 @@ app.on('before-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin' && !closeToTrayEnabled && isQuitting) {
+  if (
+    process.platform !== 'darwin' &&
+    (isQuitting || (!closeToTrayEnabled && !(backgroundGenEnabled && activeGenerationCount > 0)))
+  ) {
     app.quit();
   }
 });

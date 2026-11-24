@@ -306,6 +306,7 @@ export const PromptsTab: React.FC = () => {
               value={p.isBuiltIn ? '内置' : '自定义'}
               onClick={() => {
                 setSelectedPresetId(p.id);
+                setPresetDraft(structuredClone(p));
                 setEditingPresetId(p.id);
               }}
             />

@@ -120,6 +120,7 @@ export function selectActiveHistoryMessages(
 export function computeContextUsageStats(options: {
   messages: Message[];
   compactedUntilMessageId?: string;
+  compactedAt?: number;
   contextSummary?: string;
   systemPromptBase: string;
   retrievedMemoriesText?: string;
@@ -148,26 +149,53 @@ export function computeContextUsageStats(options: {
   const estimatedTotal =
     systemTokens + memoryTokens + summaryTokens + historyTokens + draftTokens;
 
-  // Calibrate against the latest done assistant message's true server input+output tokens
+  // Calibrate against the latest valid done assistant message's server input tokens
+  // Skip calibration if compaction, sliding-window truncation, or early message deletion invalidated the prior prompt.
   let lastCalibratedIdx = -1;
-  for (let i = sentMessages.length - 1; i >= 0; i--) {
-    const m = sentMessages[i];
-    if (m.role === 'assistant' && m.status === 'done' && (m.usage?.inputTokens ?? 0) > 0) {
-      lastCalibratedIdx = i;
-      break;
+  if (activeHistory.length === sentMessages.length) {
+    for (let i = sentMessages.length - 1; i >= 0; i--) {
+      const m = sentMessages[i];
+      if (m.role === 'assistant' && m.status === 'done' && (m.usage?.inputTokens ?? 0) > 0) {
+        const msgTime = m.updatedAt || m.createdAt;
+        if (options.compactedAt && msgTime <= options.compactedAt) {
+          break;
+        }
+        const estimatedPrefixBeforeCalibrated =
+          systemTokens +
+          memoryTokens +
+          summaryTokens +
+          sentMessages.slice(0, i).reduce((sum, prev) => sum + estimateMessageTokens(prev), 0);
+        if (
+          (m.usage?.inputTokens ?? 0) <=
+          Math.max(4000, estimatedPrefixBeforeCalibrated * 2.5)
+        ) {
+          lastCalibratedIdx = i;
+        }
+        break;
+      }
     }
   }
 
   let usedTokens = estimatedTotal;
   if (lastCalibratedIdx >= 0) {
     const calibratedMsg = sentMessages[lastCalibratedIdx];
-    const promptPlusCompletion =
-      (calibratedMsg.usage?.inputTokens ?? 0) +
-      (calibratedMsg.usage?.outputTokens ?? estimateMessageTokens(calibratedMsg));
-    const tailTokens = sentMessages
+    const hasReasoningPart = calibratedMsg.parts.some(
+      (p) => p.type === 'reasoning' && p.text.trim().length > 0
+    );
+    const calibratedCompletionTokens =
+      !hasReasoningPart && (calibratedMsg.usage?.outputTokens ?? 0) > 0
+        ? calibratedMsg.usage!.outputTokens!
+        : estimateMessageTokens(calibratedMsg);
+    const tailTokensAfterCalibrated = sentMessages
       .slice(lastCalibratedIdx + 1)
       .reduce((sum, m) => sum + estimateMessageTokens(m), 0);
-    usedTokens = Math.max(0, promptPlusCompletion + tailTokens + draftTokens);
+    usedTokens = Math.max(
+      0,
+      (calibratedMsg.usage?.inputTokens ?? 0) +
+        calibratedCompletionTokens +
+        tailTokensAfterCalibrated +
+        draftTokens
+    );
   }
 
   const maxTokens = inferModelContextWindow(
@@ -240,7 +268,14 @@ export function buildFallbackLocalSummary(
 ): string {
   const bullets: string[] = [];
   if (previousSummary?.trim()) {
-    bullets.push(previousSummary.trim());
+    const prev = previousSummary.trim();
+    if (prev.length <= 1100) {
+      bullets.push(prev);
+    } else {
+      const tail = prev.slice(-1100);
+      const nl = tail.indexOf('\n');
+      bullets.push(`…\n${nl >= 0 ? tail.slice(nl + 1) : tail}`);
+    }
   }
   for (const msg of messagesToCompact) {
     const roleLabel = msg.role === 'user' ? '用户' : '助手';
@@ -256,5 +291,7 @@ export function buildFallbackLocalSummary(
   }
   const combined = bullets.join('\n');
   if (combined.length <= 2400) return combined;
-  return `${combined.slice(0, 2390)}…`;
+  const tail = combined.slice(-2390);
+  const firstNewline = tail.indexOf('\n');
+  return `…\n${firstNewline >= 0 ? tail.slice(firstNewline + 1) : tail}`;
 }

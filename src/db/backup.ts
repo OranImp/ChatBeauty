@@ -16,6 +16,11 @@ import {
   type WebDavSyncSettings,
 } from '@/types/settings';
 import { DEFAULT_PROMPT_SETTINGS } from '@/services/prompts/presets';
+import {
+  mergeMemoryEntries,
+  parseMemoryDocument,
+  serializeMemoryDocument,
+} from '@/services/memory/memoryEngine';
 import type { PromptSettings } from '@/types/prompt';
 
 export async function exportFullBackup(): Promise<AppBackupV1> {
@@ -32,23 +37,28 @@ export async function exportFullBackup(): Promise<AppBackupV1> {
     context,
     memory,
     memoryDocument,
-  ] = await Promise.all([
-    db.conversations.toArray(),
-    db.messages.toArray(),
-    db.providers.toArray(),
-    db.promptPresets.toArray(),
-    getKv<AppearanceSettings>(KV_KEYS.APPEARANCE, DEFAULT_APPEARANCE_SETTINGS),
-    getKv<GenerationSettings>(KV_KEYS.GENERATION, DEFAULT_GENERATION_SETTINGS),
-    getKv<PromptSettings>(KV_KEYS.PROMPT, DEFAULT_PROMPT_SETTINGS),
-    getKv<WebDavSyncSettings>(KV_KEYS.WEBDAV, DEFAULT_WEBDAV_SETTINGS),
-    getKv<ModelProfileSyncSettings>(
-      KV_KEYS.MODEL_PROFILES,
-      DEFAULT_MODEL_PROFILE_SYNC_SETTINGS
-    ),
-    getKv<ContextSettings>(KV_KEYS.CONTEXT, DEFAULT_CONTEXT_SETTINGS),
-    getKv<MemorySettings>(KV_KEYS.MEMORY_SETTINGS, DEFAULT_MEMORY_SETTINGS),
-    getKv<string>(KV_KEYS.MEMORY_DOCUMENT, ''),
-  ]);
+  ] = await db.transaction(
+    'r',
+    [db.conversations, db.messages, db.providers, db.promptPresets, db.kv],
+    () =>
+      Promise.all([
+        db.conversations.toArray(),
+        db.messages.toArray(),
+        db.providers.toArray(),
+        db.promptPresets.toArray(),
+        getKv<AppearanceSettings>(KV_KEYS.APPEARANCE, DEFAULT_APPEARANCE_SETTINGS),
+        getKv<GenerationSettings>(KV_KEYS.GENERATION, DEFAULT_GENERATION_SETTINGS),
+        getKv<PromptSettings>(KV_KEYS.PROMPT, DEFAULT_PROMPT_SETTINGS),
+        getKv<WebDavSyncSettings>(KV_KEYS.WEBDAV, DEFAULT_WEBDAV_SETTINGS),
+        getKv<ModelProfileSyncSettings>(
+          KV_KEYS.MODEL_PROFILES,
+          DEFAULT_MODEL_PROFILE_SYNC_SETTINGS
+        ),
+        getKv<ContextSettings>(KV_KEYS.CONTEXT, DEFAULT_CONTEXT_SETTINGS),
+        getKv<MemorySettings>(KV_KEYS.MEMORY_SETTINGS, DEFAULT_MEMORY_SETTINGS),
+        getKv<string>(KV_KEYS.MEMORY_DOCUMENT, ''),
+      ])
+  );
 
   return {
     version: 1,
@@ -97,13 +107,47 @@ export async function importFullBackup(
       if (data.providers?.length) await db.providers.bulkPut(data.providers);
       if (data.promptPresets?.length) await db.promptPresets.bulkPut(data.promptPresets);
 
-      if (typeof data.memoryDocument === 'string') {
-        if (mode === 'replace' || data.memoryDocument.trim()) {
-          await setKv(KV_KEYS.MEMORY_DOCUMENT, data.memoryDocument);
+      if (mode === 'replace') {
+        await setKv(
+          KV_KEYS.MEMORY_DOCUMENT,
+          typeof data.memoryDocument === 'string' ? data.memoryDocument : ''
+        );
+      } else if (typeof data.memoryDocument === 'string') {
+        const incomingEntries = parseMemoryDocument(data.memoryDocument);
+        if (incomingEntries.length > 0) {
+          const existingDoc = await getKv<string>(KV_KEYS.MEMORY_DOCUMENT, '');
+          const existingEntries = parseMemoryDocument(existingDoc);
+          const merged = mergeMemoryEntries(existingEntries, incomingEntries, true);
+          await setKv(KV_KEYS.MEMORY_DOCUMENT, serializeMemoryDocument(merged.entries));
         }
       }
 
-      if (data.settings) {
+      if (mode === 'replace') {
+        await Promise.all([
+          setKv(
+            KV_KEYS.APPEARANCE,
+            data.settings?.appearance ?? DEFAULT_APPEARANCE_SETTINGS
+          ),
+          setKv(
+            KV_KEYS.GENERATION,
+            data.settings?.generation ?? DEFAULT_GENERATION_SETTINGS
+          ),
+          setKv(KV_KEYS.PROMPT, data.settings?.prompt ?? DEFAULT_PROMPT_SETTINGS),
+          setKv(KV_KEYS.WEBDAV, data.settings?.webdav ?? DEFAULT_WEBDAV_SETTINGS),
+          setKv(
+            KV_KEYS.MODEL_PROFILES,
+            data.settings?.modelProfiles ?? DEFAULT_MODEL_PROFILE_SYNC_SETTINGS
+          ),
+          setKv(KV_KEYS.CONTEXT, data.settings?.context ?? DEFAULT_CONTEXT_SETTINGS),
+          setKv(
+            KV_KEYS.MEMORY_SETTINGS,
+            data.settings?.memory ?? DEFAULT_MEMORY_SETTINGS
+          ),
+          setKv(KV_KEYS.ACTIVE_CONVERSATION, null),
+          setKv(KV_KEYS.ACTIVE_PROVIDER, null),
+          setKv(KV_KEYS.ACTIVE_MODEL, null),
+        ]);
+      } else if (data.settings) {
         if (data.settings.appearance) await setKv(KV_KEYS.APPEARANCE, data.settings.appearance);
         if (data.settings.generation) await setKv(KV_KEYS.GENERATION, data.settings.generation);
         if (data.settings.prompt) await setKv(KV_KEYS.PROMPT, data.settings.prompt);
@@ -112,7 +156,7 @@ export async function importFullBackup(
             KV_KEYS.WEBDAV,
             DEFAULT_WEBDAV_SETTINGS
           );
-          if (mode === 'replace' || !currentWebdav.endpoint.trim()) {
+          if (!currentWebdav.endpoint.trim()) {
             await setKv(KV_KEYS.WEBDAV, data.settings.webdav);
           }
         }
@@ -125,14 +169,6 @@ export async function importFullBackup(
         if (data.settings.memory) {
           await setKv(KV_KEYS.MEMORY_SETTINGS, data.settings.memory);
         }
-      }
-
-      if (mode === 'replace') {
-        await Promise.all([
-          setKv(KV_KEYS.ACTIVE_CONVERSATION, null),
-          setKv(KV_KEYS.ACTIVE_PROVIDER, null),
-          setKv(KV_KEYS.ACTIVE_MODEL, null),
-        ]);
       }
     }
   );

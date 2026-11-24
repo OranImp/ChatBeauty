@@ -18,7 +18,8 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import type { MemoryCategory, MemoryEntry } from '@/types/memory';
-import { MEMORY_FILE_HEADER, parseMemoryDocument } from '@/services/memory/memoryEngine';
+import { MEMORY_FILE_HEADER, detectSensitiveInfo, parseMemoryDocument } from '@/services/memory/memoryEngine';
+import { triggerDownload } from '@/components/renderer/svgUtils';
 import { SmoothSlider } from '@/components/ui/SmoothSlider';
 import {
   SettingsCollapsibleRow,
@@ -52,6 +53,7 @@ export const MemoryTab: React.FC = () => {
 
   // Source editor state
   const [sourceText, setSourceText] = useState(memoryDocument || `${MEMORY_FILE_HEADER}\n`);
+  const [sourceDirty, setSourceDirty] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
 
   // New / Edit entry composer
@@ -66,8 +68,10 @@ export const MemoryTab: React.FC = () => {
   const importRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    setSourceText(memoryDocument || `${MEMORY_FILE_HEADER}\n`);
-  }, [memoryDocument]);
+    if (!sourceDirty) {
+      setSourceText(memoryDocument || `${MEMORY_FILE_HEADER}\n`);
+    }
+  }, [memoryDocument, sourceDirty]);
 
   const flash = (ok: boolean, text: string) => {
     setNotice({ ok, text });
@@ -121,6 +125,9 @@ export const MemoryTab: React.FC = () => {
       return;
     }
     const existing = editingId ? memoryEntries.find((e) => e.id === editingId) : undefined;
+    const autoSensitive =
+      !existing && !draftSensitive ? detectSensitiveInfo(clean).isSensitive : false;
+    const finalSensitive = draftSensitive || autoSensitive;
     const now = Date.now();
     const tags = draftTags
       .split(/[,，]/)
@@ -134,7 +141,7 @@ export const MemoryTab: React.FC = () => {
       content: clean,
       tags,
       pinned: draftPinned,
-      sensitive: draftSensitive,
+      sensitive: finalSensitive,
       createdAt: existing?.createdAt || now,
       updatedAt: now,
       sourceConvId: existing?.sourceConvId,
@@ -142,18 +149,22 @@ export const MemoryTab: React.FC = () => {
 
     setCreating(false);
     setEditingId(null);
-    flash(true, existing ? '已更新记忆条目' : '已添加到单文件记忆库');
+    flash(
+      true,
+      autoSensitive
+        ? '检测到疑似敏感信息，已自动标记为敏感记忆'
+        : existing
+          ? '已更新记忆条目'
+          : '已添加到单文件记忆库'
+    );
   };
 
   const handleExportMd = () => {
     const content = memoryDocument || `${MEMORY_FILE_HEADER}\n`;
-    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'chatbeauty-memory.md';
-    a.click();
-    URL.revokeObjectURL(url);
+    triggerDownload(
+      'chatbeauty-memory.md',
+      new Blob([content], { type: 'text/markdown;charset=utf-8' })
+    );
     flash(true, '已导出单文件记忆库 chatbeauty-memory.md');
   };
 
@@ -360,14 +371,20 @@ export const MemoryTab: React.FC = () => {
             <textarea
               rows={13}
               value={sourceText}
-              onChange={(e) => setSourceText(e.target.value)}
+              onChange={(e) => {
+                setSourceDirty(true);
+                setSourceText(e.target.value);
+              }}
               placeholder={`${MEMORY_FILE_HEADER}\n\n## 个人画像与身份 (profile)\n- 喜欢严谨直观的推导`}
               className="w-full min-w-0 px-3 py-2.5 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg leading-relaxed focus:outline-none focus:border-fg/40"
             />
             <div className="flex flex-wrap items-center justify-between gap-2">
               <button
                 type="button"
-                onClick={() => setSourceText(memoryDocument || `${MEMORY_FILE_HEADER}\n`)}
+                onClick={() => {
+                  setSourceText(memoryDocument || `${MEMORY_FILE_HEADER}\n`);
+                  setSourceDirty(false);
+                }}
                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-borderc bg-bg hover:bg-elevated text-xs text-muted hover:text-fg transition"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
@@ -376,9 +393,10 @@ export const MemoryTab: React.FC = () => {
               <button
                 type="button"
                 onClick={() =>
-                  void saveMemoryDocument(sourceText).then(() =>
-                    flash(true, `已保存单文件记忆库（共 ${parsedSourcePreviewCount} 条）`)
-                  )
+                  void saveMemoryDocument(sourceText).then(() => {
+                    setSourceDirty(false);
+                    flash(true, `已保存单文件记忆库（共 ${parsedSourcePreviewCount} 条）`);
+                  })
                 }
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-accent text-accentfg text-xs font-semibold hover:opacity-90 active:scale-95 transition"
               >

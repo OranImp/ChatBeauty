@@ -61,4 +61,19 @@ describe('svgUtils.sanitizeAndHarmonizeSvg', () => {
     expect(res?.html).toContain('paint-order: stroke fill');
     expect(res?.html).toContain('currentColor');
   });
+
+  it('strips <style> tags, removes external <image> URLs, and ensures xmlns on SVG root', () => {
+    const riskySvg = `<svg viewBox="0 0 120 80">
+      <style>rect { fill: url(https://evil.test/track); }</style>
+      <image href="https://evil.test/pixel.png" width="10" height="10"/>
+      <image xlink:href="//evil.test/proto.png" width="10" height="10"/>
+      <rect width="120" height="80" fill="#ffffff"/>
+    </svg>`;
+
+    const res = sanitizeAndHarmonizeSvg(riskySvg, 'dark');
+    expect(res).not.toBeNull();
+    expect(res?.html).not.toContain('<style');
+    expect(res?.html).not.toContain('evil.test');
+    expect(res?.html).toContain('xmlns="http://www.w3.org/2000/svg"');
+  });
 });

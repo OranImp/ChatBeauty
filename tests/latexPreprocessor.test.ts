@@ -65,4 +65,36 @@ describe('preprocessLatex', () => {
     ].join('\n');
     expect(splitMarkdownBlocks(listMd)).toHaveLength(1);
   });
+
+  it('handles Wave 4 regressions: backtick info guard, CommonMark multi-backtick spans, bare aligned with \\[6pt], and streaming fenced $$', () => {
+    const inlineWithFenceLookalike = '```foo`bar` still inline\n\\(a+b\\)';
+    expect(preprocessLatex(inlineWithFenceLookalike)).toContain('$a+b$');
+
+    const multiBacktickSpan = 'Inline ``a ` \\(not math\\) b`` ends here and \\(real\\)';
+    const outSpan = preprocessLatex(multiBacktickSpan);
+    expect(outSpan).toContain('``a ` \\(not math\\) b``');
+    expect(outSpan).toContain('$real$');
+
+    const bareAligned = '\\begin{aligned}\nx &= 1 \\\\[6pt]\ny &= 2\n\\end{aligned}';
+    const outBare = preprocessLatex(bareAligned);
+    expect(outBare).toContain('\\\\[6pt]');
+    expect(outBare.match(/\$\$/g)?.length).toBe(2);
+
+    const streamingFenceWithDD = '```tex\n$$ unclosed formula inside code fence';
+    const outFence = preprocessLatex(streamingFenceWithDD, true);
+    expect(outFence.endsWith('\n$$')).toBe(false);
+  });
+
+  it('preserves loose lists, closing $$ punctuation, inline $$ openers, and splits indented code after plain paragraphs', () => {
+    const looseList = ['1. First item', '', '   continuation', '', '2. Second item'].join('\n');
+    expect(splitMarkdownBlocks(looseList)).toHaveLength(1);
+
+    const mathWithPeriod = ['- Formula: $$', '  x = 1', '  $$.', '', 'Next paragraph'].join('\n');
+    const mathBlocks = splitMarkdownBlocks(mathWithPeriod);
+    expect(mathBlocks).toHaveLength(2);
+    expect(mathBlocks[1]).toBe('Next paragraph');
+
+    const paraThenIndentedCode = ['Plain paragraph.', '', '    const code = 1;'].join('\n');
+    expect(splitMarkdownBlocks(paraThenIndentedCode)).toHaveLength(2);
+  });
 });

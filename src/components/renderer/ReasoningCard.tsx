@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { MarkdownBlock } from './MarkdownBlock';
+import { preprocessLatex } from './latexPreprocessor';
+import { splitMarkdownBlocks } from './blockSplitter';
 import { Collapsible } from '@/components/ui/MotionPrimitives';
 import type { AppearanceSettings } from '@/types/settings';
 import type { ResolvedTheme } from './svgUtils';
@@ -24,6 +26,11 @@ export const ReasoningCard: React.FC<ReasoningCardProps> = ({
   onInspect,
 }) => {
   const [open, setOpen] = useState(Boolean(isStreaming));
+
+  const blocks = useMemo(
+    () => splitMarkdownBlocks(preprocessLatex(text, Boolean(isStreaming))),
+    [text, isStreaming]
+  );
 
   if (!text.trim() && !isStreaming) return null;
 
@@ -55,13 +62,16 @@ export const ReasoningCard: React.FC<ReasoningCardProps> = ({
       <Collapsible open={open}>
         <div className="px-3.5 pb-3 pt-2 border-t border-borderc text-[13px] text-muted leading-relaxed">
           <div className="border-l-2 border-accent/55 pl-3">
-            <MarkdownBlock
-              content={text}
-              theme={theme}
-              appearance={appearance}
-              isStreaming={isStreaming}
-              onInspect={onInspect}
-            />
+            {blocks.map((block, idx) => (
+              <MarkdownBlock
+                key={idx}
+                content={block}
+                theme={theme}
+                appearance={appearance}
+                isStreaming={Boolean(isStreaming) && idx === blocks.length - 1}
+                onInspect={onInspect}
+              />
+            ))}
           </div>
         </div>
       </Collapsible>

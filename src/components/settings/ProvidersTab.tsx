@@ -24,6 +24,8 @@ import { PROTOCOL_TEMPLATES } from '@/services/llm/registry';
 import {
   buildPreviewHeadersJson,
   extractExtraHeadersFromPreviewJson,
+  getModelDisplayName,
+  hasCustomModelDisplayName,
   toModelDefinition,
   trimBaseUrl,
 } from '@/services/llm/adapters/shared';
@@ -168,16 +170,22 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
   );
   const [syncingRules, setSyncingRules] = useState(false);
   const [rulesFeedback, setRulesFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+  const customExtraHeadersRef = useRef(customExtraHeaders);
+  customExtraHeadersRef.current = customExtraHeaders;
+  const headersErrRef = useRef(headersErr);
+  headersErrRef.current = headersErr;
+  const activeEditDraftIdRef = useRef<string | null>(null);
+  activeEditDraftIdRef.current = view === 'edit' && draft ? draft.id : null;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
   useEffect(() => {
     setRemoteUrlInput(modelProfileSync.remoteUrl);
   }, [modelProfileSync.remoteUrl]);
 
   useEffect(() => {
-    if (view !== 'edit' || !draft || headersErr) return;
-    setHeadersText(buildPreviewHeadersJson(draft, customExtraHeaders));
-    // Re-sync live request headers preview whenever provider fields change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (view !== 'edit' || !draft || headersErrRef.current) return;
+    setHeadersText(buildPreviewHeadersJson(draft, customExtraHeadersRef.current));
   }, [view, draft?.protocol, draft?.baseUrl, draft?.apiKey, draft?.presetId]);
 
   const handleHeadersJsonChange = (nextText: string) => {
@@ -185,15 +193,21 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
     if (!draft) return;
     try {
       const nextExtra = extractExtraHeadersFromPreviewJson(nextText, draft);
+      customExtraHeadersRef.current = nextExtra;
+      headersErrRef.current = null;
       setCustomExtraHeaders(nextExtra);
       setHeadersErr(null);
     } catch (err) {
-      setHeadersErr(err instanceof Error ? err.message : '自定义 Headers JSON 格式无效');
+      const msg = err instanceof Error ? err.message : '自定义 Headers JSON 格式无效';
+      headersErrRef.current = msg;
+      setHeadersErr(msg);
     }
   };
 
   const resetAutoHeaders = () => {
     if (!draft) return;
+    customExtraHeadersRef.current = {};
+    headersErrRef.current = null;
     setCustomExtraHeaders({});
     setHeadersErr(null);
     setHeadersText(buildPreviewHeadersJson(draft, {}));
@@ -218,6 +232,15 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
 
   const getUrlKey = (p: ProviderConfig, urlOverride?: string) =>
     `${p.id}::${trimBaseUrl(urlOverride || p.baseUrl || PROTOCOL_TEMPLATES[p.protocol].defaultBaseUrl)}`;
+
+  const getLiveBenchmarkCandidate = (d: ProviderConfig): ProviderConfig => {
+    try {
+      const parsed = extractExtraHeadersFromPreviewJson(headersText, d);
+      return { ...d, extraHeaders: parsed };
+    } catch {
+      return { ...d, extraHeaders: customExtraHeadersRef.current };
+    }
+  };
 
   const handleBenchmarkEndpoint = async (p: ProviderConfig, urlOverride?: string) => {
     const key = getUrlKey(p, urlOverride);
@@ -304,22 +327,82 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
             : `prov_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`;
         existingIds.add(nextId);
 
-        const models =
-          Array.isArray(item.models) && item.models.length > 0
-            ? item.models.filter((m): m is ModelDefinition => Boolean(m && typeof m.id === 'string'))
-            : [...tpl.suggestedModels];
+        const seenModelIds = new Set<string>();
+        const normalizedModels: ModelDefinition[] = [];
+        if (Array.isArray(item.models)) {
+          for (const rawM of item.models) {
+            if (!rawM || typeof rawM !== 'object') continue;
+            const rec = rawM as Partial<ModelDefinition>;
+            const id = typeof rec.id === 'string' ? rec.id.trim() : '';
+            if (!id || seenModelIds.has(id)) continue;
+            seenModelIds.add(id);
+            const fallback = toModelDefinition(id);
+            normalizedModels.push({
+              ...fallback,
+              ...(typeof rec.name === 'string' && rec.name.trim()
+                ? { name: rec.name.trim() }
+                : {}),
+              ...(typeof rec.contextLength === 'number' &&
+              Number.isFinite(rec.contextLength) &&
+              rec.contextLength > 0
+                ? { contextLength: Math.round(rec.contextLength) }
+                : {}),
+              ...(rec.capabilities && typeof rec.capabilities === 'object'
+                ? {
+                    capabilities: {
+                      ...fallback.capabilities,
+                      ...(typeof rec.capabilities.vision === 'boolean'
+                        ? { vision: rec.capabilities.vision }
+                        : {}),
+                      ...(typeof rec.capabilities.reasoning === 'boolean'
+                        ? { reasoning: rec.capabilities.reasoning }
+                        : {}),
+                      ...(typeof rec.capabilities.imageGen === 'boolean'
+                        ? { imageGen: rec.capabilities.imageGen }
+                        : {}),
+                      ...(typeof rec.capabilities.speechIn === 'boolean'
+                        ? { speechIn: rec.capabilities.speechIn }
+                        : {}),
+                      ...(typeof rec.capabilities.speechOut === 'boolean'
+                        ? { speechOut: rec.capabilities.speechOut }
+                        : {}),
+                    },
+                  }
+                : {}),
+              ...(rec.params && typeof rec.params === 'object'
+                ? { params: pruneParams(rec.params) }
+                : {}),
+            });
+          }
+        }
+        const models = normalizedModels.length > 0 ? normalizedModels : [...tpl.suggestedModels];
         const primaryUrl = trimBaseUrl(item.baseUrl);
+        if (!/^https?:\/\/\S+/i.test(primaryUrl)) {
+          continue;
+        }
         const backupBaseUrls = Array.isArray(item.backupBaseUrls)
           ? Array.from(
               new Set(
                 item.backupBaseUrls
                   .filter((u): u is string => typeof u === 'string')
                   .map((u) => trimBaseUrl(u))
-                  .filter((u) => Boolean(u) && u !== primaryUrl)
+                  .filter((u) => Boolean(u) && /^https?:\/\/\S+/i.test(u) && u !== primaryUrl)
               )
             )
           : [];
+        const rawHeaders =
+          item.extraHeaders && typeof item.extraHeaders === 'object' && !Array.isArray(item.extraHeaders)
+            ? Object.fromEntries(
+                Object.entries(item.extraHeaders).filter(
+                  ([k, v]) => k.trim().length > 0 && typeof v === 'string'
+                )
+              )
+            : {};
 
+        const candidateDefault =
+          typeof item.defaultModel === 'string' && item.defaultModel.trim()
+            ? item.defaultModel.trim()
+            : '';
         const normalized: ProviderConfig = {
           id: nextId,
           name: item.name.trim(),
@@ -327,13 +410,9 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
           baseUrl: primaryUrl,
           backupBaseUrls,
           apiKey: typeof item.apiKey === 'string' ? item.apiKey : '',
-          defaultModel:
-            typeof item.defaultModel === 'string' && item.defaultModel.trim()
-              ? item.defaultModel.trim()
-              : models[0]?.id || tpl.placeholderModel,
+          defaultModel: candidateDefault || models[0]?.id || tpl.placeholderModel,
           models,
-          extraHeaders:
-            item.extraHeaders && typeof item.extraHeaders === 'object' ? item.extraHeaders : {},
+          extraHeaders: rawHeaders,
           presetId: typeof item.presetId === 'string' ? item.presetId : undefined,
           enabled: item.enabled !== false,
           createdAt: typeof item.createdAt === 'number' ? item.createdAt : Date.now(),
@@ -388,6 +467,7 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
 
     const cleanModels = draft.models.map((m) => ({
       ...m,
+      name: m.name.trim() || m.id,
       params: pruneParams(m.params),
     }));
     const cleanDefault = draft.defaultModel.trim() || cleanModels[0]?.id || '';
@@ -433,32 +513,59 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
       });
       return;
     }
+    const targetId = draft.id;
     const candidate: ProviderConfig = { ...draft, extraHeaders: parsedHeaders };
     setFetchingModels(true);
     setStatusMsg(null);
     try {
       const fetched = await fetchProviderModels(candidate);
+      if (activeEditDraftIdRef.current !== targetId) return;
       if (fetched.length === 0) {
         setStatusMsg({ ok: false, text: '接口未返回模型列表，可手动添加模型 ID' });
       } else {
-        const existingMap = new Map(candidate.models.map((m) => [m.id, m]));
+        const latestDraft = draftRef.current;
+        if (!latestDraft || latestDraft.id !== targetId) return;
+        const existingMap = new Map(latestDraft.models.map((m) => [m.id, m]));
         const merged = fetched.map((m) => {
           const prev = existingMap.get(m.id);
-          return prev?.params ? { ...m, params: prev.params } : m;
+          const hasPrevAlias = Boolean(prev?.name?.trim() && prev.name.trim() !== prev.id);
+          return {
+            ...m,
+            ...(hasPrevAlias ? { name: prev!.name.trim() } : {}),
+            ...(prev?.params ? { params: prev.params } : {}),
+          };
         });
-        const nextDefault = candidate.defaultModel || merged[0].id;
-        const nextDraft = { ...candidate, models: merged, defaultModel: nextDefault };
+        const nextDefault =
+          latestDraft.defaultModel && merged.some((m) => m.id === latestDraft.defaultModel)
+            ? latestDraft.defaultModel
+            : merged[0].id;
+        let latestHeaders = parsedHeaders;
+        try {
+          latestHeaders = extractExtraHeadersFromPreviewJson(headersText, latestDraft);
+        } catch {
+          // Keep headers captured before fetch
+        }
+        const nextDraft: ProviderConfig = {
+          ...latestDraft,
+          extraHeaders: latestHeaders,
+          models: merged,
+          defaultModel: nextDefault,
+        };
         setDraft(nextDraft);
         await saveProvider(nextDraft);
+        if (activeEditDraftIdRef.current !== targetId) return;
         setStatusMsg({ ok: true, text: `已拉取并保存 ${merged.length} 个可用模型` });
       }
     } catch (err) {
+      if (activeEditDraftIdRef.current !== targetId) return;
       setStatusMsg({
         ok: false,
         text: err instanceof Error ? err.message : '拉取模型列表失败',
       });
     } finally {
-      setFetchingModels(false);
+      if (activeEditDraftIdRef.current === targetId || activeEditDraftIdRef.current === null) {
+        setFetchingModels(false);
+      }
     }
   };
 
@@ -526,6 +633,16 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
           : '{}'),
     }));
     setExpandedModelId(m.id);
+  };
+
+  const patchModelName = (modelId: string, nextName: string) => {
+    setDraft((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        models: prev.models.map((m) => (m.id === modelId ? { ...m, name: nextName } : m)),
+      };
+    });
   };
 
   const patchModelParams = (modelId: string, patch: Partial<CustomModelParams>) => {
@@ -919,7 +1036,9 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
                 className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
               />
               {globalExtraErr && (
-                <div className="text-xs text-rose-400 break-words">{globalExtraErr}</div>
+                <div className="text-xs text-rose-600 dark:text-rose-400 break-words">
+                  {globalExtraErr}
+                </div>
               )}
             </div>
           </SettingsCollapsibleRow>
@@ -965,6 +1084,17 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
                 <span>同步在线规则</span>
               </button>
             </div>
+            {rulesFeedback && (
+              <div
+                className={`px-3 py-2 rounded-xl border text-xs ${
+                  rulesFeedback.ok
+                    ? 'border-borderc bg-surface text-fg'
+                    : 'border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300'
+                }`}
+              >
+                {rulesFeedback.text}
+              </div>
+            )}
           </div>
 
           <SettingsCollapsibleRow
@@ -1003,17 +1133,6 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
                   应用自定义规则
                 </button>
               </div>
-              {rulesFeedback && (
-                <div
-                  className={`px-3 py-2 rounded-xl border text-xs ${
-                    rulesFeedback.ok
-                      ? 'border-borderc bg-surface text-fg'
-                      : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
-                  }`}
-                >
-                  {rulesFeedback.text}
-                </div>
-              )}
             </div>
           </SettingsCollapsibleRow>
         </SettingsSection>
@@ -1135,9 +1254,9 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
                     className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${
                       primaryBench.ok
                         ? primaryBench.latencyMs < 800
-                          ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-400'
-                          : 'border-amber-500/35 bg-amber-500/10 text-amber-300'
-                        : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
+                          ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                          : 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                        : 'border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300'
                     }`}
                   >
                     {primaryBench.ok
@@ -1148,7 +1267,7 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
                 <button
                   type="button"
                   disabled={primaryBenching}
-                  onClick={() => void handleBenchmarkEndpoint(draft)}
+                  onClick={() => void handleBenchmarkEndpoint(getLiveBenchmarkCandidate(draft))}
                   className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-borderc bg-bg hover:bg-elevated text-xs text-fg transition disabled:opacity-50"
                 >
                   {primaryBenching ? (
@@ -1195,9 +1314,9 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
                             className={`text-[11px] font-mono px-1.5 py-0.5 rounded border ${
                               bench.ok
                                 ? bench.latencyMs < 800
-                                  ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-400'
-                                  : 'border-amber-500/35 bg-amber-500/10 text-amber-300'
-                                : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
+                                  ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                                  : 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                                : 'border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300'
                             }`}
                           >
                             {bench.ok ? `${bench.latencyMs} ms` : bench.error || '不可用'}
@@ -1206,7 +1325,9 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
                         <button
                           type="button"
                           disabled={isBusy}
-                          onClick={() => void handleBenchmarkEndpoint(draft, url)}
+                          onClick={() =>
+                            void handleBenchmarkEndpoint(getLiveBenchmarkCandidate(draft), url)
+                          }
                           className="px-2 py-1 rounded-lg border border-borderc bg-bg hover:bg-elevated text-xs text-muted hover:text-fg transition disabled:opacity-50"
                         >
                           {isBusy ? '测速中' : '测速'}
@@ -1365,7 +1486,9 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
                   customRules: modelProfileSync.customRules,
                   remoteRules: modelProfileSync.remoteRules,
                 });
-                const hasCustom = Boolean(m.params && Object.keys(m.params).length > 0);
+                const hasAlias = hasCustomModelDisplayName(m);
+                const hasCustomParams = Boolean(m.params && Object.keys(m.params).length > 0);
+                const hasCustom = hasCustomParams || hasAlias;
                 return (
                   <div
                     key={m.id}
@@ -1380,21 +1503,39 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
                         type="button"
                         onClick={() => {
                           setDraft({ ...draft, defaultModel: m.id });
-                          const savedProv = providers.find((p) => p.id === draft.id);
-                          if (savedProv?.models.some((x) => x.id === m.id)) {
-                            void setActiveProviderModel(draft.id, m.id);
+                          if (activeProviderId === draft.id) {
+                            const savedProv = providers.find((p) => p.id === draft.id);
+                            if (savedProv?.models.some((x) => x.id === m.id)) {
+                              void setActiveProviderModel(draft.id, m.id);
+                            }
                           }
                         }}
                         className="flex-1 text-left flex items-center justify-between min-w-0 gap-2"
                       >
-                        <span className="truncate font-mono text-fg">{m.id}</span>
+                        <div className="min-w-0">
+                          <div
+                            className={`truncate text-fg ${
+                              hasAlias ? 'font-sans font-medium' : 'font-mono'
+                            }`}
+                          >
+                            {getModelDisplayName(m, m.id)}
+                          </div>
+                          {hasAlias && (
+                            <div className="truncate font-mono text-[10px] text-muted/85">
+                              ID: {m.id}
+                            </div>
+                          )}
+                        </div>
                         <span className="flex items-center gap-1.5 shrink-0">
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-fg/5 text-muted truncate max-w-[130px]">
                             {resolvedProf.familyName.split('（')[0]}
                           </span>
-                          {(isActive || isDefault) && (
-                            <span className="text-[10px] text-accent">默认</span>
+                          {isActive && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+                              当前
+                            </span>
                           )}
+                          {isDefault && <span className="text-[10px] text-accent">默认</span>}
                         </span>
                       </button>
 
@@ -1424,6 +1565,21 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
                                 ? remaining[0]?.id ?? ''
                                 : draft.defaultModel,
                           });
+                          setModelExtraJson((prev) => {
+                            if (!(m.id in prev)) return prev;
+                            const next = { ...prev };
+                            delete next[m.id];
+                            return next;
+                          });
+                          setModelExtraErr((prev) => {
+                            if (!(m.id in prev)) return prev;
+                            const next = { ...prev };
+                            delete next[m.id];
+                            return next;
+                          });
+                          if (expandedModelId === m.id) {
+                            setExpandedModelId(null);
+                          }
                         }}
                         className="p-1 text-muted hover:text-rose-400 shrink-0"
                         title="删除模型"
@@ -1434,9 +1590,38 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
 
                     <Collapsible open={isExpanded}>
                       <div className="px-3 pb-3 pt-2.5 border-t border-borderc bg-bg/50 space-y-3 text-[11px]">
+                        <div className="rounded-lg border border-borderc/70 bg-surface/60 px-2.5 py-2 space-y-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-muted">模型 ID（API 请求用）</span>
+                            <span className="font-mono text-fg select-all break-all">{m.id}</span>
+                          </div>
+                          <label className="block space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-muted">自定义显示名称</span>
+                              {m.name.trim() !== m.id && (
+                                <button
+                                  type="button"
+                                  onClick={() => patchModelName(m.id, m.id)}
+                                  className="text-muted hover:text-fg transition"
+                                >
+                                  恢复为 ID
+                                </button>
+                              )}
+                            </div>
+                            <input
+                              type="text"
+                              value={m.name}
+                              onChange={(e) => patchModelName(m.id, e.target.value)}
+                              placeholder={m.id}
+                              aria-label={`自定义显示名称 ${m.id}`}
+                              className="w-full px-2.5 py-1.5 rounded-lg bg-surface border border-borderc text-fg focus:outline-none focus:border-fg/40"
+                            />
+                          </label>
+                        </div>
+
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-medium text-fg">模型专属参数（留空则沿用全局）</span>
-                          {hasCustom && (
+                          {hasCustomParams && (
                             <button
                               type="button"
                               onClick={() => {
@@ -1589,7 +1774,9 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
                           <div className="flex items-center justify-between text-muted">
                             <span>模型级自定义请求体 JSON (extraBody)</span>
                             {modelExtraErr[m.id] && (
-                              <span className="text-rose-400">{modelExtraErr[m.id]}</span>
+                              <span className="text-rose-600 dark:text-rose-400">
+                                {modelExtraErr[m.id]}
+                              </span>
                             )}
                           </div>
                           <textarea
@@ -1642,7 +1829,9 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
                   className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
                 />
                 {headersErr && (
-                  <div className="text-[11px] text-rose-400 break-words">{headersErr}</div>
+                  <div className="text-[11px] text-rose-600 dark:text-rose-400 break-words">
+                    {headersErr}
+                  </div>
                 )}
               </div>
             </Collapsible>
@@ -1653,7 +1842,7 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
               className={`px-3 py-2 rounded-xl border break-words ${
                 statusMsg.ok
                   ? 'border-borderc bg-surface text-fg'
-                  : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
+                  : 'border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300'
               }`}
             >
               {statusMsg.text}
@@ -1754,7 +1943,7 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
           className={`cb-panel-enter px-3 py-2 rounded-xl border text-xs break-words ${
             listNotice.ok
               ? 'border-borderc bg-surface text-fg'
-              : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
+              : 'border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300'
           }`}
         >
           {listNotice.text}
@@ -1789,6 +1978,10 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
               // Keep raw string when URL is partial
             }
             const backupCount = p.backupBaseUrls?.length ?? 0;
+            const defaultModelDef = p.models.find((m) => m.id === p.defaultModel);
+            const defaultModelLabel = p.defaultModel
+              ? getModelDisplayName(defaultModelDef, p.defaultModel)
+              : '未指定';
             return (
               <div
                 key={p.id}
@@ -1802,8 +1995,8 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
                       {p.name}
                     </span>
                     {isActive && (
-                      <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                      <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 shrink-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" />
                         当前启用
                       </span>
                     )}
@@ -1815,9 +2008,9 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
                         className={`text-[11px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${
                           bench.ok
                             ? bench.latencyMs < 800
-                              ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-400'
-                              : 'border-amber-500/35 bg-amber-500/10 text-amber-300'
-                            : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
+                              ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                              : 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                            : 'border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300'
                         }`}
                       >
                         {bench.ok ? `${bench.latencyMs} ms` : bench.error || '连接异常'}
@@ -1827,7 +2020,7 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({ section = 'providers
                   <div className="text-xs text-muted truncate font-mono">
                     {hostLabel} · {p.models.length} 个模型
                     {backupCount > 0 ? ` · ${backupCount} 个备用端点` : ''} · 默认{' '}
-                    {p.defaultModel || '未指定'}
+                    {defaultModelLabel}
                   </div>
                 </div>
 

@@ -1,6 +1,7 @@
-import React, { useEffect, useId, useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Check, Code2, Copy, Maximize2, Play, RotateCcw } from 'lucide-react';
 import type { ResolvedTheme } from './svgUtils';
+import { copyTextSafe } from '@/services/media/clipboard';
 import type { LightboxPayload } from './LightboxModal';
 import { getChartPalette } from './chartPalette';
 
@@ -18,10 +19,12 @@ function buildInjectedDocument(
   rawHtml: string,
   frameId: string,
   theme: ResolvedTheme,
-  accent: string
+  accent: string,
+  enableResize = true
 ): string {
   const isLight = theme === 'light';
   const palette = getChartPalette(theme);
+  const inlineHeightReset = enableResize ? 'html, body { min-height: 0 !important; }' : '';
   const themeStyle = `<style>
     :root {
       --bg: ${theme === 'oled' ? '#000000' : theme === 'dark' ? '#171615' : '#faf9f5'};
@@ -41,6 +44,7 @@ function buildInjectedDocument(
       color-scheme: ${isLight ? 'light' : 'dark'};
     }
     html, body { color: var(--fg); background: transparent; font-family: var(--font-sans); }
+    ${inlineHeightReset}
     input[type='range'] {
       -webkit-appearance: none;
       appearance: none;
@@ -74,28 +78,41 @@ function buildInjectedDocument(
     }
   </style>`;
 
-  const resizeScript = `<script>
+  const resizeScript = enableResize
+    ? `<script>
     (function() {
+      var lastSent = 0;
       function sendHeight() {
         var h = Math.max(
           document.documentElement ? document.documentElement.scrollHeight : 0,
           document.body ? document.body.scrollHeight : 0
         );
-        window.parent.postMessage({ type: 'cb-sandbox-height', id: ${JSON.stringify(frameId)}, height: Math.min(Math.max(h, 160), 760) }, '*');
+        var clamped = Math.min(Math.max(Math.round(h), 160), 760);
+        if (Math.abs(clamped - lastSent) < 2) return;
+        lastSent = clamped;
+        window.parent.postMessage({ type: 'cb-sandbox-height', id: ${JSON.stringify(frameId)}, height: clamped }, '*');
       }
       window.addEventListener('load', sendHeight);
       if (typeof ResizeObserver !== 'undefined') {
-        new ResizeObserver(sendHeight).observe(document.documentElement);
+        new ResizeObserver(sendHeight).observe(document.body || document.documentElement);
       }
       setTimeout(sendHeight, 120);
       setTimeout(sendHeight, 450);
     })();
-  </script>`;
+  </script>`
+    : '';
 
-  if (/<\/head>/i.test(rawHtml) && /<\/body>/i.test(rawHtml)) {
-    return rawHtml
-      .replace(/<\/head>/i, `${themeStyle}</head>`)
-      .replace(/<\/body>/i, `${resizeScript}</body>`);
+  const lower = rawHtml.toLowerCase();
+  const headCloseIdx = lower.lastIndexOf('</head>');
+  const bodyCloseIdx = lower.lastIndexOf('</body>');
+  if (headCloseIdx !== -1 && bodyCloseIdx !== -1 && bodyCloseIdx > headCloseIdx) {
+    return (
+      rawHtml.slice(0, headCloseIdx) +
+      themeStyle +
+      rawHtml.slice(headCloseIdx, bodyCloseIdx) +
+      resizeScript +
+      rawHtml.slice(bodyCloseIdx)
+    );
   }
   return `<!doctype html><html><head><meta charset="utf-8"/>${themeStyle}</head><body>${rawHtml}${resizeScript}</body></html>`;
 }
@@ -110,21 +127,42 @@ export const SandboxArtifactCard: React.FC<SandboxArtifactCardProps> = ({
   onInspect,
 }) => {
   const frameId = useId();
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [mode, setMode] = useState<'preview' | 'code'>(defaultPreview ? 'preview' : 'code');
   const [height, setHeight] = useState(240);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [copied, setCopied] = useState(false);
 
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
+
   const srcDoc = useMemo(
-    () => buildInjectedDocument(code, frameId, theme, accentColor),
+    () => buildInjectedDocument(code, frameId, theme, accentColor, true),
+    [code, frameId, theme, accentColor]
+  );
+
+  const lightboxSrcDoc = useMemo(
+    () => buildInjectedDocument(code, `${frameId}_lb`, theme, accentColor, false),
     [code, frameId, theme, accentColor]
   );
 
   useEffect(() => {
     const onMessage = (evt: MessageEvent) => {
+      if (!iframeRef.current?.contentWindow || evt.source !== iframeRef.current.contentWindow) {
+        return;
+      }
       const data = evt.data as { type?: string; id?: string; height?: number } | null;
-      if (data?.type === 'cb-sandbox-height' && data.id === frameId && typeof data.height === 'number') {
-        setHeight(data.height);
+      if (
+        data?.type === 'cb-sandbox-height' &&
+        data.id === frameId &&
+        typeof data.height === 'number' &&
+        Number.isFinite(data.height)
+      ) {
+        setHeight(Math.min(Math.max(Math.round(data.height), 160), 760));
       }
     };
     window.addEventListener('message', onMessage);
@@ -132,9 +170,11 @@ export const SandboxArtifactCard: React.FC<SandboxArtifactCardProps> = ({
   }, [frameId]);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (await copyTextSafe(code)) {
+      setCopied(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
+    }
   };
 
   const hideChrome = frameless && mode === 'preview';
@@ -150,7 +190,7 @@ export const SandboxArtifactCard: React.FC<SandboxArtifactCardProps> = ({
       <div
         className={
           hideChrome
-            ? 'absolute top-2 right-2 z-20 flex items-center gap-1 rounded-xl border border-borderc bg-elevated/90 backdrop-blur-md px-1.5 py-1 opacity-0 group-hover/media:opacity-100 focus-within:opacity-100 transition-opacity duration-200 shadow-sm pointer-events-none group-hover/media:pointer-events-auto focus-within:pointer-events-auto'
+            ? 'absolute top-2 right-2 z-20 flex items-center gap-1 rounded-xl border border-borderc bg-elevated/90 backdrop-blur-md px-1.5 py-1 opacity-85 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover/media:opacity-100 sm:group-hover/media:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition-opacity duration-200 shadow-sm'
             : 'flex items-center justify-between px-3.5 py-2 border-b border-borderc bg-surface/60'
         }
       >
@@ -203,7 +243,7 @@ export const SandboxArtifactCard: React.FC<SandboxArtifactCardProps> = ({
               onInspect({
                 kind: 'iframe',
                 title: '交互式实验全屏视图',
-                htmlDoc: srcDoc,
+                htmlDoc: lightboxSrcDoc,
                 rawSource: code,
               })
             }
@@ -219,10 +259,11 @@ export const SandboxArtifactCard: React.FC<SandboxArtifactCardProps> = ({
         <pre className="p-4 text-xs font-mono overflow-x-auto text-muted m-0">
           <code>{code}</code>
         </pre>
-      ) : isStreaming && !/<\/(html|body|script)>/i.test(code) ? (
+      ) : isStreaming ? (
         <div className="p-6 text-center text-xs text-muted">正在编写交互式实验代码…</div>
       ) : (
         <iframe
+          ref={iframeRef}
           key={`${reloadNonce}_${theme}`}
           title="Interactive Sandbox"
           srcDoc={srcDoc}

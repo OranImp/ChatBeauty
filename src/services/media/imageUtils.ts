@@ -1,6 +1,13 @@
 export const MAX_ATTACHED_IMAGES = 6;
 const MAX_DIMENSION = 1600;
 const MAX_INLINE_BYTES = 1_500_000;
+const MAX_GIF_BYTES = 4_000_000;
+const API_SUPPORTED_IMAGE_MIMES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+]);
 
 export interface AttachedImage {
   id: string;
@@ -39,9 +46,11 @@ export async function prepareImageAttachment(file: File): Promise<AttachedImage>
   const rawDataUrl = await readFileAsDataUrl(file);
   const id = `img_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-  // Keep animated GIFs and non-browser/DOM environments intact
+  const isApiSupported = API_SUPPORTED_IMAGE_MIMES.has(file.type);
+
+  // Keep reasonably sized animated GIFs and non-DOM environments intact
   if (
-    file.type === 'image/gif' ||
+    (file.type === 'image/gif' && (file.size || estimateDataUrlBytes(rawDataUrl)) <= MAX_GIF_BYTES) ||
     typeof document === 'undefined' ||
     typeof Image === 'undefined'
   ) {
@@ -62,8 +71,10 @@ export async function prepareImageAttachment(file: File): Promise<AttachedImage>
       el.src = rawDataUrl;
     });
 
-    const needsResize = img.width > MAX_DIMENSION || img.height > MAX_DIMENSION;
-    const needsCompress = file.size > MAX_INLINE_BYTES;
+    const natW = img.naturalWidth || img.width || 800;
+    const natH = img.naturalHeight || img.height || 600;
+    const needsResize = natW > MAX_DIMENSION || natH > MAX_DIMENSION;
+    const needsCompress = file.size > MAX_INLINE_BYTES || !isApiSupported || file.type === 'image/gif';
     if (!needsResize && !needsCompress) {
       return {
         id,
@@ -74,14 +85,17 @@ export async function prepareImageAttachment(file: File): Promise<AttachedImage>
       };
     }
 
-    const scale = Math.min(1, MAX_DIMENSION / Math.max(img.width, img.height, 1));
-    const width = Math.max(1, Math.round(img.width * scale));
-    const height = Math.max(1, Math.round(img.height * scale));
+    const scale = Math.min(1, MAX_DIMENSION / Math.max(natW, natH, 1));
+    const width = Math.max(1, Math.round(natW * scale));
+    const height = Math.max(1, Math.round(natH * scale));
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
+      if (!isApiSupported) {
+        throw new Error(`当前浏览器不支持转换图片格式 ${file.type}`);
+      }
       return {
         id,
         name: file.name || 'image',
@@ -91,29 +105,46 @@ export async function prepareImageAttachment(file: File): Promise<AttachedImage>
       };
     }
 
-    ctx.drawImage(img, 0, 0, width, height);
-    const jpegUrl = canvas.toDataURL('image/jpeg', 0.86);
     if (file.type === 'image/png') {
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
       const pngUrl = canvas.toDataURL('image/png');
-      if (pngUrl.length <= jpegUrl.length * 1.25 && estimateDataUrlBytes(pngUrl) <= MAX_INLINE_BYTES) {
+      const pngBytes = estimateDataUrlBytes(pngUrl);
+      if (pngBytes <= MAX_INLINE_BYTES) {
         return {
           id,
           name: file.name || 'image.png',
           mimeType: 'image/png',
           dataUrl: pngUrl,
-          size: estimateDataUrlBytes(pngUrl),
+          size: pngBytes,
         };
       }
     }
 
+    // Composite onto solid white background before JPEG encoding so transparent regions stay readable
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+
+    let jpegUrl = canvas.toDataURL('image/jpeg', 0.86);
+    for (const q of [0.72, 0.58]) {
+      if (estimateDataUrlBytes(jpegUrl) <= MAX_INLINE_BYTES) break;
+      jpegUrl = canvas.toDataURL('image/jpeg', q);
+    }
+
     return {
       id,
-      name: file.name || 'image.jpg',
+      name: (file.name || 'image').replace(/\.[^.]+$/, '') + '.jpg',
       mimeType: 'image/jpeg',
       dataUrl: jpegUrl,
       size: estimateDataUrlBytes(jpegUrl),
     };
   } catch {
+    if (!isApiSupported) {
+      throw new Error(
+        `图片 "${file.name}" 格式 (${file.type}) 暂不被模型接口支持，请转换为 PNG / JPG / WebP`
+      );
+    }
     return {
       id,
       name: file.name || 'image',

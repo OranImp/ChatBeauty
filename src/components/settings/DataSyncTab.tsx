@@ -44,6 +44,7 @@ export const DataSyncTab: React.FC = () => {
     activeConversationId,
     webdav,
     updateWebDav,
+    prepareForDatabaseRestore,
     reloadFromDatabase,
   } = useAppStore();
 
@@ -72,8 +73,9 @@ export const DataSyncTab: React.FC = () => {
     try {
       const text = await file.text();
       const parsed = JSON.parse(text) as AppBackupV1;
+      prepareForDatabaseRestore();
       await importFullBackup(parsed, importMode);
-      await reloadFromDatabase();
+      await reloadFromDatabase({ fromRestore: true });
       setNotice({
         ok: true,
         text: `已成功导入备份（模式：${importMode === 'merge' ? '合并保留现有' : '全量覆盖'}）`,
@@ -102,6 +104,9 @@ export const DataSyncTab: React.FC = () => {
     setSyncBusy(true);
     setNotice(null);
     try {
+      if (action === 'pull') {
+        prepareForDatabaseRestore();
+      }
       const res =
         action === 'test'
           ? await webDavSync.testConnection(webdav)
@@ -109,10 +114,13 @@ export const DataSyncTab: React.FC = () => {
             ? await webDavSync.pushSnapshot(webdav)
             : await webDavSync.pullSnapshot(webdav, 'merge');
       if (action === 'pull' && res.ok) {
-        await reloadFromDatabase();
+        await reloadFromDatabase({ fromRestore: true });
       }
       await updateWebDav({ lastSyncedAt: res.timestamp, lastStatus: res.message });
       setNotice({ ok: res.ok, text: res.message });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'WebDAV 同步过程发生错误';
+      setNotice({ ok: false, text: msg });
     } finally {
       setSyncBusy(false);
     }

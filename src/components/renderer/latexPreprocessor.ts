@@ -1,7 +1,57 @@
-const FENCE_RE = /^([ \t]*)(`{3,}|~{3,})([^\n]*)$/;
+const FENCE_RE = /^([ \t]*)(`{3,}(?=[^`\n]*$)|~{3,})([^\n]*)$/;
 
 const MATH_ENVS =
   'align\\*?|aligned|equation\\*?|gather\\*?|cases|matrix|pmatrix|bmatrix|vmatrix|Bmatrix|Vmatrix|split';
+
+function protectInlineCodeSpans(text: string, hold: (value: string) => string): string {
+  let out = '';
+  let i = 0;
+  const len = text.length;
+
+  while (i < len) {
+    if (text[i] === '`') {
+      let openLen = 1;
+      while (i + openLen < len && text[i + openLen] === '`') openLen++;
+
+      let j = i + openLen;
+      let closeStart = -1;
+      while (j < len) {
+        if (text[j] === '\n') {
+          let k = j + 1;
+          while (k < len && (text[k] === ' ' || text[k] === '\t')) k++;
+          if (k < len && text[k] === '\n') break;
+        }
+        if (text[j] === '`') {
+          let runLen = 1;
+          while (j + runLen < len && text[j + runLen] === '`') runLen++;
+          if (runLen === openLen) {
+            closeStart = j;
+            break;
+          }
+          j += runLen;
+          continue;
+        }
+        j++;
+      }
+
+      if (closeStart !== -1) {
+        const spanEnd = closeStart + openLen;
+        out += hold(text.slice(i, spanEnd));
+        i = spanEnd;
+        continue;
+      }
+
+      out += text.slice(i, i + openLen);
+      i += openLen;
+      continue;
+    }
+
+    out += text[i];
+    i++;
+  }
+
+  return out;
+}
 
 /**
  * Normalizes LLM LaTeX delimiters (`\(...\)`, `\[...\]`, bare `\begin{align}`,
@@ -57,34 +107,36 @@ export function preprocessLatex(input: string, isStreaming = false): string {
 
   let text = outLines.join('\n');
 
-  // 2. Protect inline code spans (`...`, ``...``)
-  text = text.replace(/(`+)([^`\n]*?)\1/g, (match) => hold(match));
+  // 2. Protect inline code spans (`...`, ``...``, multi-line) per CommonMark
+  text = protectInlineCodeSpans(text, hold);
 
-  // 3. Protect existing $$...$$ blocks before normalizing \[...\] or bare environments
-  text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match) => hold(match));
-
-  // 4. Convert \[ ... \] display math to $$\n...\n$$
-  text = text.replace(/\\\[([\s\S]*?)\\\]/g, (_match, inner: string) => {
-    const trimmed = inner.trim();
-    if (!trimmed) return '';
-    return `\n$$\n${trimmed}\n$$\n`;
+  // 3. Protect existing $$...$$ blocks before normalizing bare environments or \[...\]
+  text = text.replace(/((?<!\\)(?:\\\\)*)\$\$([\s\S]*?(?<!\\)(?:\\\\)*)\$\$/g, (_m, prefix: string, body: string) => {
+    return `${prefix}${hold(`$$${body}$$`)}`;
   });
 
-  // 5. Convert \( ... \) inline math to $...$
-  text = text.replace(/\\\(([\s\S]*?)\\\)/g, (_match, inner: string) => {
-    const trimmed = inner.trim();
-    if (!trimmed) return '';
-    return `$${trimmed}$`;
-  });
-
-  // 6. Wrap bare top-level \begin{align}...\end{align} etc. when not already inside $$...$$
-  text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match) => hold(match));
-
+  // 4. Wrap and protect bare top-level \begin{align}...\end{align} BEFORE \[...\] so inner \\[6pt] stays intact
   const envRegex = new RegExp(
-    `\\\\begin\\{(${MATH_ENVS})\\}[\\s\\S]*?\\\\end\\{\\1\\}`,
+    `((?<!\\\\)(?:\\\\\\\\)*)(\\\\begin\\{(${MATH_ENVS})\\}(?:[^\\\\]|\\\\[\\s\\S])*?\\\\end\\{\\3\\})`,
     'g'
   );
-  text = text.replace(envRegex, (match) => hold(`\n$$\n${match.trim()}\n$$\n`));
+  text = text.replace(envRegex, (_m, prefix: string, block: string) => {
+    return `${prefix}${hold(`\n$$\n${block.trim()}\n$$\n`)}`;
+  });
+
+  // 5. Convert \[ ... \] display math to $$\n...\n$$ and protect it (even backslash count guard)
+  text = text.replace(/((?<!\\)(?:\\\\)*)\\\[((?:[^\\]|\\[\s\S])*?)\\\]/g, (_m, prefix: string, inner: string) => {
+    const trimmed = inner.trim();
+    if (!trimmed) return prefix;
+    return `${prefix}${hold(`\n$$\n${trimmed}\n$$\n`)}`;
+  });
+
+  // 6. Convert \( ... \) inline math to $...$ and protect from currency escaping
+  text = text.replace(/((?<!\\)(?:\\\\)*)\\\(((?:[^\\]|\\[\s\S])*?)\\\)/g, (_m, prefix: string, inner: string) => {
+    const trimmed = inner.trim();
+    if (!trimmed) return prefix;
+    return `${prefix}${hold(`$${trimmed}$`)}`;
+  });
 
   // 7. Escape standalone currency like "$100" when it has no valid math closure on the same line
   text = text
@@ -140,19 +192,20 @@ export function preprocessLatex(input: string, isStreaming = false): string {
     })
     .join('\n');
 
-  // Restore protected slots (twice in case envRegex held slots created earlier)
-  const restore = (s: string) =>
-    s.replace(/\u0000CB_SLOT_(\d+)\u0000/g, (_m, idx) => protectedSlots[Number(idx)] ?? '');
-
-  text = restore(restore(text));
-
-  // 8. Streaming tolerance: close dangling unclosed $$ outside fences
+  // 8. Streaming tolerance: close dangling unclosed $$ BEFORE restoring protected code/math slots
   if (isStreaming) {
-    const strippedFences = text.replace(/```[\s\S]*?```/g, '');
-    const ddCount = (strippedFences.match(/(?<!\\)\$\$/g) || []).length;
+    const ddCount = (text.match(/(?<!\\)(?:\\\\)*\$\$/g) || []).length;
     if (ddCount % 2 === 1) {
       text = `${text}\n$$`;
     }
+  }
+
+  // Restore protected slots (up to 5 passes for nested protections)
+  const restore = (s: string) =>
+    s.replace(/\u0000CB_SLOT_(\d+)\u0000/g, (_m, idx) => protectedSlots[Number(idx)] ?? '');
+
+  for (let pass = 0; pass < 5 && /\u0000CB_SLOT_\d+\u0000/.test(text); pass++) {
+    text = restore(text);
   }
 
   return text;

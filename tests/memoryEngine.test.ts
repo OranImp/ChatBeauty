@@ -6,6 +6,7 @@ import {
   formatMemoriesForPrompt,
   mergeMemoryEntries,
   parseLlmMemoryExtraction,
+  parseLlmMemoryExtractionDetailed,
   parseMemoryDocument,
   retrieveRelevantMemories,
   sanitizeSensitiveText,
@@ -187,5 +188,60 @@ describe('memoryEngine — single-file Markdown memory & selective retrieval', (
     const dupMerge = mergeMemoryEntries(firstMerge.entries, parsed, false);
     expect(dupMerge.addedCount).toBe(0);
     expect(dupMerge.updatedCount).toBe(1);
+  });
+
+  it('handles fullwidth colon secrets, detailed LLM stats, overlap dedup guard, metadata key check, and pinned/tag retrieval guards', () => {
+    expect(detectSensitiveInfo('服务器登录密码：AlphaSecret99').isSensitive).toBe(true);
+
+    const detailed = parseLlmMemoryExtractionDetailed(
+      '[{"category":"fact","content":"手机号码为 13912345678","tags":["手机"],"sensitive":false},{"category":"preference","content":"偏好使用严格 TypeScript 类型推导","tags":["ts"]}]',
+      false,
+      'conv_d'
+    );
+    expect(detailed.hadValidJson).toBe(true);
+    expect(detailed.skippedSensitiveCount).toBe(1);
+    expect(detailed.entries).toHaveLength(1);
+
+    const invalidDetailed = parseLlmMemoryExtractionDetailed('not valid json', false);
+    expect(invalidDetailed.hadValidJson).toBe(false);
+
+    // Overlap guard: short substring or <50% overlap must NOT deduplicate into distinct entry
+    const baseEntry = detailed.entries[0];
+    const shortSubMerge = mergeMemoryEntries(
+      [baseEntry],
+      [{ ...baseEntry, id: 'm_short', content: '使用' }],
+      false
+    );
+    expect(shortSubMerge.addedCount).toBe(1);
+    expect(shortSubMerge.updatedCount).toBe(0);
+
+    // parseMemoryDocument requires valid metadata keys in [...] and honors explicit sensitive:false
+    const md = [
+      '# ChatBeauty 记忆库',
+      '## 其他记录 (fact)',
+      '- [NOTE] 保留字面前缀说明文本',
+      '- [id:m_explicit | sensitive:false | tags:notes] 测试邮箱样式 placeholder@example.org',
+    ].join('\n');
+    const docEntries = parseMemoryDocument(md);
+    expect(docEntries).toHaveLength(2);
+    expect(docEntries[0].content).toBe('[NOTE] 保留字面前缀说明文本');
+    expect(docEntries[1].sensitive).toBe(false);
+
+    // retrieveRelevantMemories: at most 2 un-matched pinned fallbacks, while matched relevant entry wins,
+    // and 1-char tags don't match longer tokens
+    const now = Date.now();
+    const pool = [
+      { id: 'pin1', category: 'fact' as const, content: '无关置顶条目甲', tags: ['a'], pinned: true, sensitive: false, createdAt: 1, updatedAt: now },
+      { id: 'pin2', category: 'fact' as const, content: '无关置顶条目乙', tags: ['b'], pinned: true, sensitive: false, createdAt: 1, updatedAt: now - 1 },
+      { id: 'pin3', category: 'fact' as const, content: '无关置顶条目丙', tags: ['c'], pinned: true, sensitive: false, createdAt: 1, updatedAt: now - 2 },
+      { id: 'rel1', category: 'project' as const, content: 'WebAssembly 音频合成管线优化', tags: ['webassembly'], pinned: false, sensitive: false, createdAt: 1, updatedAt: now - 10 },
+    ];
+    const picked = retrieveRelevantMemories(pool, 'WebAssembly alpha beta gamma', [], {
+      ...DEFAULT_MEMORY_SETTINGS,
+      maxInjectedMemories: 4,
+    });
+    expect(picked.some((e) => e.id === 'rel1')).toBe(true);
+    const unmatchedPinned = picked.filter((e) => e.id.startsWith('pin'));
+    expect(unmatchedPinned.length).toBeLessThanOrEqual(2);
   });
 });

@@ -67,6 +67,8 @@ export const App: React.FC = () => {
   const [settingsMobileRoot, setSettingsMobileRoot] = useState<boolean>(true);
   const [lightbox, setLightbox] = useState<LightboxPayload | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const mobileSearchInputRef = useRef<HTMLInputElement>(null);
+  const settingsBackRef = useRef<(() => boolean) | null>(null);
 
   useEffect(() => {
     void initApp();
@@ -116,10 +118,11 @@ export const App: React.FC = () => {
     root.classList.toggle('dark', resolvedTheme !== 'light');
 
     const rawAccent = (appearance.accentColor || '#d97757').trim();
-    const effectiveAccent =
+    const candidateAccent =
       resolvedTheme === 'light' && rawAccent.toLowerCase() === '#ededed'
         ? '#1f1e1c'
         : rawAccent;
+    const effectiveAccent = parseHexRgb(candidateAccent) ? candidateAccent : '#d97757';
     const accentFg = getContrastFg(effectiveAccent);
     const accentRgb = parseHexRgb(effectiveAccent);
     const accentFgRgb = parseHexRgb(accentFg);
@@ -146,11 +149,6 @@ export const App: React.FC = () => {
       resolveFontFamily(appearance.fontFamily, appearance.customFontName)
     );
 
-    void syncDesktopBackgroundSettings({
-      closeToTray: appearance.closeToTray ?? true,
-      backgroundGeneration: appearance.backgroundGeneration ?? true,
-    });
-
     let styleEl = document.getElementById('chatbeauty-custom-css') as HTMLStyleElement | null;
     if (!styleEl) {
       styleEl = document.createElement('style');
@@ -170,6 +168,13 @@ export const App: React.FC = () => {
     }
   }, [resolvedTheme, appearance]);
 
+  useEffect(() => {
+    void syncDesktopBackgroundSettings({
+      closeToTray: appearance.closeToTray ?? true,
+      backgroundGeneration: appearance.backgroundGeneration ?? true,
+    });
+  }, [appearance.closeToTray, appearance.backgroundGeneration]);
+
   // Android hardware back button handling
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -177,6 +182,7 @@ export const App: React.FC = () => {
       if (lightbox) {
         setLightbox(null);
       } else if (settingsOpen) {
+        if (settingsBackRef.current?.()) return;
         setSettingsOpen(false);
       } else if (mobileDrawerOpen) {
         setMobileDrawerOpen(false);
@@ -193,14 +199,22 @@ export const App: React.FC = () => {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
-      if (!mod) return;
-      if (e.key.toLowerCase() === 'n') {
+      if (!mod || lightbox) return;
+      const key = e.key.toLowerCase();
+      if (key === 'n') {
+        if (settingsOpen) return;
         e.preventDefault();
         void createConversation('新对话');
-      } else if (e.key.toLowerCase() === 'k') {
+      } else if (key === 'k') {
+        if (settingsOpen) return;
         e.preventDefault();
-        setDesktopSidebarOpen(true);
-        setTimeout(() => searchInputRef.current?.focus(), 60);
+        if (window.innerWidth < 768) {
+          setMobileDrawerOpen(true);
+          setTimeout(() => mobileSearchInputRef.current?.focus(), 60);
+        } else {
+          setDesktopSidebarOpen(true);
+          setTimeout(() => searchInputRef.current?.focus(), 60);
+        }
       } else if (e.key === ',') {
         e.preventDefault();
         setSettingsMobileRoot(true);
@@ -209,7 +223,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [createConversation]);
+  }, [createConversation, lightbox, settingsOpen]);
 
   const openSettings = (tab?: SettingsTabKey) => {
     if (tab) {
@@ -238,6 +252,7 @@ export const App: React.FC = () => {
         onCollapseDesktop={() => setDesktopSidebarOpen(false)}
         onOpenSettings={openSettings}
         searchInputRef={searchInputRef}
+        mobileSearchInputRef={mobileSearchInputRef}
       />
 
       <main className="flex-1 flex flex-col min-w-0 h-full relative">
@@ -264,6 +279,7 @@ export const App: React.FC = () => {
         open={settingsOpen}
         activeTab={settingsTab}
         initialMobileRoot={settingsMobileRoot}
+        mobileBackRef={settingsBackRef}
         onTabChange={setSettingsTab}
         onClose={() => setSettingsOpen(false)}
       />

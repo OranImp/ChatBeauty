@@ -65,6 +65,7 @@ const KV_KEYS = {
 export async function getKv<T>(key: string, fallback: T): Promise<T> {
   const row = await db.kv.get(key);
   if (!row || row.value === undefined) return fallback;
+  if (row.value === null && fallback !== null) return fallback;
   return row.value as T;
 }
 
@@ -72,30 +73,39 @@ export async function setKv<T>(key: string, value: T): Promise<void> {
   await db.kv.put({ key, value });
 }
 
-export async function ensureDatabaseSeeded(): Promise<void> {
-  const initialized = await getKv<boolean>(KV_KEYS.INITIALIZED, false);
-  if (!initialized) {
-    await db.transaction(
-      'rw',
-      [db.promptPresets, db.conversations, db.messages, db.kv],
-      async () => {
-        const existingPresets = await db.promptPresets.count();
-        if (existingPresets === 0) {
-          await db.promptPresets.bulkPut(BUILTIN_PROMPT_PRESETS);
-        }
+let seedingPromise: Promise<void> | null = null;
 
-        await setKv(KV_KEYS.APPEARANCE, DEFAULT_APPEARANCE_SETTINGS);
-        await setKv(KV_KEYS.GENERATION, DEFAULT_GENERATION_SETTINGS);
-        await setKv(KV_KEYS.PROMPT, DEFAULT_PROMPT_SETTINGS);
-        await setKv(KV_KEYS.WEBDAV, DEFAULT_WEBDAV_SETTINGS);
-        await setKv(KV_KEYS.MODEL_PROFILES, DEFAULT_MODEL_PROFILE_SYNC_SETTINGS);
-        await setKv(KV_KEYS.CONTEXT, DEFAULT_CONTEXT_SETTINGS);
-        await setKv(KV_KEYS.MEMORY_SETTINGS, DEFAULT_MEMORY_SETTINGS);
-        await setKv(KV_KEYS.MEMORY_DOCUMENT, '');
-        await setKv(KV_KEYS.INITIALIZED, true);
-      }
-    );
-  } else {
+export async function ensureDatabaseSeeded(): Promise<void> {
+  if (seedingPromise) return seedingPromise;
+  seedingPromise = (async () => {
+    const initialized = await getKv<boolean>(KV_KEYS.INITIALIZED, false);
+    if (!initialized) {
+      await db.transaction(
+        'rw',
+        [db.promptPresets, db.conversations, db.messages, db.kv],
+        async () => {
+          const alreadyInit = await getKv<boolean>(KV_KEYS.INITIALIZED, false);
+          if (alreadyInit) return;
+
+          const existingPresets = await db.promptPresets.count();
+          if (existingPresets === 0) {
+            await db.promptPresets.bulkPut(BUILTIN_PROMPT_PRESETS);
+          }
+
+          await setKv(KV_KEYS.APPEARANCE, DEFAULT_APPEARANCE_SETTINGS);
+          await setKv(KV_KEYS.GENERATION, DEFAULT_GENERATION_SETTINGS);
+          await setKv(KV_KEYS.PROMPT, DEFAULT_PROMPT_SETTINGS);
+          await setKv(KV_KEYS.WEBDAV, DEFAULT_WEBDAV_SETTINGS);
+          await setKv(KV_KEYS.MODEL_PROFILES, DEFAULT_MODEL_PROFILE_SYNC_SETTINGS);
+          await setKv(KV_KEYS.CONTEXT, DEFAULT_CONTEXT_SETTINGS);
+          await setKv(KV_KEYS.MEMORY_SETTINGS, DEFAULT_MEMORY_SETTINGS);
+          await setKv(KV_KEYS.MEMORY_DOCUMENT, '');
+          await setKv(KV_KEYS.INITIALIZED, true);
+        }
+      );
+      return;
+    }
+
     // Ensure new built-in presets exist if upgraded
     const existingIds = new Set((await db.promptPresets.toArray()).map((p) => p.id));
     const missing = BUILTIN_PROMPT_PRESETS.filter((p) => !existingIds.has(p.id));
@@ -108,7 +118,7 @@ export async function ensureDatabaseSeeded(): Promise<void> {
       KV_KEYS.APPEARANCE,
       DEFAULT_APPEARANCE_SETTINGS
     );
-    if (savedAppearance.accentColor?.toLowerCase() === '#38bdf8') {
+    if (savedAppearance?.accentColor?.toLowerCase() === '#38bdf8') {
       await setKv(KV_KEYS.APPEARANCE, {
         ...savedAppearance,
         accentColor: DEFAULT_APPEARANCE_SETTINGS.accentColor,
@@ -118,7 +128,7 @@ export async function ensureDatabaseSeeded(): Promise<void> {
     // Upgrade unmodified legacy built-in render prompt with SVG wire-collision avoidance rule
     const savedPrompt = await getKv<PromptSettings>(KV_KEYS.PROMPT, DEFAULT_PROMPT_SETTINGS);
     if (
-      savedPrompt.renderEnhancementPrompt?.includes('仔细计算坐标确保文字与连线**互不遮挡、居中对齐**') &&
+      savedPrompt?.renderEnhancementPrompt?.includes('仔细计算坐标确保文字与连线**互不遮挡、居中对齐**') &&
       !savedPrompt.renderEnhancementPrompt.includes('垂直支路元件')
     ) {
       await setKv(KV_KEYS.PROMPT, {
@@ -126,7 +136,10 @@ export async function ensureDatabaseSeeded(): Promise<void> {
         renderEnhancementPrompt: DEFAULT_RENDER_ENHANCEMENT_PROMPT,
       });
     }
-  }
+  })().finally(() => {
+    seedingPromise = null;
+  });
+  return seedingPromise;
 }
 
 export async function loadInitialState(): Promise<{

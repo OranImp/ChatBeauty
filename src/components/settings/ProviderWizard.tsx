@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -7,6 +7,7 @@ import {
   Eye,
   EyeOff,
   Loader2,
+  Pencil,
   RefreshCw,
   SlidersHorizontal,
   Trash2,
@@ -21,6 +22,8 @@ import {
 import {
   buildPreviewHeadersJson,
   extractExtraHeadersFromPreviewJson,
+  getModelDisplayName,
+  hasCustomModelDisplayName,
   toModelDefinition,
 } from '@/services/llm/adapters/shared';
 import type { ProtocolType, ProviderConfig } from '@/types/chat';
@@ -73,6 +76,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
   const [backupUrlsText, setBackupUrlsText] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [newModelId, setNewModelId] = useState('');
+  const [editingModelNameId, setEditingModelNameId] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -81,24 +85,35 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
   const isOptionalKeyEndpoint = (presetId?: string, url?: string) =>
     presetId === 'ollama' || /:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test((url || '').trim());
 
+  const customExtraHeadersRef = useRef(customExtraHeaders);
+  customExtraHeadersRef.current = customExtraHeaders;
+  const headersErrRef = useRef(headersErr);
+  headersErrRef.current = headersErr;
+
   useEffect(() => {
-    if (headersErr) return;
-    const nextText = buildPreviewHeadersJson(draft, customExtraHeaders);
+    if (headersErrRef.current) return;
+    const nextText = buildPreviewHeadersJson(draft, customExtraHeadersRef.current);
     setHeadersText((prev) => (prev === nextText ? prev : nextText));
-  }, [draft.protocol, draft.baseUrl, draft.apiKey, draft.presetId, customExtraHeaders, headersErr]);
+  }, [draft.protocol, draft.baseUrl, draft.apiKey, draft.presetId]);
 
   const handleHeadersJsonChange = (raw: string) => {
     setHeadersText(raw);
     try {
       const extracted = extractExtraHeadersFromPreviewJson(raw, draft);
+      customExtraHeadersRef.current = extracted;
+      headersErrRef.current = null;
       setCustomExtraHeaders(extracted);
       setHeadersErr(null);
     } catch (err) {
-      setHeadersErr(err instanceof Error ? err.message : '自定义 Headers JSON 格式无效');
+      const msg = err instanceof Error ? err.message : '自定义 Headers JSON 格式无效';
+      headersErrRef.current = msg;
+      setHeadersErr(msg);
     }
   };
 
   const resetAutoHeaders = () => {
+    customExtraHeadersRef.current = {};
+    headersErrRef.current = null;
     setCustomExtraHeaders({});
     setHeadersErr(null);
     setHeadersText(buildPreviewHeadersJson(draft, {}));
@@ -106,6 +121,8 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
 
   const selectPreset = (preset: ProviderBrandPreset) => {
     const backups = preset.backupBaseUrls ? [...preset.backupBaseUrls] : [];
+    const cleanedKey =
+      draft.apiKey === 'ollama' && preset.id !== 'ollama' ? '' : draft.apiKey;
     const nextDraft: ProviderConfig = {
       ...draft,
       presetId: preset.id,
@@ -113,11 +130,14 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
       name: preset.name,
       baseUrl: preset.baseUrl,
       backupBaseUrls: backups,
+      apiKey: cleanedKey,
       defaultModel: preset.defaultModel,
       models: [...preset.suggestedModels],
     };
     setIsCustomProvider(false);
     setDraft(nextDraft);
+    customExtraHeadersRef.current = {};
+    headersErrRef.current = null;
     setCustomExtraHeaders({});
     setHeadersErr(null);
     setHeadersText(buildPreviewHeadersJson(nextDraft, {}));
@@ -129,6 +149,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
 
   const startCustomProvider = () => {
     const tpl = PROTOCOL_TEMPLATES['openai-chat'];
+    const cleanedKey = draft.apiKey === 'ollama' ? '' : draft.apiKey;
     const nextDraft: ProviderConfig = {
       ...draft,
       presetId: undefined,
@@ -136,11 +157,14 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
       name: '自定义中转站',
       baseUrl: '',
       backupBaseUrls: [],
+      apiKey: cleanedKey,
       defaultModel: tpl.placeholderModel,
       models: [...tpl.suggestedModels],
     };
     setIsCustomProvider(true);
     setDraft(nextDraft);
+    customExtraHeadersRef.current = {};
+    headersErrRef.current = null;
     setCustomExtraHeaders({});
     setHeadersErr(null);
     setHeadersText(buildPreviewHeadersJson(nextDraft, {}));
@@ -203,6 +227,10 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
       backupBaseUrls: backupList,
       apiKey: effectiveKey,
       defaultModel: draft.defaultModel.trim() || draft.models[0]?.id || tpl.placeholderModel,
+      models: draft.models.map((m) => ({
+        ...m,
+        name: m.name.trim() || m.id,
+      })),
       extraHeaders: parsedHeaders,
     };
   };
@@ -250,13 +278,21 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
       if (models.length === 0) {
         setStatusMsg({ ok: false, text: '接口未返回模型列表，可手动输入添加' });
       } else {
-        setDraft((prev) => ({
-          ...prev,
-          models,
-          defaultModel: models.some((m) => m.id === prev.defaultModel)
-            ? prev.defaultModel
-            : models[0].id,
-        }));
+        setDraft((prev) => {
+          const prevMap = new Map(prev.models.map((m) => [m.id, m]));
+          const merged = models.map((m) => {
+            const existing = prevMap.get(m.id);
+            const hasAlias = Boolean(existing?.name?.trim() && existing.name.trim() !== existing.id);
+            return hasAlias ? { ...m, name: existing!.name.trim() } : m;
+          });
+          return {
+            ...prev,
+            models: merged,
+            defaultModel: merged.some((m) => m.id === prev.defaultModel)
+              ? prev.defaultModel
+              : merged[0].id,
+          };
+        });
         setStatusMsg({ ok: true, text: `已拉取 ${models.length} 个模型` });
       }
     } catch (err) {
@@ -548,7 +584,9 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
                   onChange={(e) => handleHeadersJsonChange(e.target.value)}
                   className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
                 />
-                {headersErr && <div className="text-xs text-rose-400">{headersErr}</div>}
+                {headersErr && (
+                  <div className="text-xs text-rose-600 dark:text-rose-400">{headersErr}</div>
+                )}
               </div>
             </Collapsible>
           </div>
@@ -558,7 +596,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
               className={`px-3 py-2 rounded-xl border break-words ${
                 statusMsg.ok
                   ? 'border-borderc bg-surface text-fg'
-                  : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
+                  : 'border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300'
               }`}
             >
               {statusMsg.text}
@@ -639,6 +677,8 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
           <div className="max-h-52 overflow-y-auto space-y-1 pr-1">
             {draft.models.map((m) => {
               const selected = draft.defaultModel === m.id;
+              const hasAlias = hasCustomModelDisplayName(m);
+              const isRenaming = editingModelNameId === m.id;
               return (
                 <div
                   key={m.id}
@@ -648,13 +688,71 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
                       : 'border-borderc bg-surface/40 text-muted hover:text-fg'
                   }`}
                 >
+                  {isRenaming ? (
+                    <div className="flex-1 flex items-center gap-1.5 min-w-0">
+                      <input
+                        autoFocus
+                        type="text"
+                        value={m.name}
+                        placeholder={m.id}
+                        aria-label={`编辑显示名称 ${m.id}`}
+                        onChange={(e) =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            models: prev.models.map((item) =>
+                              item.id === m.id ? { ...item, name: e.target.value } : item
+                            ),
+                          }))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === 'Escape') {
+                            e.preventDefault();
+                            setEditingModelNameId(null);
+                          }
+                        }}
+                        className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-bg border border-borderc text-xs text-fg focus:outline-none focus:border-fg/40"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setEditingModelNameId(null)}
+                        className="p-1 text-fg hover:text-accent shrink-0"
+                        title="完成"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setDraft({ ...draft, defaultModel: m.id })}
+                      className="flex-1 text-left flex items-center justify-between min-w-0 gap-2"
+                    >
+                      <div className="min-w-0">
+                        <div
+                          className={`truncate ${
+                            hasAlias ? 'font-sans font-medium text-fg' : 'font-mono'
+                          }`}
+                        >
+                          {getModelDisplayName(m, m.id)}
+                        </div>
+                        {hasAlias && (
+                          <div className="truncate font-mono text-[10px] text-muted/85">
+                            ID: {m.id}
+                          </div>
+                        )}
+                      </div>
+                      {selected && <span className="text-[11px] text-fg ml-2 shrink-0">默认</span>}
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={() => setDraft({ ...draft, defaultModel: m.id })}
-                    className="flex-1 text-left flex items-center justify-between min-w-0"
+                    onClick={() =>
+                      setEditingModelNameId((curr) => (curr === m.id ? null : m.id))
+                    }
+                    className="p-1 text-muted hover:text-fg shrink-0"
+                    title="自定义显示名称"
                   >
-                    <span className="truncate font-mono">{m.id}</span>
-                    {selected && <span className="text-[11px] text-fg ml-2 shrink-0">默认</span>}
+                    <Pencil className="w-3.5 h-3.5" />
                   </button>
                   <button
                     type="button"
@@ -682,7 +780,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
                 className={`px-3 py-2 rounded-xl border ${
                   statusMsg.ok
                     ? 'border-borderc bg-surface text-fg'
-                    : 'border-rose-500/35 bg-rose-500/10 text-rose-300'
+                    : 'border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300'
                 }`}
               >
                 {statusMsg.text}

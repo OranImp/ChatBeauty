@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowDown, BatteryCharging } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
+import { getModelDisplayName } from '@/services/llm/adapters/shared';
 import { App as CapApp } from '@capacitor/app';
 import {
   getAndroidBatteryStatus,
@@ -49,11 +50,20 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
   } = useAppStore();
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const autoFollowRef = useRef(true);
+  const isProgrammaticScrollRef = useRef(false);
+  const smoothScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const scrollBtnPresence = usePresence(showScrollBottom, 180);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const [showBatteryPrompt, setShowBatteryPrompt] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (smoothScrollTimerRef.current) clearTimeout(smoothScrollTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     const env = getRuntimeEnvironment();
@@ -103,10 +113,29 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     const el = scrollRef.current;
     if (!el) return;
+    if (smoothScrollTimerRef.current) {
+      clearTimeout(smoothScrollTimerRef.current);
+      smoothScrollTimerRef.current = null;
+    }
+    if (behavior === 'smooth') {
+      isProgrammaticScrollRef.current = true;
+      smoothScrollTimerRef.current = setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+        smoothScrollTimerRef.current = null;
+      }, 450);
+    } else {
+      isProgrammaticScrollRef.current = false;
+    }
     el.scrollTo({ top: el.scrollHeight, behavior });
     autoFollowRef.current = true;
     setShowScrollBottom(false);
   };
+
+  useEffect(() => {
+    autoFollowRef.current = true;
+    isProgrammaticScrollRef.current = false;
+    setShowScrollBottom(false);
+  }, [activeConversationId]);
 
   useEffect(() => {
     if (autoFollowRef.current) {
@@ -117,6 +146,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
 
   useEffect(() => {
     const el = scrollRef.current;
+    const contentEl = contentRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => {
       if (autoFollowRef.current) {
@@ -124,14 +154,28 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
       }
     });
     observer.observe(el);
+    if (contentEl) {
+      observer.observe(contentEl);
+    }
     return () => observer.disconnect();
-  }, []);
+  }, [activeConversationId]);
 
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const nearBottom = distFromBottom < 90;
+    if (isProgrammaticScrollRef.current) {
+      if (nearBottom) {
+        isProgrammaticScrollRef.current = false;
+        if (smoothScrollTimerRef.current) {
+          clearTimeout(smoothScrollTimerRef.current);
+          smoothScrollTimerRef.current = null;
+        }
+        setShowScrollBottom(false);
+      }
+      return;
+    }
     autoFollowRef.current = nearBottom;
     setShowScrollBottom(!nearBottom && el.scrollHeight > el.clientHeight + 120);
   };
@@ -159,7 +203,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
       {showBatteryPrompt && (
         <div className="cb-panel-enter mx-4 mt-2 px-3.5 py-2.5 rounded-xl border border-amber-500/35 bg-amber-500/10 text-xs text-fg flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <BatteryCharging className="w-4 h-4 text-amber-400 shrink-0" />
+            <BatteryCharging
+              className={`w-4 h-4 shrink-0 ${
+                theme === 'light' ? 'text-amber-600' : 'text-amber-400'
+              }`}
+            />
             <span>
               手机端后台生成建议：请将 ChatBeauty 设为「后台无限制 / 忽略电池优化」，防止切换应用或息屏时中断回答
             </span>
@@ -219,12 +267,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
       )}
 
       {errorBanner && (
-        <div className="cb-panel-enter mx-4 mt-2 px-3.5 py-2 rounded-xl border border-amber-500/35 bg-amber-500/10 text-xs text-amber-200 flex items-center justify-between gap-2">
+        <div
+          className={`cb-panel-enter mx-4 mt-2 px-3.5 py-2 rounded-xl border border-amber-500/35 bg-amber-500/10 text-xs flex items-center justify-between gap-2 ${
+            theme === 'light' ? 'text-amber-800' : 'text-amber-200'
+          }`}
+        >
           <span>{errorBanner}</span>
           <button
             type="button"
             onClick={() => setErrorBanner(null)}
-            className="text-amber-200 underline shrink-0"
+            className={`underline shrink-0 ${
+              theme === 'light' ? 'text-amber-800' : 'text-amber-200'
+            }`}
           >
             关闭
           </button>
@@ -240,6 +294,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
           className="flex-1 overflow-y-auto overscroll-y-contain touch-pan-y no-scrollbar px-4 sm:px-6 pt-3 pb-6"
         >
           <div
+            ref={contentRef}
             key={activeConversationId || 'empty'}
             className="cb-panel-enter mx-auto w-full"
             style={{ maxWidth: 'var(--chat-max-width)' }}
@@ -287,12 +342,25 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
                 </div>
               </div>
             ) : (
-              messages.map((msg) => (
+              messages.map((msg) => {
+                const msgProv = msg.providerId
+                  ? providers.find((p) => p.id === msg.providerId)
+                  : undefined;
+                const msgModelDef = msg.modelId
+                  ? msgProv?.models.find((m) => m.id === msg.modelId) ||
+                    providers.flatMap((p) => p.models).find((m) => m.id === msg.modelId)
+                  : undefined;
+                const modelDisplayName = msg.modelId
+                  ? getModelDisplayName(msgModelDef, msg.modelId)
+                  : undefined;
+                return (
                 <React.Fragment key={msg.id}>
                   <MessageItem
                     message={msg}
+                    modelDisplayName={modelDisplayName}
                     theme={theme}
                     appearance={appearance}
+                    isConversationStreaming={isStreaming}
                     onInspect={onInspect}
                     onRegenerate={(id) =>
                       void regenerateMessage(id).catch((e) => {
@@ -324,7 +392,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
                     </div>
                   )}
                 </React.Fragment>
-              ))
+                );
+              })
             )}
           </div>
         </div>

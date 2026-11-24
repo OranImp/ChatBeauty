@@ -52,6 +52,8 @@ export function deepMergePayload(
     const existing = out[key];
     if (isPlainObject(existing) && isPlainObject(val)) {
       out[key] = deepMergePayload(existing, val);
+    } else if (isPlainObject(val)) {
+      out[key] = deepMergePayload({}, val);
     } else {
       out[key] = val;
     }
@@ -215,6 +217,21 @@ export function toModelDefinition(id: string, displayName?: string): ModelDefini
   };
 }
 
+export function getModelDisplayName(
+  modelDef?: Pick<ModelDefinition, 'id' | 'name'> | null,
+  fallbackId = ''
+): string {
+  const custom = modelDef?.name?.trim();
+  return custom || modelDef?.id || fallbackId;
+}
+
+export function hasCustomModelDisplayName(
+  modelDef?: Pick<ModelDefinition, 'id' | 'name'> | null
+): boolean {
+  const custom = modelDef?.name?.trim();
+  return Boolean(custom && modelDef && custom !== modelDef.id);
+}
+
 export function isModelReasoningCapable(
   modelId: string,
   models: ModelDefinition[]
@@ -227,7 +244,7 @@ export function isModelReasoningCapable(
 }
 
 export function extractDataUrlParts(dataUrl: string): { mimeType: string; base64: string } | null {
-  const match = /^data:([^;]+);base64,(.+)$/s.exec(dataUrl);
+  const match = /^data:([^;,]+)(?:;[^;,]+)*;base64,(.+)$/is.exec(dataUrl);
   if (!match) return null;
   return { mimeType: match[1], base64: match[2] };
 }

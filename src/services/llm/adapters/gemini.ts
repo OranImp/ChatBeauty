@@ -24,14 +24,16 @@ function normalizeGeminiModel(modelId: string): string {
 }
 
 function buildGeminiStreamEndpoint(baseUrl: string, modelId: string): string {
-  const clean = trimBaseUrl(baseUrl || 'https://generativelanguage.googleapis.com/v1beta');
+  const clean =
+    trimBaseUrl(baseUrl) || 'https://generativelanguage.googleapis.com/v1beta';
   const model = encodeURIComponent(normalizeGeminiModel(modelId));
   return `${clean}/models/${model}:streamGenerateContent?alt=sse`;
 }
 
 function buildGeminiModelsEndpoint(baseUrl: string): string {
-  const clean = trimBaseUrl(baseUrl || 'https://generativelanguage.googleapis.com/v1beta');
-  return `${clean}/models`;
+  const clean =
+    trimBaseUrl(baseUrl) || 'https://generativelanguage.googleapis.com/v1beta';
+  return clean.endsWith('/models') ? `${clean}?pageSize=1000` : `${clean}/models?pageSize=1000`;
 }
 
 export class GeminiAdapter implements LLMProviderAdapter {
@@ -70,6 +72,10 @@ export class GeminiAdapter implements LLMProviderAdapter {
       } else {
         contents.push({ role, parts });
       }
+    }
+
+    while (contents.length > 0 && contents[0].role !== 'user') {
+      contents.shift();
     }
 
     const modelDef = req.provider.models.find((m) => m.id === req.modelId);
@@ -170,6 +176,11 @@ export class GeminiAdapter implements LLMProviderAdapter {
           }>
         | undefined;
 
+      const promptFeedback = parsed.promptFeedback as { blockReason?: string } | undefined;
+      if (promptFeedback?.blockReason && (!Array.isArray(candidates) || candidates.length === 0)) {
+        throw new Error(`Gemini 拦截了请求 (${promptFeedback.blockReason})`);
+      }
+
       const parts = candidates?.[0]?.content?.parts;
       if (Array.isArray(parts)) {
         for (const part of parts) {
@@ -234,9 +245,14 @@ export class GeminiAdapter implements LLMProviderAdapter {
     if (res.status < 200 || res.status >= 300) {
       throw new Error(`拉取模型失败 (HTTP ${res.status}): ${res.body.slice(0, 200)}`);
     }
-    const json = JSON.parse(res.body) as {
+    let json: {
       models?: Array<{ name: string; displayName?: string; supportedGenerationMethods?: string[] }>;
     };
+    try {
+      json = JSON.parse(res.body) as typeof json;
+    } catch {
+      throw new Error('拉取模型失败：返回内容非有效 JSON');
+    }
     return (json.models ?? [])
       .filter(
         (m) =>

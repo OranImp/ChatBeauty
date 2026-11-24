@@ -283,4 +283,23 @@ describe('modelProfiles & parameter merging', () => {
     expect(resolved.seed).toBe(7);
     expect(resolved.extraBody).toEqual({ nested: { a: 1, b: 20, c: 30 } });
   });
+
+  it('guards profile lookups against Object.prototype keys (__proto__, toString, constructor)', () => {
+    for (const badId of ['__proto__', 'toString', 'constructor']) {
+      const res = resolveModelReasoningProfile({
+        modelId: 'plain-unknown-model',
+        modelDef: {
+          id: 'plain-unknown-model',
+          name: 'plain',
+          capabilities: { chat: true },
+          params: { reasoningProfileId: badId },
+        },
+        customRules: [{ pattern: '.*', profileId: badId }],
+      });
+      expect(res.profile.id).toBe('none');
+      expect(() =>
+        parseModelProfileRulesJson(JSON.stringify([{ pattern: '^ok', profileId: badId }]))
+      ).toThrow();
+    }
+  });
 });

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Code2, Copy, Image as ImageIcon } from 'lucide-react';
 import { triggerDownload, type ResolvedTheme } from './svgUtils';
+import { copyTextSafe } from '@/services/media/clipboard';
 import { getChartChromeTokens, getChartPalette } from './chartPalette';
 
 function isPlainRecord(val: unknown): val is Record<string, unknown> {
@@ -51,6 +52,13 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({
   const [showCode, setShowCode] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (showCode) return;
@@ -61,11 +69,26 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({
       if (!containerRef.current) return;
       let option: Record<string, unknown>;
       try {
-        option = JSON.parse(code) as Record<string, unknown>;
+        const parsed = JSON.parse(code) as unknown;
+        if (!isPlainRecord(parsed)) {
+          if (!isStreaming) {
+            chartRef.current?.dispose();
+            chartRef.current = null;
+            setError('ECharts 配置必须是 JSON 对象');
+          }
+          return;
+        }
+        option = parsed;
       } catch {
-        if (!isStreaming) setError('ECharts 配置 JSON 尚不完整或格式有误');
+        if (!isStreaming) {
+          chartRef.current?.dispose();
+          chartRef.current = null;
+          setError('ECharts 配置 JSON 尚不完整或格式有误');
+        }
         return;
       }
+
+      setError(null);
 
       try {
         const echarts = await import('echarts');
@@ -148,6 +171,9 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({
           chart.resize();
         });
         observer.observe(containerRef.current);
+        requestAnimationFrame(() => {
+          if (!disposed) chart.resize();
+        });
       } catch (err) {
         if (!disposed) {
           setError(err instanceof Error ? err.message : 'ECharts 渲染失败');
@@ -169,9 +195,11 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({
   }, [code, theme, showCode, isStreaming]);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (await copyTextSafe(code)) {
+      setCopied(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
+    }
   };
 
   const handleExportPng = () => {
@@ -196,7 +224,7 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({
       <div
         className={
           frameless
-            ? 'absolute top-2 right-2 z-20 flex items-center gap-1 rounded-xl border border-borderc bg-elevated/90 backdrop-blur-md px-1.5 py-1 opacity-0 group-hover/media:opacity-100 focus-within:opacity-100 transition-opacity duration-200 shadow-sm pointer-events-none group-hover/media:pointer-events-auto focus-within:pointer-events-auto'
+            ? 'absolute top-2 right-2 z-20 flex items-center gap-1 rounded-xl border border-borderc bg-elevated/90 backdrop-blur-md px-1.5 py-1 opacity-85 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover/media:opacity-100 sm:group-hover/media:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition-opacity duration-200 shadow-sm'
             : 'flex items-center justify-between px-3.5 py-2 border-b border-borderc bg-surface/60'
         }
       >
@@ -243,12 +271,18 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({
         <pre className="p-4 text-xs font-mono overflow-x-auto text-muted m-0">
           <code>{code}</code>
         </pre>
-      ) : error ? (
-        <div className="p-4 text-xs text-muted">
-          {isStreaming ? '正在生成图表数据…' : error}
-        </div>
       ) : (
-        <div ref={containerRef} className="w-full h-[290px] sm:h-[330px] p-2" />
+        <>
+          {error && (
+            <div className="p-4 text-xs text-muted">
+              {isStreaming ? '正在生成图表数据…' : error}
+            </div>
+          )}
+          <div
+            ref={containerRef}
+            className={error ? 'hidden' : 'w-full h-[290px] sm:h-[330px] p-2'}
+          />
+        </>
       )}
     </div>
   );

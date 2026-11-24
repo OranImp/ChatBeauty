@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 
 interface SmoothSliderProps {
   value: number;
@@ -22,6 +22,7 @@ export const SmoothSlider: React.FC<SmoothSliderProps> = ({
   ariaLabel,
 }) => {
   const [draggingVal, setDraggingVal] = useState<number | null>(null);
+  const isDraggingRef = useRef(false);
   const displayVal = draggingVal ?? value;
   const span = max - min || 1;
   const pct = Math.max(0, Math.min(100, ((displayVal - min) / span) * 100));
@@ -30,6 +31,34 @@ export const SmoothSlider: React.FC<SmoothSliderProps> = ({
     if (decimals <= 0) return Math.round(raw);
     const factor = 10 ** decimals;
     return Math.round(raw * factor) / factor;
+  };
+
+  const stopDragging = () => {
+    isDraggingRef.current = false;
+    setDraggingVal(null);
+  };
+
+  const handleKeyDown: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
+    const step = decimals <= 0 ? 1 : 10 ** -decimals;
+    let next: number | null = null;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+      next = displayVal + step;
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+      next = displayVal - step;
+    } else if (e.key === 'PageUp') {
+      next = displayVal + step * 10;
+    } else if (e.key === 'PageDown') {
+      next = displayVal - step * 10;
+    } else if (e.key === 'Home') {
+      next = min;
+    } else if (e.key === 'End') {
+      next = max;
+    }
+    if (next === null) return;
+    e.preventDefault();
+    const clamped = Math.max(min, Math.min(max, next));
+    stopDragging();
+    onChange(formatOutput(clamped));
   };
 
   return (
@@ -63,14 +92,20 @@ export const SmoothSlider: React.FC<SmoothSliderProps> = ({
         step="any"
         value={displayVal}
         aria-label={ariaLabel}
-        onPointerDown={() => setDraggingVal(value)}
-        onPointerUp={() => setDraggingVal(null)}
-        onPointerCancel={() => setDraggingVal(null)}
-        onBlur={() => setDraggingVal(null)}
+        onPointerDown={() => {
+          isDraggingRef.current = true;
+          setDraggingVal(value);
+        }}
+        onPointerUp={stopDragging}
+        onPointerCancel={stopDragging}
+        onBlur={stopDragging}
+        onKeyDown={handleKeyDown}
         onChange={(e) => {
           const raw = parseFloat(e.target.value);
           if (!Number.isFinite(raw)) return;
-          setDraggingVal(raw);
+          if (isDraggingRef.current) {
+            setDraggingVal(raw);
+          }
           onChange(formatOutput(raw));
         }}
         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 m-0"

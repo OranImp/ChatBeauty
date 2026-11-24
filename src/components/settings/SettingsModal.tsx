@@ -146,6 +146,7 @@ interface SettingsModalProps {
   open: boolean;
   activeTab: SettingsTabKey;
   initialMobileRoot?: boolean;
+  mobileBackRef?: React.MutableRefObject<(() => boolean) | null>;
   onTabChange: (tab: SettingsTabKey) => void;
   onClose: () => void;
 }
@@ -154,14 +155,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   open,
   activeTab,
   initialMobileRoot = false,
+  mobileBackRef,
   onTabChange,
   onClose,
 }) => {
   const modalPresence = usePresence(open, 200);
   const {
     providers,
-    activeProviderId,
-    activeModelId,
     contextSettings,
     memorySettings,
     memoryEntries,
@@ -216,18 +216,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   }, []);
 
   useEffect(() => {
+    if (!mobileBackRef) return;
+    mobileBackRef.current = () => {
+      if (open && isMobile && mobileScreen === 'detail') {
+        setMobileScreen('root');
+        return true;
+      }
+      return false;
+    };
+    return () => {
+      mobileBackRef.current = null;
+    };
+  }, [mobileBackRef, open, isMobile, mobileScreen]);
+
+  useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (isMobile && mobileScreen === 'detail') {
+          setMobileScreen('root');
+        } else {
+          onClose();
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open, onClose, isMobile, mobileScreen]);
 
   if (!modalPresence.mounted) return null;
 
-  const activeProvider = providers.find((p) => p.id === activeProviderId);
-  const currentModelId = activeModelId || activeProvider?.defaultModel || '';
   const totalRulesCount =
     BUILTIN_MODEL_PROFILE_RULES.length +
     modelProfileSync.remoteRules.length +
@@ -238,14 +256,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const thresholdPercent = Math.round(contextSettings.autoCompactThreshold * 100);
 
   const summaryByKey: Record<ResolvedSectionKey, string> = {
-    providers: currentModelId || `${providers.length} 个供应商`,
+    providers: `${providers.length} 个供应商`,
     generation: `${contextSettings.autoCompactEnabled ? `压缩 ${thresholdPercent}%` : '压缩关'} · ${totalRulesCount}规则`,
     memory: `${memoryEntries.length} 条记忆 · ${memorySettings.enabled ? '已启用' : '已暂停'}`,
     prompts: defaultPreset?.name || '默认预设',
     general: activeThemeLabel,
     typography: `${appearance.fontSize.toFixed(0)}px · ${Math.round((appearance.uiScale ?? 1.06) * 100)}%`,
     data: webdav.enabled ? 'WebDAV 已开启' : '仅本地存储',
-    about: 'v0.5.1',
+    about: 'v0.5.2',
   };
 
   const activeMeta = ITEM_BY_KEY[resolvedSection];
@@ -326,7 +344,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </SettingsSection>
               ))}
               <div className="pt-1 pb-2 text-center text-[11px] font-mono text-muted/80">
-                ChatBeauty v0.5.1 · MIT License
+                ChatBeauty v0.5.2 · MIT License
               </div>
             </div>
           </div>
@@ -417,7 +435,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </nav>
 
             <div className="px-4 py-3 border-t border-borderc text-[11px] font-mono text-muted/80 shrink-0">
-              ChatBeauty v0.5.1 · MIT
+              ChatBeauty v0.5.2 · MIT
             </div>
           </aside>
 

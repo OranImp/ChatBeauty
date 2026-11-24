@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Check, Copy, Play, WrapText } from 'lucide-react';
 import type { ResolvedTheme } from './svgUtils';
+import { copyTextSafe } from '@/services/media/clipboard';
 import type { LightboxPayload } from './LightboxModal';
 import { SandboxArtifactCard } from './SandboxArtifactCard';
 
@@ -29,6 +30,13 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
   const [copied, setCopied] = useState(false);
   const [wrap, setWrap] = useState(false);
   const [previewHtml, setPreviewHtml] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   const lang = (language || 'text').toLowerCase();
   const isHtml = lang === 'html' || lang === 'htm';
@@ -99,9 +107,11 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
   }
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (await copyTextSafe(code)) {
+      setCopied(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
+    }
   };
 
   return (

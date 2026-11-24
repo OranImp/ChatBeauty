@@ -164,4 +164,55 @@ describe('contextManager — token accounting & auto-compaction', () => {
     expect(fallback).toContain('之前摘要');
     expect(fallback).toContain('热力学第一定律');
   });
+
+  it('skips stale pre-compaction usage calibration and excludes discarded reasoning tokens', () => {
+    const preCompactAssistant: Message = {
+      ...makeMsg('m2', 'assistant', 'older answer', { inputTokens: 8000, outputTokens: 300 }),
+      createdAt: 1000,
+      updatedAt: 1000,
+    };
+    const staleCalibrated = computeContextUsageStats({
+      messages: [makeMsg('m1', 'user', 'hi'), preCompactAssistant, makeMsg('m3', 'user', 'next')],
+      compactedAt: 2000,
+      systemPromptBase: 'Sys',
+      modelId: 'deepseek-chat',
+      contextSettings: DEFAULT_CONTEXT_SETTINGS,
+      maxContextMessages: 20,
+    });
+    expect(staleCalibrated.usedTokens).toBeLessThan(1000);
+
+    const reasoningAssistant: Message = {
+      id: 'm_r',
+      conversationId: 'conv_1',
+      role: 'assistant',
+      parts: [
+        { type: 'reasoning', text: 'very long hidden chain of thought'.repeat(50) },
+        { type: 'text', text: 'concise final answer' },
+      ],
+      createdAt: 3000,
+      updatedAt: 3000,
+      status: 'done',
+      usage: { inputTokens: 1200, outputTokens: 2500 },
+    };
+    const stats = computeContextUsageStats({
+      messages: [makeMsg('m1', 'user', 'hi'), reasoningAssistant],
+      compactedAt: 500,
+      systemPromptBase: 'Sys',
+      modelId: 'deepseek-reasoner',
+      contextSettings: DEFAULT_CONTEXT_SETTINGS,
+      maxContextMessages: 20,
+    });
+    expect(stats.usedTokens).toBeLessThan(1300);
+  });
+
+  it('retains tail context in buildFallbackLocalSummary when previous summary exceeds bound', () => {
+    const oldHead = 'OLD_PREFIX_MARKER '.repeat(80);
+    const recentTail = '\nTAIL_KEEP_MARKER_987';
+    const fallback = buildFallbackLocalSummary(`${oldHead}${recentTail}`, [
+      makeMsg('m1', 'user', 'LATEST_TURN_MARKER'),
+    ]);
+    expect(fallback).toContain('TAIL_KEEP_MARKER_987');
+    expect(fallback).toContain('LATEST_TURN_MARKER');
+    expect(fallback).not.toContain('OLD_PREFIX_MARKER');
+  });
 });

@@ -22,6 +22,7 @@ interface SidebarProps {
   onCollapseDesktop: () => void;
   onOpenSettings: (tab?: SettingsTabKey) => void;
   searchInputRef?: React.RefObject<HTMLInputElement>;
+  mobileSearchInputRef?: React.RefObject<HTMLInputElement>;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -31,22 +32,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCollapseDesktop,
   onOpenSettings,
   searchInputRef,
+  mobileSearchInputRef,
 }) => {
   const {
     conversations,
     activeConversationId,
-    providers,
-    activeProviderId,
-    activeModelId,
     createConversation,
     selectConversation,
     renameConversation,
     togglePinConversation,
     deleteConversation,
   } = useAppStore();
-
-  const currentProvider = providers.find((p) => p.id === activeProviderId);
-  const resolvedModelId = activeModelId || currentProvider?.defaultModel || '';
 
   const [query, setQuery] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -56,11 +52,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     if (!mobileOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCloseMobile();
+      if (e.key === 'Escape') {
+        if (editingId) {
+          setEditingId(null);
+        } else {
+          onCloseMobile();
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [mobileOpen, onCloseMobile]);
+  }, [mobileOpen, onCloseMobile, editingId]);
 
   const { pinnedList, recentList } = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -112,7 +114,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onChange={(e) => setEditingTitle(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void commitRename(conv.id);
-                if (e.key === 'Escape') setEditingId(null);
+                if (e.key === 'Escape') {
+                  e.stopPropagation();
+                  setEditingId(null);
+                }
               }}
               className="w-full bg-bg border border-fg/35 rounded px-2 py-0.5 text-[13px] text-fg focus:outline-none"
             />
@@ -168,7 +173,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     );
   };
 
-  const innerContent = (
+  const renderInnerContent = (isMobileDrawer: boolean) => (
     <div className="flex flex-col h-full bg-surface/95 md:bg-surface/65 border-r border-borderc select-none">
       {/* Compact Header */}
       <div className="flex items-center justify-between px-3.5 pt-3 pb-2 safe-top">
@@ -214,7 +219,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="relative">
           <Search className="w-4 h-4 text-muted absolute left-3 top-1/2 -translate-y-1/2" />
           <input
-            ref={searchInputRef}
+            ref={isMobileDrawer ? mobileSearchInputRef : searchInputRef}
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -259,15 +264,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onOpenSettings();
             onCloseMobile();
           }}
-          className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl bg-bg/60 hover:bg-elevated border border-borderc text-[13px] transition"
+          className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-bg/60 hover:bg-elevated border border-borderc text-[13px] text-fg font-medium transition"
         >
-          <span className="flex items-center gap-2 text-fg font-medium shrink-0">
-            <Settings className="w-4 h-4 text-muted" />
-            <span>设置</span>
-          </span>
-          <span className="text-xs font-mono text-muted truncate">
-            {resolvedModelId || `${providers.length} 个供应商`}
-          </span>
+          <Settings className="w-4 h-4 text-muted shrink-0" />
+          <span>设置</span>
         </button>
       </div>
     </div>
@@ -287,7 +287,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             desktopOpen ? 'translate-x-0' : '-translate-x-4'
           }`}
         >
-          {innerContent}
+          {renderInnerContent(false)}
         </div>
       </aside>
 
@@ -309,7 +309,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 : 'cb-drawer-out pointer-events-none'
             }`}
           >
-            {innerContent}
+            {renderInnerContent(true)}
           </div>
         </div>
       )}

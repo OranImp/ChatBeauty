@@ -13,7 +13,7 @@ export interface EndpointBenchmarkResult {
 
 function buildProbeUrl(provider: ProviderConfig, baseUrl: string): string {
   if (provider.protocol === 'gemini') {
-    return `${baseUrl}/models`;
+    return baseUrl.endsWith('/models') ? baseUrl : `${baseUrl}/models`;
   }
 
   if (provider.protocol === 'anthropic') {
@@ -48,9 +48,10 @@ export async function benchmarkProviderEndpoint(
   provider: ProviderConfig,
   overrideBaseUrl?: string
 ): Promise<EndpointBenchmarkResult> {
-  const baseUrl = trimBaseUrl(
-    overrideBaseUrl || provider.baseUrl || PROTOCOL_TEMPLATES[provider.protocol].defaultBaseUrl
-  );
+  const baseUrl =
+    trimBaseUrl(overrideBaseUrl || '') ||
+    trimBaseUrl(provider.baseUrl || '') ||
+    PROTOCOL_TEMPLATES[provider.protocol].defaultBaseUrl;
   const probeUrl = buildProbeUrl(provider, baseUrl);
   const mergedHeaders = buildEffectiveProviderHeaders(
     { ...provider, baseUrl },

@@ -23,7 +23,7 @@ export function sanitizeAndHarmonizeSvg(
 ): { html: string; caption?: string; width: number; height: number } | null {
   const clean = DOMPurify.sanitize(rawSvg, {
     USE_PROFILES: { svg: true, svgFilters: true },
-    FORBID_TAGS: ['script', 'iframe', 'object', 'embed'],
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'style'],
     FORBID_ATTR: ['onload', 'onerror', 'onclick', 'onmouseover'],
   });
 
@@ -31,8 +31,23 @@ export function sanitizeAndHarmonizeSvg(
     return { html: clean, width: 640, height: 340 };
   }
 
+  let normalizedXml = clean;
+  const rootOpenMatch = /<svg\b([^>]*)>/i.exec(normalizedXml);
+  if (rootOpenMatch) {
+    let extraAttrs = '';
+    if (!/\bxmlns\s*=/i.test(rootOpenMatch[1])) {
+      extraAttrs += ' xmlns="http://www.w3.org/2000/svg"';
+    }
+    if (/\bxlink:/i.test(normalizedXml) && !/\bxmlns:xlink\s*=/i.test(rootOpenMatch[1])) {
+      extraAttrs += ' xmlns:xlink="http://www.w3.org/1999/xlink"';
+    }
+    if (extraAttrs) {
+      normalizedXml = normalizedXml.replace(/<svg\b/i, `<svg${extraAttrs}`);
+    }
+  }
+
   const parser = new DOMParser();
-  const doc = parser.parseFromString(clean, 'image/svg+xml');
+  const doc = parser.parseFromString(normalizedXml, 'image/svg+xml');
   if (doc.querySelector('parsererror')) {
     return null;
   }
@@ -94,6 +109,16 @@ export function sanitizeAndHarmonizeSvg(
   // and protect labels from intersecting wires with a crisp theme-background halo.
   const allNodes = svg.querySelectorAll('*');
   allNodes.forEach((el) => {
+    const tagLower = el.tagName.toLowerCase();
+    if (tagLower === 'image') {
+      for (const attr of ['href', 'xlink:href']) {
+        const refVal = (el.getAttribute(attr) || '').trim();
+        if (/^(https?:)?\/\//i.test(refVal)) {
+          el.removeAttribute(attr);
+        }
+      }
+    }
+
     const stroke = normColor(el.getAttribute('stroke'));
     const fill = normColor(el.getAttribute('fill'));
 
@@ -135,6 +160,28 @@ async function blobToBase64(blob: Blob): Promise<string> {
 }
 
 export function triggerDownload(filename: string, dataUrlOrBlob: string | Blob): void {
+  if (typeof dataUrlOrBlob === 'string' && /^https?:\/\//i.test(dataUrlOrBlob)) {
+    void (async () => {
+      try {
+        const res = await fetch(dataUrlOrBlob);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        triggerDownload(filename, blob);
+      } catch {
+        if (typeof window !== 'undefined' && !Capacitor.isNativePlatform()) {
+          const a = document.createElement('a');
+          a.href = dataUrlOrBlob;
+          a.download = filename;
+          a.rel = 'noopener noreferrer';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }
+      }
+    })();
+    return;
+  }
+
   if (typeof window !== 'undefined' && Capacitor.isNativePlatform()) {
     void (async () => {
       if (typeof dataUrlOrBlob === 'string') {
@@ -177,21 +224,33 @@ export async function exportSvgToPng(
   const svg = doc.querySelector('svg');
   if (!svg) return;
 
-  const vb = (svg.getAttribute('viewBox') || '0 0 640 340').split(/[\s,]+/).map(Number);
+  const vb = (svg.getAttribute('viewBox') || '0 0 640 340').trim().split(/[\s,]+/).map(Number);
   const w = vb[2] > 0 ? vb[2] : 640;
   const h = vb[3] > 0 ? vb[3] : 340;
-  const fg = theme === 'light' ? '#1f1e1c' : '#eceae4';
+  const fg = theme === 'light' ? '#1f1e1c' : theme === 'oled' ? '#f2f0eb' : '#eceae4';
   const bg = theme === 'oled' ? '#000000' : theme === 'dark' ? '#171615' : '#faf9f5';
+  const surface = theme === 'oled' ? '#141312' : theme === 'dark' ? '#21201e' : '#f2f0e9';
+  const muted = theme === 'light' ? '#6f6a62' : theme === 'oled' ? '#9b968e' : '#9c968c';
+  const accent = theme === 'light' ? '#c25d36' : '#d9825b';
+  const border = theme === 'light' ? 'rgba(31,30,28,0.12)' : 'rgba(236,234,228,0.12)';
 
   const exportSvg = svg.cloneNode(true) as SVGSVGElement;
   exportSvg.setAttribute('width', String(w * 2));
   exportSvg.setAttribute('height', String(h * 2));
   exportSvg.setAttribute('style', `color: ${fg}; background: ${bg};`);
 
-  // Replace currentColor and var(--bg) explicitly for standalone rasterization
-  const serialized = exportSvg.outerHTML
+  // Replace currentColor and theme CSS vars explicitly for standalone rasterization
+  let serialized = exportSvg.outerHTML
     .replace(/currentColor/g, fg)
-    .replace(/var\(--bg\)/g, bg);
+    .replace(/var\(--bg(?:\s*,[^)]+)?\)/g, bg)
+    .replace(/var\(--fg(?:\s*,[^)]+)?\)/g, fg)
+    .replace(/var\(--surface(?:\s*,[^)]+)?\)/g, surface)
+    .replace(/var\(--muted(?:\s*,[^)]+)?\)/g, muted)
+    .replace(/var\(--accent(?:\s*,[^)]+)?\)/g, accent)
+    .replace(/var\(--border(?:\s*,[^)]+)?\)/g, border);
+  if (!/^<svg\b[^>]*\bxmlns\s*=/i.test(serialized)) {
+    serialized = serialized.replace(/<svg\b/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+  }
   const svgBlob = new Blob([serialized], { type: 'image/svg+xml;charset=utf-8' });
   const blobUrl = URL.createObjectURL(svgBlob);
 

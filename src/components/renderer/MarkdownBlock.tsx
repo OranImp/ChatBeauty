@@ -13,6 +13,7 @@ import { SandboxArtifactCard } from './SandboxArtifactCard';
 import { CodeBlock } from './CodeBlock';
 import { CalloutBlock, extractCalloutFromChildren } from './CalloutBlock';
 import { Check, Copy } from 'lucide-react';
+import { copyTextSafe } from '@/services/media/clipboard';
 
 interface MarkdownBlockProps {
   content: string;
@@ -41,6 +42,13 @@ function extractTextContent(node: React.ReactNode): string {
 const TableWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [copied, setCopied] = React.useState(false);
   const tableRef = React.useRef<HTMLTableElement | null>(null);
+  const copyTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   const handleCopyTsv = async () => {
     if (!tableRef.current) return;
@@ -52,9 +60,11 @@ const TableWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => 
           .join('\t')
       )
       .join('\n');
-    await navigator.clipboard.writeText(tsv);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (await copyTextSafe(tsv)) {
+      setCopied(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
+    }
   };
 
   return (
@@ -81,10 +91,25 @@ const TableWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 export const MarkdownBlock: React.FC<MarkdownBlockProps> = memo(
   ({ content, theme, appearance, isStreaming, onInspect }) => {
     const handleContainerClick: React.MouseEventHandler<HTMLDivElement> = (e) => {
+      const sel = typeof window !== 'undefined' ? window.getSelection() : null;
+      if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) {
+        return;
+      }
       const target = e.target as HTMLElement | null;
       if (!target) return;
       const katexEl = target.closest('.katex');
       if (!katexEl) return;
+
+      const anchor = target.closest('a[href]') as HTMLAnchorElement | null;
+      if (anchor && katexEl.contains(anchor)) {
+        const href = (anchor.getAttribute('href') || '').trim();
+        e.preventDefault();
+        if (/^(https?:|mailto:)/i.test(href)) {
+          window.open(href, '_blank', 'noopener,noreferrer');
+        }
+        return;
+      }
+
       const annotation = katexEl.querySelector('annotation[encoding="application/x-tex"]');
       const latex = annotation?.textContent?.trim();
       if (!latex) return;
@@ -216,7 +241,7 @@ export const MarkdownBlock: React.FC<MarkdownBlockProps> = memo(
           <TableWrapper>{children}</TableWrapper>
         ),
         thead: ({ children }: { children?: React.ReactNode }) => (
-          <thead className="bg-white/[0.04] text-left border-b border-borderc">{children}</thead>
+          <thead className="bg-fg/[0.04] text-left border-b border-borderc">{children}</thead>
         ),
         th: ({ children }: { children?: React.ReactNode }) => (
           <th className="px-3.5 py-2.5 font-semibold text-xs tracking-wide text-fg whitespace-nowrap">

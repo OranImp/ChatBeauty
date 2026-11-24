@@ -70,6 +70,7 @@ export interface Conversation {
   contextSummary?: string;
   compactedUntilMessageId?: string;
   compactedCount?: number;
+  compactedAt?: number;
   isDemo?: boolean;
 }
 

@@ -45,7 +45,7 @@ import {
   formatMemoriesForPrompt,
   MEMORY_FILE_HEADER,
   mergeMemoryEntries,
-  parseLlmMemoryExtraction,
+  parseLlmMemoryExtractionDetailed,
   parseMemoryDocument,
   retrieveRelevantMemories,
   serializeMemoryDocument,
@@ -69,8 +69,10 @@ function uid(prefix: string): string {
 
 const deletedConvIds = new Set<string>();
 let memoryNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+let restoreEpoch = 0;
+let memoryWriteQueue: Promise<void> = Promise.resolve();
 
-function resolveValidProviderAndModel(
+export function resolveValidProviderAndModel(
   conv: Conversation | undefined,
   providers: ProviderConfig[],
   activeProviderId: string | null,
@@ -90,7 +92,7 @@ function resolveValidProviderAndModel(
   let candidateModel = '';
   if (convProv && conv?.modelId) {
     candidateModel = conv.modelId;
-  } else if (!conv?.providerId && activeProv && activeProv.id === provider.id && activeModelId) {
+  } else if (!convProv && activeProv && activeProv.id === provider.id && activeModelId) {
     candidateModel = activeModelId;
   } else if (conv?.modelId && provider.models.some((m) => m.id === conv.modelId)) {
     candidateModel = conv.modelId;
@@ -132,8 +134,12 @@ interface AppState {
   abortControllers: Record<string, AbortController>;
 
   // Actions
-  initApp: () => Promise<void>;
-  reloadFromDatabase: () => Promise<void>;
+  initApp: (options?: {
+    skipNativeMemoryFallback?: boolean;
+    syncNativeMemoryFile?: boolean;
+  }) => Promise<void>;
+  prepareForDatabaseRestore: () => void;
+  reloadFromDatabase: (options?: { fromRestore?: boolean }) => Promise<void>;
   openDemoShowcase: () => Promise<void>;
 
   createConversation: (title?: string) => Promise<Conversation>;
@@ -217,12 +223,47 @@ export const useAppStore = create<AppState>((set, get) => {
     }, 4200);
   };
 
-  const persistMemoryEntries = async (entries: MemoryEntry[], explicitDoc?: string) => {
-    const doc = explicitDoc !== undefined ? explicitDoc : serializeMemoryDocument(entries);
-    const parsedEntries = explicitDoc !== undefined ? parseMemoryDocument(doc) : entries;
-    await setKv(KV_KEYS.MEMORY_DOCUMENT, doc);
-    void writeNativeMemoryFile(doc);
-    set({ memoryDocument: doc, memoryEntries: parsedEntries });
+  const persistMemoryMutation = async (
+    mutator: (prevEntries: MemoryEntry[]) => {
+      entries: MemoryEntry[];
+      explicitDoc?: string;
+      notice?: string | null;
+      skipWrite?: boolean;
+    }
+  ) => {
+    let nextDoc = '';
+    let shouldWrite = false;
+    let noticeMsg: string | null = null;
+    set((s) => {
+      const result = mutator(s.memoryEntries);
+      if (result.skipWrite) {
+        noticeMsg = result.notice ?? null;
+        return {};
+      }
+      shouldWrite = true;
+      noticeMsg = result.notice ?? null;
+      nextDoc =
+        result.explicitDoc !== undefined
+          ? result.explicitDoc
+          : serializeMemoryDocument(result.entries);
+      const parsed =
+        result.explicitDoc !== undefined ? parseMemoryDocument(nextDoc) : result.entries;
+      return { memoryDocument: nextDoc, memoryEntries: parsed };
+    });
+
+    if (noticeMsg) {
+      flashMemoryNotice(noticeMsg);
+    }
+
+    if (!shouldWrite) return;
+
+    const docToPersist = nextDoc;
+    const job = memoryWriteQueue.then(async () => {
+      await setKv(KV_KEYS.MEMORY_DOCUMENT, docToPersist);
+      await writeNativeMemoryFile(docToPersist);
+    });
+    memoryWriteQueue = job.catch(() => undefined);
+    await job;
   };
 
   const isConvDeleted = (convId: string) =>
@@ -236,6 +277,7 @@ export const useAppStore = create<AppState>((set, get) => {
     outerSignal?: AbortSignal
   ): Promise<{ ok: boolean; message: string; updatedConv: Conversation }> => {
     const state = get();
+    const epoch = restoreEpoch;
     if (state.compactingByConv[conversation.id]) {
       return { ok: false, message: '正在压缩上下文中…', updatedConv: conversation };
     }
@@ -253,8 +295,27 @@ export const useAppStore = create<AppState>((set, get) => {
       };
     }
 
-    const toCompact = activeMessages.slice(0, activeMessages.length - keepRecent);
+    // Ensure the post-compaction window starts on a 'user' message so Anthropic/Gemini schemas remain valid.
+    let splitIdx = activeMessages.length - keepRecent;
+    while (splitIdx < activeMessages.length && activeMessages[splitIdx]?.role !== 'user') {
+      splitIdx += 1;
+    }
+    if (splitIdx <= 0 || splitIdx >= activeMessages.length) {
+      const altIdx = activeMessages.length - keepRecent - 1;
+      if (altIdx > 0 && activeMessages[altIdx]?.role === 'user') {
+        splitIdx = altIdx;
+      } else {
+        return {
+          ok: false,
+          message: '当前活跃上下文无可安全拆分的历史轮次，暂无需压缩',
+          updatedConv: conversation,
+        };
+      }
+    }
+
+    const toCompact = activeMessages.slice(0, splitIdx);
     const lastCompactedMsg = toCompact[toCompact.length - 1];
+    const keptCount = activeMessages.length - toCompact.length;
 
     set((s) => ({
       compactingByConv: { ...s.compactingByConv, [conversation.id]: true },
@@ -325,37 +386,58 @@ export const useAppStore = create<AppState>((set, get) => {
         }
       }
 
+      if (epoch !== restoreEpoch || isConvDeleted(conversation.id)) {
+        return { ok: false, message: '对话已重置或删除', updatedConv: conversation };
+      }
+
+      const currentMsgs = get().messagesByConv[conversation.id] || [];
+      if (!currentMsgs.some((m) => m.id === lastCompactedMsg.id)) {
+        return {
+          ok: false,
+          message: '压缩期间对话历史已变动，已取消本次摘要',
+          updatedConv: conversation,
+        };
+      }
+
+      const latestConv =
+        get().conversations.find((c) => c.id === conversation.id) ??
+        (await db.conversations.get(conversation.id)) ??
+        conversation;
+
       const finalSummary =
-        summaryText.trim() || buildFallbackLocalSummary(conversation.contextSummary, toCompact);
+        summaryText.trim() || buildFallbackLocalSummary(latestConv.contextSummary, toCompact);
 
       const allUsableCount = allMessages.filter(
         (m) => m.role === 'user' || m.role === 'assistant'
       ).length;
       const prevCompactedTotal = Math.max(
-        conversation.compactedCount ?? 0,
+        latestConv.compactedCount ?? 0,
         allUsableCount - activeMessages.length
       );
-
-      const updatedConv: Conversation = {
-        ...conversation,
+      const compactedAt = Date.now();
+      const patch: Partial<Conversation> = {
         contextSummary: finalSummary,
         compactedUntilMessageId: lastCompactedMsg.id,
         compactedCount: prevCompactedTotal + toCompact.length,
-        updatedAt: Date.now(),
+        compactedAt,
+        updatedAt: compactedAt,
       };
 
-      if (!isConvDeleted(conversation.id)) {
-        await db.conversations.put(updatedConv);
-        set((s) => ({
-          conversations: s.conversations
-            .map((c) => (c.id === updatedConv.id ? updatedConv : c))
-            .sort((a, b) => b.updatedAt - a.updatedAt),
-        }));
-      }
+      const updatedConv: Conversation = {
+        ...latestConv,
+        ...patch,
+      };
+
+      await db.conversations.update(conversation.id, patch);
+      set((s) => ({
+        conversations: s.conversations
+          .map((c) => (c.id === conversation.id ? { ...c, ...patch } : c))
+          .sort((a, b) => b.updatedAt - a.updatedAt),
+      }));
 
       return {
         ok: true,
-        message: `已压缩 ${toCompact.length} 条较早消息，保留最近 ${keepRecent} 条活跃上下文`,
+        message: `已压缩 ${toCompact.length} 条较早消息，保留最近 ${keptCount} 条活跃上下文`,
         updatedConv,
       };
     } finally {
@@ -374,12 +456,15 @@ export const useAppStore = create<AppState>((set, get) => {
     modelId: string
   ) => {
     const state = get();
+    const epoch = restoreEpoch;
     if (!state.memorySettings.enabled || !state.memorySettings.autoExtract) return;
     const trigger = detectMemoryTrigger(userText);
     if (!trigger) return;
 
     const sensCheck = detectSensitiveInfo(userText);
     let extracted: MemoryEntry[] = [];
+    let llmSucceeded = false;
+    let llmSkippedSensitiveCount = 0;
 
     if (provider.apiKey.trim() && modelId) {
       const ctrl = new AbortController();
@@ -428,11 +513,16 @@ export const useAppStore = create<AppState>((set, get) => {
           },
           ctrl.signal
         );
-        extracted = parseLlmMemoryExtraction(
+        const detailed = parseLlmMemoryExtractionDetailed(
           rawOut,
           get().memorySettings.recordSensitiveInfo,
           convId
         );
+        if (detailed.hadValidJson) {
+          llmSucceeded = true;
+          extracted = detailed.entries;
+          llmSkippedSensitiveCount = detailed.skippedSensitiveCount;
+        }
       } catch {
         extracted = [];
       } finally {
@@ -441,49 +531,71 @@ export const useAppStore = create<AppState>((set, get) => {
     }
 
     const latestBeforeMerge = get();
-    if (!latestBeforeMerge.memorySettings.enabled || !latestBeforeMerge.memorySettings.autoExtract) {
+    if (
+      epoch !== restoreEpoch ||
+      !latestBeforeMerge.memorySettings.enabled ||
+      !latestBeforeMerge.memorySettings.autoExtract
+    ) {
       return;
     }
 
-    if (extracted.length === 0) {
+    if (!llmSucceeded) {
       extracted = extractMemoriesLocal(userText, latestBeforeMerge.memorySettings, convId);
     }
 
     if (extracted.length === 0) {
-      if (sensCheck.isSensitive && !latestBeforeMerge.memorySettings.recordSensitiveInfo) {
+      if (
+        (llmSkippedSensitiveCount > 0 || sensCheck.isSensitive) &&
+        !latestBeforeMerge.memorySettings.recordSensitiveInfo
+      ) {
         flashMemoryNotice('检测到敏感隐私信息，已按设置跳过记忆写入');
       }
       return;
     }
 
-    const merged = mergeMemoryEntries(
-      latestBeforeMerge.memoryEntries,
-      extracted,
-      latestBeforeMerge.memorySettings.recordSensitiveInfo
-    );
-
-    if (merged.addedCount > 0 || merged.updatedCount > 0) {
-      await persistMemoryEntries(merged.entries);
-      const changed = merged.addedCount + merged.updatedCount;
-      const suffix = merged.skippedSensitiveCount > 0 ? '（已自动过滤敏感条目）' : '';
-      flashMemoryNotice(`已写入 ${changed} 条长期记忆${suffix}`);
-    } else if (
-      merged.skippedSensitiveCount > 0 ||
-      (sensCheck.isSensitive && !latestBeforeMerge.memorySettings.recordSensitiveInfo)
-    ) {
-      flashMemoryNotice('检测到敏感隐私信息，已按设置跳过记忆写入');
-    }
+    await persistMemoryMutation((prevEntries) => {
+      const latestSettings = get().memorySettings;
+      if (epoch !== restoreEpoch || !latestSettings.enabled || !latestSettings.autoExtract) {
+        return { entries: prevEntries, skipWrite: true };
+      }
+      const merged = mergeMemoryEntries(
+        prevEntries,
+        extracted,
+        latestSettings.recordSensitiveInfo
+      );
+      if (merged.addedCount > 0 || merged.updatedCount > 0) {
+        const changed = merged.addedCount + merged.updatedCount;
+        const suffix =
+          merged.skippedSensitiveCount + llmSkippedSensitiveCount > 0
+            ? '（已自动过滤敏感条目）'
+            : '';
+        return {
+          entries: merged.entries,
+          notice: `已写入 ${changed} 条长期记忆${suffix}`,
+        };
+      }
+      const skippedNotice =
+        merged.skippedSensitiveCount > 0 ||
+        llmSkippedSensitiveCount > 0 ||
+        (sensCheck.isSensitive && !latestSettings.recordSensitiveInfo)
+          ? '检测到敏感隐私信息，已按设置跳过记忆写入'
+          : null;
+      return { entries: prevEntries, skipWrite: true, notice: skippedNotice };
+    });
   };
 
   const runAssistantStream = async (
     conversation: Conversation,
     historyBeforeReply: Message[],
     provider: ProviderConfig,
-    modelId: string
+    modelId: string,
+    pendingController?: AbortController
   ) => {
     const state = get();
+    const epoch = restoreEpoch;
     const assistantMsgId = uid('msg');
     const startedAt = Date.now();
+    const controller = pendingController ?? new AbortController();
 
     const initialAssistant: Message = {
       id: assistantMsgId,
@@ -498,8 +610,16 @@ export const useAppStore = create<AppState>((set, get) => {
       status: 'streaming',
     };
 
-    await db.messages.put(initialAssistant);
-    const controller = new AbortController();
+    if (controller.signal.aborted || epoch !== restoreEpoch || isConvDeleted(conversation.id)) {
+      set((s) => {
+        if (s.abortControllers[conversation.id] !== controller) return {};
+        const nextControllers = { ...s.abortControllers };
+        delete nextControllers[conversation.id];
+        return { abortControllers: nextControllers };
+      });
+      return;
+    }
+
     set((s) => ({
       streamingMessageId: assistantMsgId,
       streamingByConv: { ...s.streamingByConv, [conversation.id]: assistantMsgId },
@@ -546,7 +666,7 @@ export const useAppStore = create<AppState>((set, get) => {
     let lastFlush = 0;
 
     const syncAssistantMessage = (status: Message['status'], error?: string, forceDb = false) => {
-      if (isConvDeleted(conversation.id)) return;
+      if (epoch !== restoreEpoch || isConvDeleted(conversation.id)) return;
 
       const parts: Message['parts'] = [];
       if (reasoningText) {
@@ -586,6 +706,11 @@ export const useAppStore = create<AppState>((set, get) => {
     };
 
     try {
+      await db.messages.put(initialAssistant);
+      if (controller.signal.aborted || epoch !== restoreEpoch || isConvDeleted(conversation.id)) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+
       const modelDef = provider.models.find((m) => m.id === modelId);
       let effectiveConv =
         get().conversations.find((c) => c.id === conversation.id) ?? conversation;
@@ -593,6 +718,7 @@ export const useAppStore = create<AppState>((set, get) => {
       const preflightStats = computeContextUsageStats({
         messages: historyBeforeReply,
         compactedUntilMessageId: effectiveConv.compactedUntilMessageId,
+        compactedAt: effectiveConv.compactedAt,
         contextSummary: effectiveConv.contextSummary,
         systemPromptBase,
         retrievedMemoriesText,
@@ -688,15 +814,20 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     } finally {
       const updatedAt = Date.now();
-      const deleted = isConvDeleted(conversation.id);
+      const staleEpoch = epoch !== restoreEpoch;
+      const deleted = staleEpoch || isConvDeleted(conversation.id);
       if (!deleted) {
         await db.conversations.update(conversation.id, { updatedAt });
       }
       set((s) => {
         const nextControllers = { ...s.abortControllers };
-        delete nextControllers[conversation.id];
+        if (nextControllers[conversation.id] === controller) {
+          delete nextControllers[conversation.id];
+        }
         const nextStreamingByConv = { ...s.streamingByConv };
-        delete nextStreamingByConv[conversation.id];
+        if (nextStreamingByConv[conversation.id] === assistantMsgId) {
+          delete nextStreamingByConv[conversation.id];
+        }
         return {
           streamingMessageId: s.streamingMessageId === assistantMsgId ? null : s.streamingMessageId,
           streamingByConv: nextStreamingByConv,
@@ -739,10 +870,10 @@ export const useAppStore = create<AppState>((set, get) => {
     streamingByConv: {},
     abortControllers: {},
 
-    initApp: async () => {
+    initApp: async (options) => {
       const loaded = await loadInitialState();
       let memoryDoc = loaded.memoryDocument;
-      if (!memoryDoc || !memoryDoc.trim()) {
+      if ((!memoryDoc || !memoryDoc.trim()) && !options?.skipNativeMemoryFallback) {
         const nativeDoc = await readNativeMemoryFile();
         if (nativeDoc && nativeDoc.trim()) {
           memoryDoc = nativeDoc;
@@ -750,7 +881,10 @@ export const useAppStore = create<AppState>((set, get) => {
         }
       }
       if (!memoryDoc || !memoryDoc.trim()) {
-        memoryDoc = MEMORY_FILE_HEADER;
+        memoryDoc = `${MEMORY_FILE_HEADER}\n`;
+      }
+      if (options?.syncNativeMemoryFile) {
+        await writeNativeMemoryFile(memoryDoc);
       }
       const memoryEntries = parseMemoryDocument(memoryDoc);
 
@@ -769,7 +903,7 @@ export const useAppStore = create<AppState>((set, get) => {
         loaded.activeModelId &&
         activeProv?.models.some((m) => m.id === loaded.activeModelId)
           ? loaded.activeModelId
-          : activeProv?.defaultModel ?? activeProv?.models[0]?.id ?? null;
+          : activeProv?.defaultModel || activeProv?.models[0]?.id || null;
 
       set({
         ready: true,
@@ -795,13 +929,30 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
-    reloadFromDatabase: async () => {
+    prepareForDatabaseRestore: () => {
+      restoreEpoch += 1;
+      deletedConvIds.clear();
       Object.values(get().abortControllers).forEach((ctrl) => ctrl.abort());
-      set({ messagesByConv: {}, streamingMessageId: null, streamingByConv: {}, abortControllers: {} });
-      await get().initApp();
+      set({
+        conversations: [],
+        messagesByConv: {},
+        compactingByConv: {},
+        streamingMessageId: null,
+        streamingByConv: {},
+        abortControllers: {},
+      });
+    },
+
+    reloadFromDatabase: async (options) => {
+      get().prepareForDatabaseRestore();
+      await get().initApp({
+        skipNativeMemoryFallback: Boolean(options?.fromRestore),
+        syncNativeMemoryFile: Boolean(options?.fromRestore),
+      });
     },
 
     openDemoShowcase: async () => {
+      get().stopStreaming(DEMO_CONVERSATION_ID);
       deletedConvIds.delete(DEMO_CONVERSATION_ID);
       const now = Date.now();
       const rawDemo = createDemoShowcaseData(now);
@@ -810,6 +961,7 @@ export const useAppStore = create<AppState>((set, get) => {
         updatedAt: now,
       };
       await db.transaction('rw', [db.conversations, db.messages], async () => {
+        await db.messages.where('conversationId').equals(DEMO_CONVERSATION_ID).delete();
         await db.conversations.put(demoConv);
         await db.messages.bulkPut(rawDemo.messages);
       });
@@ -894,14 +1046,11 @@ export const useAppStore = create<AppState>((set, get) => {
         await db.conversations.delete(id);
       });
 
-      const remaining = get().conversations.filter((c) => c.id !== id);
-      let nextActive = get().activeConversationId;
-      if (nextActive === id) {
-        nextActive = remaining[0]?.id ?? null;
-        await setKv(KV_KEYS.ACTIVE_CONVERSATION, nextActive);
-      }
-
+      let nextActive: string | null = null;
       set((s) => {
+        const remaining = s.conversations.filter((c) => c.id !== id);
+        nextActive =
+          s.activeConversationId === id ? remaining[0]?.id ?? null : s.activeConversationId;
         const nextMap = { ...s.messagesByConv };
         delete nextMap[id];
         const nextStreamingByConv = { ...s.streamingByConv };
@@ -913,6 +1062,8 @@ export const useAppStore = create<AppState>((set, get) => {
           streamingByConv: nextStreamingByConv,
         };
       });
+
+      await setKv(KV_KEYS.ACTIVE_CONVERSATION, nextActive);
 
       if (nextActive && !get().messagesByConv[nextActive]) {
         await loadMessagesFor(nextActive);
@@ -931,13 +1082,14 @@ export const useAppStore = create<AppState>((set, get) => {
       const hasImages = Boolean(images && images.length > 0);
       if (!trimmed && !hasImages) return;
 
+      const epoch = restoreEpoch;
       let state = get();
       let conv = state.conversations.find((c) => c.id === state.activeConversationId);
       if (!conv) {
         conv = await state.createConversation('新对话');
         state = get();
       }
-      if (state.abortControllers[conv.id]) return;
+      if (state.abortControllers[conv.id] || state.compactingByConv[conv.id]) return;
 
       const { provider, modelId } = resolveValidProviderAndModel(
         conv,
@@ -950,58 +1102,85 @@ export const useAppStore = create<AppState>((set, get) => {
         throw new Error('NO_PROVIDER_CONFIGURED');
       }
 
-      const existing = state.messagesByConv[conv.id] || (await loadMessagesFor(conv.id));
-      const now = Date.now();
-      const parts: ContentPart[] = [
-        ...(images ?? []),
-        ...(trimmed ? [{ type: 'text' as const, text: trimmed }] : []),
-      ];
-      const userMessage: Message = {
-        id: uid('msg'),
-        conversationId: conv.id,
-        role: 'user',
-        parts,
-        createdAt: now,
-        updatedAt: now,
-        status: 'done',
-      };
-
-      // Auto-title on first user message
-      let nextTitle = conv.title;
-      if (existing.length === 0 || conv.title === '新对话') {
-        nextTitle = trimmed
-          ? trimmed.replace(/\s+/g, ' ').slice(0, 26) + (trimmed.length > 26 ? '…' : '')
-          : '图片提问';
-      }
-
-      const updatedConv: Conversation = {
-        ...conv,
-        title: nextTitle,
-        updatedAt: now,
-        providerId: provider.id,
-        modelId,
-      };
-
-      await db.transaction('rw', [db.messages, db.conversations], async () => {
-        await db.messages.put(userMessage);
-        await db.conversations.put(updatedConv);
-      });
-
-      const nextHistory = [...existing, userMessage];
+      const pendingController = new AbortController();
+      const convId = conv.id;
       set((s) => ({
-        conversations: s.conversations
-          .map((c) => (c.id === updatedConv.id ? updatedConv : c))
-          .sort((a, b) => b.updatedAt - a.updatedAt),
-        messagesByConv: {
-          ...s.messagesByConv,
-          [updatedConv.id]: nextHistory,
-        },
+        abortControllers: { ...s.abortControllers, [convId]: pendingController },
       }));
 
-      if (trimmed) {
-        void extractAndSaveMemory(trimmed, updatedConv.id, provider, modelId);
+      let handedOff = false;
+      try {
+        const existing = get().messagesByConv[convId] || (await loadMessagesFor(convId));
+        if (pendingController.signal.aborted || epoch !== restoreEpoch || isConvDeleted(convId)) {
+          return;
+        }
+        const latestConv = get().conversations.find((c) => c.id === convId) ?? conv;
+        const now = Date.now();
+        const parts: ContentPart[] = [
+          ...(images ?? []),
+          ...(trimmed ? [{ type: 'text' as const, text: trimmed }] : []),
+        ];
+        const userMessage: Message = {
+          id: uid('msg'),
+          conversationId: convId,
+          role: 'user',
+          parts,
+          createdAt: now,
+          updatedAt: now,
+          status: 'done',
+        };
+
+        // Auto-title on first user message
+        let nextTitle = latestConv.title;
+        if (existing.length === 0 || latestConv.title === '新对话') {
+          nextTitle = trimmed
+            ? trimmed.replace(/\s+/g, ' ').slice(0, 26) + (trimmed.length > 26 ? '…' : '')
+            : '图片提问';
+        }
+
+        const updatedConv: Conversation = {
+          ...latestConv,
+          title: nextTitle,
+          updatedAt: now,
+          providerId: provider.id,
+          modelId,
+        };
+
+        await db.transaction('rw', [db.messages, db.conversations], async () => {
+          await db.messages.put(userMessage);
+          await db.conversations.put(updatedConv);
+        });
+
+        if (pendingController.signal.aborted || epoch !== restoreEpoch || isConvDeleted(convId)) {
+          return;
+        }
+
+        const nextHistory = [...existing, userMessage];
+        set((s) => ({
+          conversations: s.conversations
+            .map((c) => (c.id === updatedConv.id ? updatedConv : c))
+            .sort((a, b) => b.updatedAt - a.updatedAt),
+          messagesByConv: {
+            ...s.messagesByConv,
+            [updatedConv.id]: nextHistory,
+          },
+        }));
+
+        if (trimmed) {
+          void extractAndSaveMemory(trimmed, updatedConv.id, provider, modelId);
+        }
+        handedOff = true;
+        await runAssistantStream(updatedConv, nextHistory, provider, modelId, pendingController);
+      } finally {
+        if (!handedOff) {
+          set((s) => {
+            if (s.abortControllers[convId] !== pendingController) return {};
+            const nextControllers = { ...s.abortControllers };
+            delete nextControllers[convId];
+            return { abortControllers: nextControllers };
+          });
+        }
       }
-      await runAssistantStream(updatedConv, nextHistory, provider, modelId);
     },
 
     stopStreaming: (conversationId) => {
@@ -1016,7 +1195,7 @@ export const useAppStore = create<AppState>((set, get) => {
       const convId = state.activeConversationId;
       if (!convId) return;
       const conv = state.conversations.find((c) => c.id === convId);
-      if (!conv || state.abortControllers[convId]) return;
+      if (!conv || state.abortControllers[convId] || state.compactingByConv[convId]) return;
 
       const { provider, modelId } = resolveValidProviderAndModel(
         conv,
@@ -1029,40 +1208,64 @@ export const useAppStore = create<AppState>((set, get) => {
       }
       if (!modelId) throw new Error('请先选择模型');
 
-      const msgs = state.messagesByConv[convId] || [];
-      const targetIdx = msgs.findIndex((m) => m.id === assistantMessageId);
-      if (targetIdx === -1) return;
-
-      const historyBefore = msgs.slice(0, targetIdx);
-      const removedIds = msgs.slice(targetIdx).map((m) => m.id);
-      const invalidateCompaction =
-        Boolean(conv.compactedUntilMessageId) &&
-        !historyBefore.some((m) => m.id === conv.compactedUntilMessageId);
-      const nextConv: Conversation = invalidateCompaction
-        ? {
-            ...conv,
-            contextSummary: undefined,
-            compactedUntilMessageId: undefined,
-            compactedCount: undefined,
-          }
-        : conv;
-
-      await db.transaction('rw', [db.messages, db.conversations], async () => {
-        await db.messages.bulkDelete(removedIds);
-        if (invalidateCompaction) await db.conversations.put(nextConv);
-      });
-
+      const epoch = restoreEpoch;
+      const pendingController = new AbortController();
       set((s) => ({
-        conversations: invalidateCompaction
-          ? s.conversations.map((c) => (c.id === convId ? nextConv : c))
-          : s.conversations,
-        messagesByConv: {
-          ...s.messagesByConv,
-          [convId]: historyBefore,
-        },
+        abortControllers: { ...s.abortControllers, [convId]: pendingController },
       }));
 
-      await runAssistantStream(nextConv, historyBefore, provider, modelId);
+      let handedOff = false;
+      try {
+        const msgs = get().messagesByConv[convId] || [];
+        const targetIdx = msgs.findIndex((m) => m.id === assistantMessageId);
+        if (targetIdx === -1) return;
+
+        const historyBefore = msgs.slice(0, targetIdx);
+        const removedIds = msgs.slice(targetIdx).map((m) => m.id);
+        const invalidateCompaction =
+          Boolean(conv.compactedUntilMessageId) &&
+          !historyBefore.some((m) => m.id === conv.compactedUntilMessageId);
+        const nextConv: Conversation = invalidateCompaction
+          ? {
+              ...conv,
+              contextSummary: undefined,
+              compactedUntilMessageId: undefined,
+              compactedCount: undefined,
+              compactedAt: undefined,
+            }
+          : conv;
+
+        await db.transaction('rw', [db.messages, db.conversations], async () => {
+          await db.messages.bulkDelete(removedIds);
+          if (invalidateCompaction) await db.conversations.put(nextConv);
+        });
+
+        if (pendingController.signal.aborted || epoch !== restoreEpoch || isConvDeleted(convId)) {
+          return;
+        }
+
+        set((s) => ({
+          conversations: invalidateCompaction
+            ? s.conversations.map((c) => (c.id === convId ? nextConv : c))
+            : s.conversations,
+          messagesByConv: {
+            ...s.messagesByConv,
+            [convId]: historyBefore,
+          },
+        }));
+
+        handedOff = true;
+        await runAssistantStream(nextConv, historyBefore, provider, modelId, pendingController);
+      } finally {
+        if (!handedOff) {
+          set((s) => {
+            if (s.abortControllers[convId] !== pendingController) return {};
+            const nextControllers = { ...s.abortControllers };
+            delete nextControllers[convId];
+            return { abortControllers: nextControllers };
+          });
+        }
+      }
     },
 
     editAndResend: async (userMessageId, newText) => {
@@ -1072,7 +1275,7 @@ export const useAppStore = create<AppState>((set, get) => {
       const convId = state.activeConversationId;
       if (!convId) return;
       const conv = state.conversations.find((c) => c.id === convId);
-      if (!conv || state.abortControllers[convId]) return;
+      if (!conv || state.abortControllers[convId] || state.compactingByConv[convId]) return;
 
       const { provider, modelId } = resolveValidProviderAndModel(
         conv,
@@ -1085,81 +1288,119 @@ export const useAppStore = create<AppState>((set, get) => {
       }
       if (!modelId) throw new Error('请先选择模型');
 
-      const msgs = state.messagesByConv[convId] || [];
-      const targetIdx = msgs.findIndex((m) => m.id === userMessageId);
-      if (targetIdx === -1) return;
-
-      const preservedNonText = msgs[targetIdx].parts.filter((p) => p.type !== 'text');
-      const updatedUserMsg: Message = {
-        ...msgs[targetIdx],
-        parts: [...preservedNonText, { type: 'text', text: trimmed }],
-        updatedAt: Date.now(),
-      };
-      const removedIds = msgs.slice(targetIdx + 1).map((m) => m.id);
-      const prefixBeforeEdit = msgs.slice(0, targetIdx);
-      const invalidateCompaction =
-        Boolean(conv.compactedUntilMessageId) &&
-        !prefixBeforeEdit.some((m) => m.id === conv.compactedUntilMessageId);
-      const nextConv: Conversation = invalidateCompaction
-        ? {
-            ...conv,
-            contextSummary: undefined,
-            compactedUntilMessageId: undefined,
-            compactedCount: undefined,
-          }
-        : conv;
-
-      await db.transaction('rw', [db.messages, db.conversations], async () => {
-        await db.messages.put(updatedUserMsg);
-        if (removedIds.length > 0) await db.messages.bulkDelete(removedIds);
-        if (invalidateCompaction) await db.conversations.put(nextConv);
-      });
-
-      const nextHistory = [...prefixBeforeEdit, updatedUserMsg];
+      const epoch = restoreEpoch;
+      const pendingController = new AbortController();
       set((s) => ({
-        conversations: invalidateCompaction
-          ? s.conversations.map((c) => (c.id === convId ? nextConv : c))
-          : s.conversations,
-        messagesByConv: {
-          ...s.messagesByConv,
-          [convId]: nextHistory,
-        },
+        abortControllers: { ...s.abortControllers, [convId]: pendingController },
       }));
 
-      void extractAndSaveMemory(trimmed, nextConv.id, provider, modelId);
-      await runAssistantStream(nextConv, nextHistory, provider, modelId);
+      let handedOff = false;
+      try {
+        const msgs = get().messagesByConv[convId] || [];
+        const targetIdx = msgs.findIndex((m) => m.id === userMessageId);
+        if (targetIdx === -1) return;
+
+        const preservedNonText = msgs[targetIdx].parts.filter((p) => p.type !== 'text');
+        const updatedUserMsg: Message = {
+          ...msgs[targetIdx],
+          parts: [...preservedNonText, { type: 'text', text: trimmed }],
+          updatedAt: Date.now(),
+        };
+        const removedIds = msgs.slice(targetIdx + 1).map((m) => m.id);
+        const prefixBeforeEdit = msgs.slice(0, targetIdx);
+        const invalidateCompaction =
+          Boolean(conv.compactedUntilMessageId) &&
+          !prefixBeforeEdit.some((m) => m.id === conv.compactedUntilMessageId);
+        const nextConv: Conversation = invalidateCompaction
+          ? {
+              ...conv,
+              contextSummary: undefined,
+              compactedUntilMessageId: undefined,
+              compactedCount: undefined,
+              compactedAt: undefined,
+            }
+          : conv;
+
+        await db.transaction('rw', [db.messages, db.conversations], async () => {
+          await db.messages.put(updatedUserMsg);
+          if (removedIds.length > 0) await db.messages.bulkDelete(removedIds);
+          if (invalidateCompaction) await db.conversations.put(nextConv);
+        });
+
+        if (pendingController.signal.aborted || epoch !== restoreEpoch || isConvDeleted(convId)) {
+          return;
+        }
+
+        const nextHistory = [...prefixBeforeEdit, updatedUserMsg];
+        set((s) => ({
+          conversations: invalidateCompaction
+            ? s.conversations.map((c) => (c.id === convId ? nextConv : c))
+            : s.conversations,
+          messagesByConv: {
+            ...s.messagesByConv,
+            [convId]: nextHistory,
+          },
+        }));
+
+        void extractAndSaveMemory(trimmed, nextConv.id, provider, modelId);
+        handedOff = true;
+        await runAssistantStream(nextConv, nextHistory, provider, modelId, pendingController);
+      } finally {
+        if (!handedOff) {
+          set((s) => {
+            if (s.abortControllers[convId] !== pendingController) return {};
+            const nextControllers = { ...s.abortControllers };
+            delete nextControllers[convId];
+            return { abortControllers: nextControllers };
+          });
+        }
+      }
     },
 
     deleteMessage: async (messageId) => {
       const state = get();
       const convId = state.activeConversationId;
       if (!convId) return;
+      if (state.abortControllers[convId] || state.compactingByConv[convId]) return;
       const conv = state.conversations.find((c) => c.id === convId);
       const prevMsgs = state.messagesByConv[convId] || [];
-      const remaining = prevMsgs.filter((m) => m.id !== messageId);
 
       let nextConv = conv;
       let convChanged = false;
-      if (conv && conv.compactedUntilMessageId === messageId) {
-        convChanged = true;
+      if (conv && conv.compactedUntilMessageId) {
+        const boundaryIdx = prevMsgs.findIndex((m) => m.id === conv.compactedUntilMessageId);
         const deletedIdx = prevMsgs.findIndex((m) => m.id === messageId);
-        const prevUsableBeforeBoundary = prevMsgs
-          .slice(0, Math.max(0, deletedIdx))
-          .filter((m) => m.role === 'user' || m.role === 'assistant');
-        const prevBoundary = prevUsableBeforeBoundary[prevUsableBeforeBoundary.length - 1];
-        if (prevBoundary) {
-          nextConv = {
-            ...conv,
-            compactedUntilMessageId: prevBoundary.id,
-            compactedCount: Math.max(1, (conv.compactedCount ?? 1) - 1),
-          };
-        } else {
-          nextConv = {
-            ...conv,
-            contextSummary: undefined,
-            compactedUntilMessageId: undefined,
-            compactedCount: undefined,
-          };
+        if (boundaryIdx >= 0 && deletedIdx >= 0 && deletedIdx <= boundaryIdx) {
+          convChanged = true;
+          if (conv.compactedUntilMessageId === messageId) {
+            const prevUsableBeforeBoundary = prevMsgs
+              .slice(0, deletedIdx)
+              .filter((m) => m.role === 'user' || m.role === 'assistant');
+            const prevBoundary = prevUsableBeforeBoundary[prevUsableBeforeBoundary.length - 1];
+            if (prevBoundary) {
+              nextConv = {
+                ...conv,
+                compactedUntilMessageId: prevBoundary.id,
+                compactedCount: prevUsableBeforeBoundary.length,
+              };
+            } else {
+              nextConv = {
+                ...conv,
+                contextSummary: undefined,
+                compactedUntilMessageId: undefined,
+                compactedCount: undefined,
+                compactedAt: undefined,
+              };
+            }
+          } else {
+            const remainingUpToBoundary = prevMsgs
+              .slice(0, boundaryIdx + 1)
+              .filter((m) => m.id !== messageId && (m.role === 'user' || m.role === 'assistant'));
+            nextConv = {
+              ...conv,
+              compactedCount: remainingUpToBoundary.length,
+            };
+          }
         }
       }
 
@@ -1175,7 +1416,7 @@ export const useAppStore = create<AppState>((set, get) => {
             : s.conversations,
         messagesByConv: {
           ...s.messagesByConv,
-          [convId]: remaining,
+          [convId]: (s.messagesByConv[convId] || []).filter((m) => m.id !== messageId),
         },
       }));
     },
@@ -1200,16 +1441,27 @@ export const useAppStore = create<AppState>((set, get) => {
 
     saveProvider: async (provider) => {
       await db.providers.put(provider);
-      const exists = get().providers.some((p) => p.id === provider.id);
+      const curState = get();
+      const exists = curState.providers.some((p) => p.id === provider.id);
       const nextProviders = exists
-        ? get().providers.map((p) => (p.id === provider.id ? provider : p))
-        : [...get().providers, provider];
+        ? curState.providers.map((p) => (p.id === provider.id ? provider : p))
+        : [...curState.providers, provider];
 
       set({ providers: nextProviders });
 
-      if (!get().activeProviderId || get().activeProviderId === provider.id) {
-        const model = provider.defaultModel || provider.models[0]?.id || null;
-        await get().setActiveProviderModel(provider.id, model || '');
+      if (!curState.activeProviderId) {
+        const model = provider.defaultModel || provider.models[0]?.id || '';
+        await get().setActiveProviderModel(provider.id, model);
+      } else if (curState.activeProviderId === provider.id) {
+        const curModel = curState.activeModelId;
+        const modelStillValid =
+          Boolean(curModel) &&
+          (provider.defaultModel === curModel ||
+            provider.models.some((m) => m.id === curModel));
+        if (!modelStillValid) {
+          const fallback = provider.defaultModel || provider.models[0]?.id || '';
+          await get().setActiveProviderModel(provider.id, fallback);
+        }
       }
     },
 
@@ -1427,26 +1679,28 @@ export const useAppStore = create<AppState>((set, get) => {
       });
       if (res.status < 200 || res.status >= 300) {
         const msg = `同步失败 (HTTP ${res.status})`;
-        const errNext = {
-          ...state.modelProfileSync,
-          remoteUrl: url,
-          lastStatus: msg,
-        };
+        let errNext!: ModelProfileSyncSettings;
+        set((s) => {
+          errNext = { ...s.modelProfileSync, remoteUrl: url, lastStatus: msg };
+          return { modelProfileSync: errNext };
+        });
         await setKv(KV_KEYS.MODEL_PROFILES, errNext);
-        set({ modelProfileSync: errNext });
         throw new Error(msg);
       }
 
       const rules = parseModelProfileRulesJson(res.body);
-      const next: ModelProfileSyncSettings = {
-        ...state.modelProfileSync,
-        remoteUrl: url,
-        remoteRules: rules,
-        lastSyncedAt: Date.now(),
-        lastStatus: `已同步 ${rules.length} 条在线规则`,
-      };
+      let next!: ModelProfileSyncSettings;
+      set((s) => {
+        next = {
+          ...s.modelProfileSync,
+          remoteUrl: url,
+          remoteRules: rules,
+          lastSyncedAt: Date.now(),
+          lastStatus: `已同步 ${rules.length} 条在线规则`,
+        };
+        return { modelProfileSync: next };
+      });
       await setKv(KV_KEYS.MODEL_PROFILES, next);
-      set({ modelProfileSync: next });
       return { count: rules.length };
     },
 
@@ -1469,25 +1723,40 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     saveMemoryDocument: async (markdown) => {
-      await persistMemoryEntries(parseMemoryDocument(markdown), markdown);
+      await persistMemoryMutation(() => ({
+        entries: [],
+        explicitDoc: markdown,
+      }));
     },
 
     upsertMemoryEntry: async (entry) => {
-      const state = get();
-      const exists = state.memoryEntries.some((m) => m.id === entry.id);
-      const nextEntries = exists
-        ? state.memoryEntries.map((m) => (m.id === entry.id ? entry : m))
-        : [entry, ...state.memoryEntries];
-      await persistMemoryEntries(nextEntries);
+      const sanitizedTags = entry.tags.map((t) => t.trim()).filter(Boolean).slice(0, 6);
+      const normalized: MemoryEntry = {
+        ...entry,
+        content: entry.content.replace(/[\r\n]+/g, ' ').trim(),
+        tags: sanitizedTags,
+      };
+      await persistMemoryMutation((prevEntries) => {
+        const exists = prevEntries.some((m) => m.id === normalized.id);
+        return {
+          entries: exists
+            ? prevEntries.map((m) => (m.id === normalized.id ? normalized : m))
+            : [normalized, ...prevEntries],
+        };
+      });
     },
 
     deleteMemoryEntry: async (id) => {
-      const nextEntries = get().memoryEntries.filter((m) => m.id !== id);
-      await persistMemoryEntries(nextEntries);
+      await persistMemoryMutation((prevEntries) => ({
+        entries: prevEntries.filter((m) => m.id !== id),
+      }));
     },
 
     clearAllMemories: async () => {
-      await persistMemoryEntries([], `${MEMORY_FILE_HEADER}\n`);
+      await persistMemoryMutation(() => ({
+        entries: [],
+        explicitDoc: `${MEMORY_FILE_HEADER}\n`,
+      }));
     },
 
     clearMemoryNotice: () => set({ memoryNotice: null }),

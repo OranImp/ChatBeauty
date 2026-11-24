@@ -110,7 +110,10 @@ export function parseMemoryDocument(markdown: string): MemoryEntry[] {
     }
 
     const structured = line.match(/^[-*]\s+\[(.*?)\]\s+(.+)$/);
-    if (structured) {
+    if (
+      structured &&
+      /(?:^|\|)\s*(?:id|pinned|sensitive|tags|updated):/i.test(structured[1])
+    ) {
       const metaRaw = structured[1];
       const content = structured[2].trim();
       if (!content) continue;
@@ -118,6 +121,7 @@ export function parseMemoryDocument(markdown: string): MemoryEntry[] {
       let id = '';
       let pinned = false;
       let sensitive = false;
+      let hasSensitiveKey = false;
       let tags: string[] = [];
       let updatedAt = Date.now();
 
@@ -128,8 +132,10 @@ export function parseMemoryDocument(markdown: string): MemoryEntry[] {
         const v = part.slice(idx + 1).trim();
         if (k === 'id') id = v;
         else if (k === 'pinned') pinned = v === 'true';
-        else if (k === 'sensitive') sensitive = v === 'true';
-        else if (k === 'tags') {
+        else if (k === 'sensitive') {
+          hasSensitiveKey = true;
+          sensitive = v === 'true';
+        } else if (k === 'tags') {
           tags = v
             .split(',')
             .map((t) => t.trim())
@@ -151,7 +157,7 @@ export function parseMemoryDocument(markdown: string): MemoryEntry[] {
         content,
         tags,
         pinned,
-        sensitive: sensitive || detectSensitiveInfo(content).isSensitive,
+        sensitive: hasSensitiveKey ? sensitive : detectSensitiveInfo(content).isSensitive,
         createdAt: updatedAt,
         updatedAt,
       });
@@ -224,7 +230,7 @@ const SENSITIVE_PATTERNS: Array<{ reason: string; regex: RegExp; replacement: st
   {
     reason: 'API 密钥 / Token / 密码',
     regex:
-      /\b(?:sk|rk|pk|ghp|gho|AIza|xox[baprs])[-_A-Za-z0-9]{10,}\b|(?:密码|口令|password|secret|token)\s*(?:是|为|:|=)\s*\S+/gi,
+      /\b(?:sk|rk|pk|ghp|gho|AIza|xox[baprs])[-_A-Za-z0-9]{10,}\b|(?:密码|口令|password|secret|token)\s*(?:是|为|:|：|=)\s*\S+/gi,
     replacement: '[已脱敏密钥]',
   },
   {
@@ -367,28 +373,33 @@ export function buildMemoryExtractionPrompt(userText: string, allowSensitive: bo
   ].join('\n');
 }
 
-export function parseLlmMemoryExtraction(
+export function parseLlmMemoryExtractionDetailed(
   rawText: string,
   allowSensitive: boolean,
   convId?: string
-): MemoryEntry[] {
+): {
+  entries: MemoryEntry[];
+  hadValidJson: boolean;
+  skippedSensitiveCount: number;
+} {
   const cleaned = rawText
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/```\s*$/i, '')
     .trim();
   const match = cleaned.match(/\[[\s\S]*\]/);
-  if (!match) return [];
+  if (!match) return { entries: [], hadValidJson: false, skippedSensitiveCount: 0 };
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(match[0]);
   } catch {
-    return [];
+    return { entries: [], hadValidJson: false, skippedSensitiveCount: 0 };
   }
-  if (!Array.isArray(parsed)) return [];
+  if (!Array.isArray(parsed)) return { entries: [], hadValidJson: false, skippedSensitiveCount: 0 };
 
   const now = Date.now();
   const out: MemoryEntry[] = [];
+  let skippedSensitiveCount = 0;
   for (const item of parsed) {
     if (!item || typeof item !== 'object') continue;
     const obj = item as Record<string, unknown>;
@@ -398,6 +409,7 @@ export function parseLlmMemoryExtraction(
     const sens = detectSensitiveInfo(content);
     const markedSensitive = Boolean(obj.sensitive) || sens.isSensitive;
     if (markedSensitive && !allowSensitive) {
+      skippedSensitiveCount += 1;
       continue;
     }
 
@@ -425,7 +437,15 @@ export function parseLlmMemoryExtraction(
       sourceConvId: convId,
     });
   }
-  return out;
+  return { entries: out, hadValidJson: true, skippedSensitiveCount };
+}
+
+export function parseLlmMemoryExtraction(
+  rawText: string,
+  allowSensitive: boolean,
+  convId?: string
+): MemoryEntry[] {
+  return parseLlmMemoryExtractionDetailed(rawText, allowSensitive, convId).entries;
 }
 
 function normalizeForDedup(s: string): string {
@@ -461,10 +481,12 @@ export function mergeMemoryEntries(
     const normNew = normalizeForDedup(clean);
     const dupIdx = next.findIndex((e) => {
       const normOld = normalizeForDedup(e.content);
-      return (
-        normOld === normNew ||
-        (normNew.length >= 6 && (normOld.includes(normNew) || normNew.includes(normOld)))
-      );
+      if (normOld === normNew) return true;
+      if (normOld.length < 6 || normNew.length < 6) return false;
+      const minLen = Math.min(normOld.length, normNew.length);
+      const maxLen = Math.max(normOld.length, normNew.length);
+      if (minLen / maxLen < 0.5) return false;
+      return normOld.includes(normNew) || normNew.includes(normOld);
     });
 
     if (dupIdx >= 0) {
@@ -546,7 +568,7 @@ export function retrieveRelevantMemories(
       let relevance = 0;
 
       for (const tok of queryTokens) {
-        if (tagsLower.some((t) => t.includes(tok) || tok.includes(t))) {
+        if (tagsLower.some((t) => t.includes(tok) || (t.length >= 2 && tok.includes(t)) || t === tok)) {
           relevance += 4;
         }
         if (contentLower.includes(tok)) {
@@ -574,13 +596,16 @@ export function retrieveRelevantMemories(
 
   for (const row of scored) {
     if (selected.length >= maxCount) break;
-    if (row.relevance === 0 && row.entry.pinned) {
-      if (pinnedFallbackCount >= 2) continue;
-      pinnedFallbackCount += 1;
+    const isPinnedFallback = row.relevance === 0 && row.entry.pinned;
+    if (isPinnedFallback && pinnedFallbackCount >= 2) {
+      continue;
     }
     const cost = estimateTokens(row.entry.content) + 8;
     if (selected.length > 0 && tokenSum + cost > maxTokens) {
       continue;
+    }
+    if (isPinnedFallback) {
+      pinnedFallbackCount += 1;
     }
     selected.push(row.entry);
     tokenSum += cost;

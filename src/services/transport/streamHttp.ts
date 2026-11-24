@@ -39,11 +39,14 @@ export interface ElectronBridge {
   onStreamEnd: (cb: (data: { requestId: string }) => void) => () => void;
   onStreamError: (cb: (data: { requestId: string; error: string }) => void) => () => void;
   simpleRequest: (payload: {
+    requestId?: string;
+    timeoutMs?: number;
     url: string;
     method: string;
     headers: Record<string, string>;
     body?: string;
   }) => Promise<SimpleHttpResponse>;
+  abortSimpleRequest?: (requestId: string) => Promise<void>;
   setBackgroundSettings?: (settings: {
     closeToTray: boolean;
     backgroundGeneration: boolean;
@@ -185,7 +188,15 @@ export async function streamRequest(options: StreamHttpOptions): Promise<void> {
       bridge
         .streamFetch({ requestId, url, method, headers, body })
         .then((res) => {
-          onOpen?.(res.status);
+          if (settled) return;
+          try {
+            onOpen?.(res.status);
+          } catch (openErr) {
+            settled = true;
+            cleanup();
+            void bridge.abortStream(requestId);
+            reject(openErr instanceof Error ? openErr : new Error(String(openErr)));
+          }
         })
         .catch((err) => {
           if (!settled) {
@@ -206,8 +217,9 @@ export async function streamRequest(options: StreamHttpOptions): Promise<void> {
 
       const cleanup = () => {
         signal?.removeEventListener('abort', onAbort);
-        for (const h of handles) {
-          void h.remove();
+        while (handles.length > 0) {
+          const h = handles.pop();
+          if (h) void h.remove();
         }
       };
 
@@ -221,7 +233,7 @@ export async function streamRequest(options: StreamHttpOptions): Promise<void> {
 
       signal?.addEventListener('abort', onAbort, { once: true });
 
-      Promise.all([
+      Promise.allSettled([
         NativeStream.addListener('streamChunk', (data) => {
           if (data.requestId !== requestId || settled) return;
           try {
@@ -248,14 +260,39 @@ export async function streamRequest(options: StreamHttpOptions): Promise<void> {
           }
         }),
       ])
-        .then((registered) => {
-          handles.push(...registered);
-          if (signal?.aborted) {
-            onAbort();
+        .then((results) => {
+          let firstErr: unknown = null;
+          for (const res of results) {
+            if (res.status === 'fulfilled') {
+              handles.push(res.value);
+            } else if (!firstErr) {
+              firstErr = res.reason;
+            }
+          }
+
+          if (settled || signal?.aborted) {
+            cleanup();
+            if (!settled) onAbort();
             return;
           }
+
+          if (firstErr) {
+            settled = true;
+            cleanup();
+            reject(firstErr instanceof Error ? firstErr : new Error(String(firstErr)));
+            return;
+          }
+
           return NativeStream.startStream({ requestId, url, method, headers, body }).then((res) => {
-            onOpen?.(res.status);
+            if (settled) return;
+            try {
+              onOpen?.(res.status);
+            } catch (openErr) {
+              settled = true;
+              cleanup();
+              void NativeStream.abortStream({ requestId });
+              reject(openErr instanceof Error ? openErr : new Error(String(openErr)));
+            }
           });
         })
         .catch((err) => {
@@ -289,6 +326,7 @@ export async function streamRequest(options: StreamHttpOptions): Promise<void> {
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder('utf-8');
+  let streamDone = false;
 
   try {
     while (true) {
@@ -296,6 +334,7 @@ export async function streamRequest(options: StreamHttpOptions): Promise<void> {
       if (done) {
         const tail = decoder.decode();
         if (tail) onChunk(tail);
+        streamDone = true;
         break;
       }
       if (value) {
@@ -304,8 +343,40 @@ export async function streamRequest(options: StreamHttpOptions): Promise<void> {
       }
     }
   } finally {
+    if (!streamDone) {
+      await reader.cancel().catch(() => undefined);
+    }
     reader.releaseLock();
   }
+}
+
+function raceWithAbort<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+  onAbortCleanup?: () => void
+): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    onAbortCleanup?.();
+    return Promise.reject(new DOMException('Aborted', 'AbortError'));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      onAbortCleanup?.();
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (val) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(val);
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      }
+    );
+  });
 }
 
 export async function simpleRequest(options: SimpleHttpOptions): Promise<SimpleHttpResponse> {
@@ -317,10 +388,18 @@ export async function simpleRequest(options: SimpleHttpOptions): Promise<SimpleH
 
   const env = getRuntimeEnvironment();
   if (env === 'electron' && window.electronBridge) {
-    return window.electronBridge.simpleRequest({ url, method, headers, body });
+    const bridge = window.electronBridge;
+    const requestId = createRequestId();
+    return raceWithAbort(
+      bridge.simpleRequest({ requestId, url, method, headers, body }),
+      signal,
+      () => {
+        void bridge.abortSimpleRequest?.(requestId);
+      }
+    );
   }
   if (env === 'capacitor') {
-    return NativeStream.simpleRequest({ url, method, headers, body });
+    return raceWithAbort(NativeStream.simpleRequest({ url, method, headers, body }), signal);
   }
 
   const res = await fetch(url, { method, headers, body, signal });

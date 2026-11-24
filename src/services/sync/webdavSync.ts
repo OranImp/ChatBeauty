@@ -15,18 +15,17 @@ export interface SyncProvider {
 }
 
 function getRelativePathSegments(settings: WebDavSyncSettings): string[] {
-  const cleanedRel = settings.remotePath.trim().replace(/^\/+/, '') || 'ChatBeauty/backup.json';
-  return cleanedRel
+  const segments = settings.remotePath
     .split('/')
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter((s) => Boolean(s) && s !== '.' && s !== '..');
+  return segments.length > 0 ? segments : ['ChatBeauty', 'backup.json'];
 }
 
 function buildTargetUrl(settings: WebDavSyncSettings): string {
   const base = settings.endpoint.trim().replace(/\/+$/, '');
-  const segments = getRelativePathSegments(settings);
-  const rel = segments.length > 0 ? segments.join('/') : 'ChatBeauty/backup.json';
-  return `${base}/${rel}`;
+  const segments = getRelativePathSegments(settings).map((seg) => encodeURIComponent(seg));
+  return `${base}/${segments.join('/')}`;
 }
 
 function authHeaders(settings: WebDavSyncSettings): Record<string, string> {
@@ -56,7 +55,7 @@ export async function ensureRemoteDirectories(
   const headers = authHeaders(settings);
 
   for (const seg of dirSegments) {
-    currentUrl = `${currentUrl}/${seg}`;
+    currentUrl = `${currentUrl}/${encodeURIComponent(seg)}`;
 
     if (!forceMkcol) {
       const probe = await simpleRequest({
@@ -131,7 +130,7 @@ export class WebDavSyncService implements SyncProvider {
           Depth: '0',
         },
       });
-      if (res.status >= 200 && res.status < 400) {
+      if (res.status >= 200 && res.status < 300) {
         const created = await ensureRemoteDirectories(settings);
         return {
           ok: true,
@@ -208,10 +207,13 @@ export class WebDavSyncService implements SyncProvider {
         headers: authHeaders(settings),
       });
       if (res.status === 404) {
-        await ensureRemoteDirectories(settings).catch(() => false);
+        const ensured = await ensureRemoteDirectories(settings).catch(() => null);
         return {
           ok: false,
-          message: '云端尚无备份文件（已自动创建/确认远端目录），请先点击「上传到云端」',
+          message:
+            ensured !== null
+              ? '云端尚无备份文件（已自动创建/确认远端目录），请先点击「上传到云端」'
+              : '云端尚无备份文件，请检查远端目录权限后点击「上传到云端」',
           timestamp: Date.now(),
         };
       }

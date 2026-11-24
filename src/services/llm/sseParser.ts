@@ -10,6 +10,7 @@ export interface SSEEvent {
 export class SSEParser {
   private buffer = '';
   private pendingCR = false;
+  private started = false;
   private currentEvent = 'message';
   private currentId: string | undefined;
   private dataLines: string[] = [];
@@ -17,6 +18,13 @@ export class SSEParser {
   feed(chunk: string): SSEEvent[] {
     if (!chunk) return [];
     let normalized = chunk;
+    if (!this.started) {
+      this.started = true;
+      if (normalized.charCodeAt(0) === 0xfeff) {
+        normalized = normalized.slice(1);
+        if (!normalized) return [];
+      }
+    }
     if (this.pendingCR) {
       this.pendingCR = false;
       if (normalized.startsWith('\n')) {

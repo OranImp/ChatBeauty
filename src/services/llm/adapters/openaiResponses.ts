@@ -18,17 +18,17 @@ import {
 } from '@/services/llm/modelProfiles';
 
 function buildResponsesEndpoint(baseUrl: string): string {
-  const clean = trimBaseUrl(baseUrl || 'https://api.openai.com/v1');
+  const clean = trimBaseUrl(baseUrl) || 'https://api.openai.com/v1';
   if (clean.endsWith('/responses')) return clean;
   return `${clean}/responses`;
 }
 
 function buildModelsEndpoint(baseUrl: string): string {
-  const clean = trimBaseUrl(baseUrl || 'https://api.openai.com/v1');
+  const clean = trimBaseUrl(baseUrl) || 'https://api.openai.com/v1';
   if (clean.endsWith('/responses')) {
     return clean.replace(/\/responses$/, '/models');
   }
-  return `${clean}/models`;
+  return clean.endsWith('/models') ? clean : `${clean}/models`;
 }
 
 export class OpenAIResponsesAdapter implements LLMProviderAdapter {
@@ -56,7 +56,9 @@ export class OpenAIResponsesAdapter implements LLMProviderAdapter {
             const url = img.dataUrl || img.url;
             if (url) blocks.push({ type: 'input_image', image_url: url });
           }
-          input.push({ role: 'user', content: blocks });
+          if (blocks.length > 0) {
+            input.push({ role: 'user', content: blocks });
+          }
         } else if (text) {
           input.push({ role: 'user', content: text });
         }
@@ -139,7 +141,7 @@ export class OpenAIResponsesAdapter implements LLMProviderAdapter {
 
       const type = (typeof parsed.type === 'string' ? parsed.type : eventName) || '';
 
-      if (type === 'response.output_text.delta') {
+      if (type === 'response.output_text.delta' || type === 'response.refusal.delta') {
         if (typeof parsed.delta === 'string' && parsed.delta.length > 0) {
           callbacks.onTextDelta(parsed.delta);
         }
@@ -157,7 +159,11 @@ export class OpenAIResponsesAdapter implements LLMProviderAdapter {
         return;
       }
 
-      if (type === 'response.completed' || type === 'response.done') {
+      if (
+        type === 'response.completed' ||
+        type === 'response.done' ||
+        type === 'response.incomplete'
+      ) {
         const resp = parsed.response as
           | {
               usage?: {
@@ -225,7 +231,12 @@ export class OpenAIResponsesAdapter implements LLMProviderAdapter {
     if (res.status < 200 || res.status >= 300) {
       throw new Error(`拉取模型失败 (HTTP ${res.status}): ${res.body.slice(0, 200)}`);
     }
-    const json = JSON.parse(res.body) as { data?: Array<{ id: string }> };
+    let json: { data?: Array<{ id: string }> };
+    try {
+      json = JSON.parse(res.body) as typeof json;
+    } catch {
+      throw new Error('拉取模型失败：返回内容非有效 JSON');
+    }
     return (json.data ?? [])
       .map((item) => toModelDefinition(item.id))
       .sort((a, b) => a.id.localeCompare(b.id));

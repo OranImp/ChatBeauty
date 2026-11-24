@@ -18,17 +18,17 @@ import {
 } from '@/services/llm/modelProfiles';
 
 function buildChatEndpoint(baseUrl: string): string {
-  const clean = trimBaseUrl(baseUrl || 'https://api.openai.com/v1');
+  const clean = trimBaseUrl(baseUrl) || 'https://api.openai.com/v1';
   if (clean.endsWith('/chat/completions')) return clean;
   return `${clean}/chat/completions`;
 }
 
 function buildModelsEndpoint(baseUrl: string): string {
-  const clean = trimBaseUrl(baseUrl || 'https://api.openai.com/v1');
+  const clean = trimBaseUrl(baseUrl) || 'https://api.openai.com/v1';
   if (clean.endsWith('/chat/completions')) {
     return clean.replace(/\/chat\/completions$/, '/models');
   }
-  return `${clean}/models`;
+  return clean.endsWith('/models') ? clean : `${clean}/models`;
 }
 
 export class OpenAIChatAdapter implements LLMProviderAdapter {
@@ -62,7 +62,9 @@ export class OpenAIChatAdapter implements LLMProviderAdapter {
           const url = img.dataUrl || img.url;
           if (url) blocks.push({ type: 'image_url', image_url: { url } });
         }
-        apiMessages.push({ role: 'user', content: blocks });
+        if (blocks.length > 0) {
+          apiMessages.push({ role: 'user', content: blocks });
+        }
       } else if (text) {
         apiMessages.push({ role: msg.role === 'assistant' ? 'assistant' : 'user', content: text });
       }
@@ -128,17 +130,31 @@ export class OpenAIChatAdapter implements LLMProviderAdapter {
       if (effort !== 'off' || activeLevel?.apiValue === 'none') {
         payload.reasoning_effort = activeLevel?.apiValue ?? effort;
       }
+    } else if (
+      profile.strategy === 'anthropic-adaptive' ||
+      profile.strategy === 'anthropic-budget' ||
+      profile.strategy === 'gemini-level' ||
+      profile.strategy === 'gemini-budget'
+    ) {
+      if (effort !== 'off') {
+        payload.reasoning_effort = effort === 'auto' ? 'medium' : effort;
+      }
     } else if (profile.strategy === 'toggle-effort') {
       if (effort === 'off') {
         if (/(glm|doubao)/.test(modelLower)) {
           payload.thinking = { type: 'disabled' };
-        } else if (/qwen3/.test(modelLower)) {
+        } else if (/qwen(?:3|4)/.test(modelLower)) {
           payload.enable_thinking = false;
+        } else {
+          payload.thinking = { type: 'disabled' };
+          payload.reasoning_effort = 'none';
         }
       } else {
         payload.reasoning_effort = activeLevel?.apiValue ?? effort;
-        if (/glm/.test(modelLower)) {
+        if (/(glm|doubao)/.test(modelLower)) {
           payload.thinking = { type: 'enabled' };
+        } else if (/qwen(?:3|4)/.test(modelLower)) {
+          payload.enable_thinking = true;
         }
       }
     }
@@ -179,7 +195,7 @@ export class OpenAIChatAdapter implements LLMProviderAdapter {
 
       const delta = choices?.[0]?.delta;
       if (delta) {
-        const reasoning = delta.reasoning_content ?? delta.reasoning;
+        const reasoning = delta.reasoning_content || delta.reasoning;
         if (typeof reasoning === 'string' && reasoning.length > 0) {
           callbacks.onReasoningDelta(reasoning);
         }
@@ -196,7 +212,12 @@ export class OpenAIChatAdapter implements LLMProviderAdapter {
             completion_tokens_details?: { reasoning_tokens?: number };
           }
         | undefined;
-      if (usage) {
+      if (
+        usage &&
+        (typeof usage.prompt_tokens === 'number' ||
+          typeof usage.completion_tokens === 'number' ||
+          typeof usage.total_tokens === 'number')
+      ) {
         callbacks.onUsage?.({
           inputTokens: usage.prompt_tokens,
           outputTokens: usage.completion_tokens,
@@ -239,7 +260,12 @@ export class OpenAIChatAdapter implements LLMProviderAdapter {
     if (res.status < 200 || res.status >= 300) {
       throw new Error(`拉取模型失败 (HTTP ${res.status}): ${res.body.slice(0, 200)}`);
     }
-    const json = JSON.parse(res.body) as { data?: Array<{ id: string }> };
+    let json: { data?: Array<{ id: string }> };
+    try {
+      json = JSON.parse(res.body) as typeof json;
+    } catch {
+      throw new Error('拉取模型失败：返回内容非有效 JSON');
+    }
     const list = json.data ?? [];
     return list
       .map((item) => toModelDefinition(item.id))

@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Check, Copy, Download, Image as ImageIcon, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { exportSvgToPng, triggerDownload, type ResolvedTheme } from './svgUtils';
+import { copyTextSafe } from '@/services/media/clipboard';
 import { usePresence } from '@/components/ui/MotionPrimitives';
 
 export type LightboxPayload =
@@ -23,6 +24,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transformRef = useRef<{ x: number; y: number; scale: number }>({
     x: 0,
     y: 0,
@@ -82,7 +84,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
     );
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (payload) {
       setRenderedPayload(payload);
       const initialScale = payload.kind === 'math' ? 1.45 : 1;
@@ -92,11 +94,15 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
       transformRef.current = { x: 0, y: 0, scale: initialScale };
       setDisplayScale(initialScale);
       setCopied(false);
-      requestAnimationFrame(() => {
-        applyTransform({ x: 0, y: 0, scale: initialScale }, false);
-      });
+      applyTransform({ x: 0, y: 0, scale: initialScale }, false);
     }
   }, [payload]);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!payload) return;
@@ -108,21 +114,39 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
   }, [payload, onClose]);
 
   const activePayload = payload ?? renderedPayload;
+  const activeKind = activePayload?.kind;
+  const zoomAroundPointRef = useRef(zoomAroundPoint);
+  zoomAroundPointRef.current = zoomAroundPoint;
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!lightboxPresence.mounted || !viewport || !activeKind || activeKind === 'iframe') {
+      return;
+    }
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.12 : 0.89;
+      zoomAroundPointRef.current(
+        transformRef.current.scale * factor,
+        e.clientX,
+        e.clientY,
+        false
+      );
+    };
+    viewport.addEventListener('wheel', onWheel, { passive: false });
+    return () => viewport.removeEventListener('wheel', onWheel);
+  }, [lightboxPresence.mounted, activeKind]);
+
   if (!lightboxPresence.mounted || !activePayload) return null;
 
   const defaultScale = activePayload.kind === 'math' ? 1.45 : 1;
 
   const copySource = async (text: string) => {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1600);
-  };
-
-  const handleWheel: React.WheelEventHandler<HTMLDivElement> = (e) => {
-    if (activePayload.kind === 'iframe') return;
-    e.preventDefault();
-    const factor = e.deltaY < 0 ? 1.12 : 0.89;
-    zoomAroundPoint(transformRef.current.scale * factor, e.clientX, e.clientY, false);
+    if (await copyTextSafe(text)) {
+      setCopied(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 1600);
+    }
   };
 
   const handlePointerDown: React.PointerEventHandler<HTMLDivElement> = (e) => {
@@ -299,7 +323,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
               }
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs transition"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-fg" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
               <span>{activePayload.kind === 'math' ? '复制 LaTeX' : '复制源码'}</span>
             </button>
           )}
@@ -307,12 +331,12 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
           {activePayload.kind === 'image' && (
             <button
               type="button"
-              onClick={() =>
-                triggerDownload(
-                  `chatbeauty-image-${Date.now()}.png`,
-                  activePayload.src
-                )
-              }
+              onClick={() => {
+                const mimeMatch = /^data:image\/([a-z0-9+.-]+);/i.exec(activePayload.src);
+                const rawExt = mimeMatch ? mimeMatch[1].toLowerCase() : 'png';
+                const ext = rawExt === 'jpeg' ? 'jpg' : rawExt === 'svg+xml' ? 'svg' : rawExt;
+                triggerDownload(`chatbeauty-image-${Date.now()}.${ext}`, activePayload.src);
+              }}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs transition"
             >
               <Download className="w-3.5 h-3.5" />
@@ -324,12 +348,18 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
             <>
               <button
                 type="button"
-                onClick={() =>
+                onClick={() => {
+                  const svgText = activePayload.svgHtml.includes('xmlns=')
+                    ? activePayload.svgHtml
+                    : activePayload.svgHtml.replace(
+                        /<svg\b/i,
+                        '<svg xmlns="http://www.w3.org/2000/svg"'
+                      );
                   triggerDownload(
                     `chatbeauty-diagram-${Date.now()}.svg`,
-                    new Blob([activePayload.rawSource], { type: 'image/svg+xml;charset=utf-8' })
-                  )
-                }
+                    new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' })
+                  );
+                }}
                 className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs transition"
               >
                 <Download className="w-3.5 h-3.5" />
@@ -342,7 +372,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
                     activePayload.svgHtml,
                     `chatbeauty-diagram-${Date.now()}.png`,
                     theme
-                  )
+                  ).catch(() => undefined)
                 }
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs transition"
               >
@@ -378,7 +408,6 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
         <div
           ref={viewportRef}
           className="flex-1 overflow-hidden flex items-center justify-center cursor-grab active:cursor-grabbing touch-none select-none p-6"
-          onWheel={handleWheel}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={(e) => finishPointer(e, true)}
@@ -395,7 +424,11 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
           >
             {activePayload.kind === 'svg' ? (
               <div
-                className="w-[min(860px,88vw)] text-zinc-100 p-4 rounded-2xl border border-white/10 bg-zinc-950/80"
+                className={`w-[min(860px,88vw)] p-4 rounded-2xl border ${
+                  theme === 'light'
+                    ? 'bg-[#faf9f5] text-[#1f1e1c] border-black/10'
+                    : 'bg-zinc-950/80 text-zinc-100 border-white/10'
+                }`}
                 dangerouslySetInnerHTML={{ __html: activePayload.svgHtml }}
               />
             ) : activePayload.kind === 'image' ? (
@@ -406,7 +439,11 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
               />
             ) : (
               <div
-                className="p-6 rounded-2xl border border-white/10 bg-zinc-950/90 text-zinc-100 text-lg overflow-x-auto max-w-[88vw]"
+                className={`p-6 rounded-2xl border text-lg overflow-x-auto max-w-[88vw] ${
+                  theme === 'light'
+                    ? 'bg-[#faf9f5] text-[#1f1e1c] border-black/10'
+                    : 'bg-zinc-950/90 text-zinc-100 border-white/10'
+                }`}
                 dangerouslySetInnerHTML={{ __html: activePayload.katexHtml }}
               />
             )}

@@ -1,15 +1,18 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Check, Copy, Pencil, RotateCw, Trash2 } from 'lucide-react';
 import type { ContentPart, Message } from '@/types/chat';
 import type { AppearanceSettings } from '@/types/settings';
 import type { ResolvedTheme } from '@/components/renderer/svgUtils';
 import type { LightboxPayload } from '@/components/renderer/LightboxModal';
 import { MessageRenderer } from '@/components/renderer/MessageRenderer';
+import { copyTextSafe } from '@/services/media/clipboard';
 
 interface MessageItemProps {
   message: Message;
+  modelDisplayName?: string;
   theme: ResolvedTheme;
   appearance: AppearanceSettings;
+  isConversationStreaming?: boolean;
   onInspect: (payload: LightboxPayload) => void;
   onRegenerate: (id: string) => void;
   onEditResend: (id: string, newText: string) => void;
@@ -18,8 +21,10 @@ interface MessageItemProps {
 
 export const MessageItem: React.FC<MessageItemProps> = ({
   message,
+  modelDisplayName,
   theme,
   appearance,
+  isConversationStreaming = false,
   onInspect,
   onRegenerate,
   onEditResend,
@@ -27,6 +32,13 @@ export const MessageItem: React.FC<MessageItemProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   const rawText = message.parts
     .filter((p) => p.type === 'text')
@@ -41,9 +53,11 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   const isStreaming = message.status === 'streaming';
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(rawText);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (await copyTextSafe(rawText)) {
+      setCopied(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
+    }
   };
 
   if (isUser) {
@@ -70,11 +84,12 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               </button>
               <button
                 type="button"
+                disabled={isConversationStreaming || (!draft.trim() && imageParts.length === 0)}
                 onClick={() => {
                   setEditing(false);
                   onEditResend(message.id, draft);
                 }}
-                className="px-3 py-1 rounded-lg text-xs bg-accent text-accentfg font-medium"
+                className="px-3 py-1 rounded-lg text-xs bg-accent text-accentfg font-medium disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 保存并重新发送
               </button>
@@ -135,19 +150,21 @@ export const MessageItem: React.FC<MessageItemProps> = ({
             </button>
             <button
               type="button"
+              disabled={isConversationStreaming}
               onClick={() => {
                 setDraft(rawText);
                 setEditing(true);
               }}
-              className="p-1.5 rounded-lg hover:bg-surface hover:text-fg transition"
+              className="p-1.5 rounded-lg hover:bg-surface hover:text-fg transition disabled:opacity-40 disabled:cursor-not-allowed"
               title="编辑并重发"
             >
               <Pencil className="w-4 h-4" />
             </button>
             <button
               type="button"
+              disabled={isConversationStreaming}
               onClick={() => onDelete(message.id)}
-              className="p-1.5 rounded-lg hover:bg-surface hover:text-rose-400 transition"
+              className="p-1.5 rounded-lg hover:bg-surface hover:text-rose-400 transition disabled:opacity-40 disabled:cursor-not-allowed"
               title="删除消息"
             >
               <Trash2 className="w-4 h-4" />
@@ -173,12 +190,21 @@ export const MessageItem: React.FC<MessageItemProps> = ({
       )}
 
       {message.status === 'error' && (
-        <div className="mt-3 p-3 rounded-xl border border-rose-500/35 bg-rose-500/10 text-xs text-rose-300 flex items-center justify-between gap-3">
+        <div
+          className={`mt-3 p-3 rounded-xl border border-rose-500/35 bg-rose-500/10 text-xs flex items-center justify-between gap-3 ${
+            theme === 'light' ? 'text-rose-700' : 'text-rose-300'
+          }`}
+        >
           <span className="break-all">请求失败：{message.error || '未知网络或接口错误'}</span>
           <button
             type="button"
+            disabled={isConversationStreaming}
             onClick={() => onRegenerate(message.id)}
-            className="shrink-0 px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 transition"
+            className={`shrink-0 px-2.5 py-1 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed ${
+              theme === 'light'
+                ? 'bg-rose-500/15 hover:bg-rose-500/25 text-rose-800'
+                : 'bg-rose-500/20 hover:bg-rose-500/30 text-rose-200'
+            }`}
           >
             重试
           </button>
@@ -202,29 +228,35 @@ export const MessageItem: React.FC<MessageItemProps> = ({
             </button>
             <button
               type="button"
+              disabled={isConversationStreaming}
               onClick={() => onRegenerate(message.id)}
-              className="p-1.5 rounded-lg hover:bg-surface hover:text-fg transition"
+              className="p-1.5 rounded-lg hover:bg-surface hover:text-fg transition disabled:opacity-40 disabled:cursor-not-allowed"
               title="重新生成"
             >
               <RotateCw className="w-4 h-4" />
             </button>
             <button
               type="button"
+              disabled={isConversationStreaming}
               onClick={() => onDelete(message.id)}
-              className="p-1.5 rounded-lg hover:bg-surface hover:text-rose-400 transition"
+              className="p-1.5 rounded-lg hover:bg-surface hover:text-rose-400 transition disabled:opacity-40 disabled:cursor-not-allowed"
               title="删除消息"
             >
               <Trash2 className="w-4 h-4" />
             </button>
           </div>
 
-          {(message.modelId || message.usage?.totalTokens) && (
+          {(message.modelId || (message.usage?.totalTokens ?? 0) > 0) && (
             <div className="text-[11px] font-mono text-muted/75 tabular-nums flex items-center gap-2">
-              {message.modelId && <span>{message.modelId}</span>}
-              {message.usage?.totalTokens && (
+              {message.modelId && (
+                <span title={message.modelId}>
+                  {modelDisplayName || message.modelId}
+                </span>
+              )}
+              {(message.usage?.totalTokens ?? 0) > 0 && (
                 <span>
-                  {message.usage.inputTokens ?? '-'} → {message.usage.outputTokens ?? '-'} (
-                  {message.usage.totalTokens})
+                  {message.usage?.inputTokens ?? '-'} → {message.usage?.outputTokens ?? '-'} (
+                  {message.usage?.totalTokens})
                 </span>
               )}
             </div>

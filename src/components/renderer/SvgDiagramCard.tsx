@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Code2, Copy, Download, Maximize2, Image as ImageIcon } from 'lucide-react';
 import {
   exportSvgToPng,
@@ -6,6 +6,7 @@ import {
   triggerDownload,
   type ResolvedTheme,
 } from './svgUtils';
+import { copyTextSafe } from '@/services/media/clipboard';
 import type { LightboxPayload } from './LightboxModal';
 
 interface SvgDiagramCardProps {
@@ -27,6 +28,13 @@ export const SvgDiagramCard: React.FC<SvgDiagramCardProps> = ({
 }) => {
   const [showCode, setShowCode] = useState(false);
   const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   const hasCompleteSvg = /<\/svg\s*>/i.test(code);
 
@@ -38,9 +46,11 @@ export const SvgDiagramCard: React.FC<SvgDiagramCardProps> = ({
   const finalCaption = caption || processed?.caption;
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (await copyTextSafe(code)) {
+      setCopied(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
+    }
   };
 
   if (!hasCompleteSvg && isStreaming) {
@@ -64,7 +74,7 @@ export const SvgDiagramCard: React.FC<SvgDiagramCardProps> = ({
       <div
         className={
           frameless
-            ? 'absolute top-2 right-2 z-20 flex items-center gap-0.5 rounded-xl border border-borderc bg-elevated/90 backdrop-blur-md px-1 py-0.5 opacity-0 group-hover/media:opacity-100 focus-within:opacity-100 transition-opacity duration-200 pointer-events-none group-hover/media:pointer-events-auto focus-within:pointer-events-auto'
+            ? 'absolute top-2 right-2 z-20 flex items-center gap-0.5 rounded-xl border border-borderc bg-elevated/90 backdrop-blur-md px-1 py-0.5 opacity-85 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover/media:opacity-100 sm:group-hover/media:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition-opacity duration-200'
             : 'absolute top-2.5 right-2.5 z-10 flex items-center gap-0.5 rounded-xl border border-borderc bg-elevated/85 backdrop-blur-md px-1 py-0.5 opacity-80 sm:opacity-0 sm:group-hover/media:opacity-100 focus-within:opacity-100 transition-opacity'
         }
       >
@@ -95,7 +105,7 @@ export const SvgDiagramCard: React.FC<SvgDiagramCardProps> = ({
               onClick={() =>
                 triggerDownload(
                   `chatbeauty-svg-${Date.now()}.svg`,
-                  new Blob([code], { type: 'image/svg+xml;charset=utf-8' })
+                  new Blob([processed.html], { type: 'image/svg+xml;charset=utf-8' })
                 )
               }
               className="p-1.5 rounded-lg text-muted hover:text-fg hover:bg-white/10 transition"
@@ -110,7 +120,7 @@ export const SvgDiagramCard: React.FC<SvgDiagramCardProps> = ({
                   processed.html,
                   `chatbeauty-svg-${Date.now()}.png`,
                   theme
-                )
+                ).catch(() => undefined)
               }
               className="p-1.5 rounded-lg text-muted hover:text-fg hover:bg-white/10 transition"
               title="导出高清 PNG"

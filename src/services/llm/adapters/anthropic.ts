@@ -20,7 +20,7 @@ import {
 } from '@/services/llm/modelProfiles';
 
 function buildAnthropicEndpoint(baseUrl: string, suffix: string): string {
-  const clean = trimBaseUrl(baseUrl || 'https://api.anthropic.com/v1');
+  const clean = trimBaseUrl(baseUrl) || 'https://api.anthropic.com/v1';
   if (clean.endsWith('/messages')) {
     return suffix === '/messages' ? clean : clean.replace(/\/messages$/, suffix);
   }
@@ -194,9 +194,20 @@ export class AnthropicAdapter implements LLMProviderAdapter {
       const type = (typeof parsed.type === 'string' ? parsed.type : eventName) || '';
 
       if (type === 'message_start') {
-        const msg = parsed.message as { usage?: { input_tokens?: number } } | undefined;
-        if (msg?.usage?.input_tokens) {
-          inputTokens = msg.usage.input_tokens;
+        const msg = parsed.message as
+          | {
+              usage?: {
+                input_tokens?: number;
+                cache_creation_input_tokens?: number;
+                cache_read_input_tokens?: number;
+              };
+            }
+          | undefined;
+        if (msg?.usage) {
+          inputTokens =
+            (msg.usage.input_tokens ?? 0) +
+            (msg.usage.cache_creation_input_tokens ?? 0) +
+            (msg.usage.cache_read_input_tokens ?? 0);
         }
         return;
       }
@@ -214,14 +225,33 @@ export class AnthropicAdapter implements LLMProviderAdapter {
       }
 
       if (type === 'message_delta') {
-        const usage = parsed.usage as { output_tokens?: number } | undefined;
-        if (usage?.output_tokens !== undefined) {
-          outputTokens = usage.output_tokens;
-          callbacks.onUsage?.({
-            inputTokens,
-            outputTokens,
-            totalTokens: inputTokens + outputTokens,
-          });
+        const usage = parsed.usage as
+          | {
+              input_tokens?: number;
+              cache_creation_input_tokens?: number;
+              cache_read_input_tokens?: number;
+              output_tokens?: number;
+            }
+          | undefined;
+        if (usage) {
+          const hasInputUpdate =
+            usage.input_tokens !== undefined ||
+            usage.cache_creation_input_tokens !== undefined ||
+            usage.cache_read_input_tokens !== undefined;
+          if (hasInputUpdate) {
+            inputTokens =
+              (usage.input_tokens ?? 0) +
+              (usage.cache_creation_input_tokens ?? 0) +
+              (usage.cache_read_input_tokens ?? 0);
+          }
+          if (usage.output_tokens !== undefined) {
+            outputTokens = usage.output_tokens;
+            callbacks.onUsage?.({
+              inputTokens,
+              outputTokens,
+              totalTokens: inputTokens + outputTokens,
+            });
+          }
         }
         return;
       }
@@ -253,8 +283,10 @@ export class AnthropicAdapter implements LLMProviderAdapter {
   }
 
   async listModels(provider: ProviderConfig, signal?: AbortSignal): Promise<ModelDefinition[]> {
+    const modelsBase = buildAnthropicEndpoint(provider.baseUrl, '/models');
+    const url = `${modelsBase}${modelsBase.includes('?') ? '&' : '?'}limit=1000`;
     const res = await simpleRequest({
-      url: buildAnthropicEndpoint(provider.baseUrl, '/models'),
+      url,
       method: 'GET',
       headers: buildEffectiveProviderHeaders(provider, {
         includeContentType: false,
@@ -266,9 +298,14 @@ export class AnthropicAdapter implements LLMProviderAdapter {
     if (res.status < 200 || res.status >= 300) {
       throw new Error(`拉取模型失败 (HTTP ${res.status}): ${res.body.slice(0, 200)}`);
     }
-    const json = JSON.parse(res.body) as {
+    let json: {
       data?: Array<{ id: string; display_name?: string }>;
     };
+    try {
+      json = JSON.parse(res.body) as typeof json;
+    } catch {
+      throw new Error('拉取模型失败：返回内容非有效 JSON');
+    }
     return (json.data ?? [])
       .map((item) => toModelDefinition(item.id, item.display_name))
       .sort((a, b) => a.id.localeCompare(b.id));

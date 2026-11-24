@@ -1,4 +1,22 @@
-const FENCE_OPEN_RE = /^([ \t]*)(`{3,}|~{3,})/;
+const FENCE_OPEN_RE = /^([ \t]*)(`{3,}(?=[^`\n]*$)|~{3,})/;
+const LIST_ITEM_RE = /^ {0,3}(?:[-*+]|\d{1,9}[.)])\s/;
+const INDENTED_CONT_RE = /^(?: {2,}|\t)\S/;
+
+function isCurrentInList(current: string[]): boolean {
+  for (let k = current.length - 1; k >= 0; k--) {
+    const l = current[k];
+    if (!l.trim()) continue;
+    if (LIST_ITEM_RE.test(l)) return true;
+    if (!INDENTED_CONT_RE.test(l)) return false;
+  }
+  return false;
+}
+
+function countUnescapedDoubleDollar(line: string): number {
+  const withoutInlineCode = line.replace(/`+[^`\n]*`+/g, '');
+  const matches = withoutInlineCode.match(/(?<!\\)(?:\\\\)*\$\$/g);
+  return matches ? matches.length : 0;
+}
 
 /**
  * Splits normalized markdown into independent top-level blocks so React.memo
@@ -39,17 +57,26 @@ export function splitMarkdownBlocks(markdown: string): string[] {
         continue;
       }
 
-      if (trimmed.startsWith('$$')) {
-        // Single-line $$...$$ stays in place; multi-line $$ starts math block
-        const rest = trimmed.slice(2);
-        if (!rest.includes('$$')) {
-          inMathBlock = true;
-        }
+      if (countUnescapedDoubleDollar(line) % 2 === 1) {
+        inMathBlock = true;
         current.push(line);
         continue;
       }
 
       if (trimmed === '') {
+        let nextIdx = i + 1;
+        while (nextIdx < lines.length && lines[nextIdx].trim() === '') {
+          nextIdx++;
+        }
+        const nextLine = nextIdx < lines.length ? lines[nextIdx] : '';
+        if (
+          isCurrentInList(current) &&
+          nextLine &&
+          (LIST_ITEM_RE.test(nextLine) || INDENTED_CONT_RE.test(nextLine))
+        ) {
+          current.push(line);
+          continue;
+        }
         flush();
       } else {
         current.push(line);
@@ -62,7 +89,7 @@ export function splitMarkdownBlocks(markdown: string): string[] {
       }
     } else if (inMathBlock) {
       current.push(line);
-      if (trimmed.endsWith('$$') && trimmed.length >= 2) {
+      if (countUnescapedDoubleDollar(line) % 2 === 1) {
         inMathBlock = false;
         if (!line.startsWith(' ') && !line.startsWith('\t')) {
           flush();

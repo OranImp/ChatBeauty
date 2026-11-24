@@ -307,8 +307,12 @@ export type ProfileMatchSource =
   | 'builtin'
   | 'fallback';
 
+function hasOwnProfile(id: string): boolean {
+  return Object.prototype.hasOwnProperty.call(BUILTIN_REASONING_PROFILES, id);
+}
+
 export function getReasoningProfileById(id: string): ModelReasoningProfile | undefined {
-  return BUILTIN_REASONING_PROFILES[id];
+  return hasOwnProfile(id) ? BUILTIN_REASONING_PROFILES[id] : undefined;
 }
 
 export function listAllReasoningProfiles(): ModelReasoningProfile[] {
@@ -326,7 +330,7 @@ function matchRuleList(
     if (rule.protocols && protocol && !rule.protocols.includes(protocol)) {
       continue;
     }
-    const profile = BUILTIN_REASONING_PROFILES[rule.profileId];
+    const profile = getReasoningProfileById(rule.profileId);
     if (!profile) continue;
     try {
       const re = new RegExp(rule.pattern, 'i');
@@ -348,9 +352,10 @@ export function resolveModelReasoningProfile(options: {
   remoteRules?: ModelProfileRule[];
 }): { profile: ModelReasoningProfile; source: ProfileMatchSource } {
   const overrideId = options.modelDef?.params?.reasoningProfileId;
-  if (overrideId && BUILTIN_REASONING_PROFILES[overrideId]) {
+  const overrideProfile = overrideId ? getReasoningProfileById(overrideId) : undefined;
+  if (overrideProfile) {
     return {
-      profile: BUILTIN_REASONING_PROFILES[overrideId],
+      profile: overrideProfile,
       source: 'model-override',
     };
   }
@@ -448,7 +453,7 @@ export function parseModelProfileRulesJson(raw: string): ModelProfileRule[] {
     } catch {
       throw new Error(`第 ${i + 1} 条规则的正则表达式语法无效: ${r.pattern}`);
     }
-    if (typeof r.profileId !== 'string' || !BUILTIN_REASONING_PROFILES[r.profileId]) {
+    if (typeof r.profileId !== 'string' || !hasOwnProfile(r.profileId)) {
       throw new Error(`第 ${i + 1} 条规则引用了未知的思考系列 profileId: ${String(r.profileId)}`);
     }
     const protocols = Array.isArray(r.protocols)

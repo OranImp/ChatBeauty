@@ -3,6 +3,7 @@ import {
   ArrowUp,
   Brain,
   ChevronDown,
+  ChevronRight,
   ImagePlus,
   Loader2,
   Mic,
@@ -13,25 +14,32 @@ import {
   Square,
   X,
 } from 'lucide-react';
-import { useAppStore } from '@/store/useAppStore';
+import { resolveValidProviderAndModel, useAppStore } from '@/store/useAppStore';
 import {
   AttachedImage,
   MAX_ATTACHED_IMAGES,
   prepareImageAttachment,
 } from '@/services/media/imageUtils';
 import { subscribeDesktopClipboardImagePaste } from '@/services/transport/streamHttp';
-import type { ContentPart } from '@/types/chat';
+import type { ContentPart, Conversation, CustomModelParams, ProviderConfig } from '@/types/chat';
 import type { LightboxPayload } from '@/components/renderer/LightboxModal';
-import type { CustomModelParams } from '@/types/chat';
 import { DEFAULT_GENERATION_SETTINGS } from '@/types/settings';
 import { PROTOCOL_TEMPLATES } from '@/services/llm/registry';
-import { computeContextUsageStats, selectActiveHistoryMessages } from '@/services/llm/contextManager';
+import {
+  getModelDisplayName,
+  hasCustomModelDisplayName,
+} from '@/services/llm/adapters/shared';
+import {
+  computeContextUsageStats,
+  estimateTokens,
+  selectActiveHistoryMessages,
+} from '@/services/llm/contextManager';
 import { formatMemoriesForPrompt, retrieveRelevantMemories } from '@/services/memory/memoryEngine';
 import { composeSystemPrompt } from '@/services/prompts/presets';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { SmoothSlider } from '@/components/ui/SmoothSlider';
 import type { SettingsTabKey } from '@/components/settings/SettingsModal';
-import { usePresence } from '@/components/ui/MotionPrimitives';
+import { Collapsible, usePresence } from '@/components/ui/MotionPrimitives';
 import {
   coerceReasoningEffort,
   resolveModelReasoningProfile,
@@ -99,6 +107,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   } = useAppStore();
 
   const [text, setText] = useState('');
+  const [debouncedDraftText, setDebouncedDraftText] = useState('');
+  const [draftBudgetOverridden, setDraftBudgetOverridden] = useState(false);
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
   const [imageError, setImageError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -107,8 +117,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [reservedHint, setReservedHint] = useState<string | null>(null);
   const [renderedHint, setRenderedHint] = useState<string | null>(null);
   const [compactFeedback, setCompactFeedback] = useState<{ ok: boolean; text: string } | null>(null);
-  const [extraJsonText, setExtraJsonText] = useState('{}');
-  const [extraJsonError, setExtraJsonError] = useState<string | null>(null);
+  const [collapsedProviders, setCollapsedProviders] = useState<Record<string, boolean>>({});
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const switchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingMenuRef = useRef<ComposerMenu | null>(null);
@@ -159,12 +168,18 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   }, []);
 
   const activeConv = conversations.find((c) => c.id === activeConversationId);
-  const currentProvider = providers.find(
-    (p) => p.id === (activeConv?.providerId || activeProviderId)
-  );
-  const currentModelId =
-    activeConv?.modelId || activeModelId || currentProvider?.defaultModel || '';
+  const { provider: currentProvider, modelId: currentModelId } =
+    resolveValidProviderAndModel(activeConv, providers, activeProviderId, activeModelId);
   const currentModelDef = currentProvider?.models.find((m) => m.id === currentModelId);
+
+  useEffect(() => {
+    if (!text.trim()) {
+      setDebouncedDraftText('');
+      return;
+    }
+    const timer = setTimeout(() => setDebouncedDraftText(text), 160);
+    return () => clearTimeout(timer);
+  }, [text]);
 
   const { profile: reasoningProfile, source: profileSource } = resolveModelReasoningProfile({
     modelId: currentModelId,
@@ -185,14 +200,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       ? activeConv.enableRenderPrompt
       : promptSettings.renderEnhancementEnabled;
   const activePresetId = activeConv?.systemPromptPresetId || promptSettings.defaultPresetId;
-
-  useEffect(() => {
-    if (activeMenu === 'params') {
-      const src = activeConv ? activeConv.customParams?.extraBody : generation.extraBody;
-      setExtraJsonText(src && Object.keys(src).length > 0 ? JSON.stringify(src, null, 2) : '{}');
-      setExtraJsonError(null);
-    }
-  }, [activeMenu, activeConv?.id]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -248,10 +255,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const patchConvParams = (patch: Partial<CustomModelParams>) => {
     if (!activeConv) {
+      if (patch.thinkingBudget !== undefined) {
+        setDraftBudgetOverridden(true);
+      }
       void updateGeneration({
         ...(patch.temperature !== undefined ? { temperature: patch.temperature } : {}),
         ...(patch.topP !== undefined ? { topP: patch.topP } : {}),
         ...(patch.maxTokens !== undefined ? { maxTokens: patch.maxTokens } : {}),
+        ...(patch.thinkingBudget !== undefined
+          ? { reasoningBudgetTokens: patch.thinkingBudget }
+          : {}),
         ...(patch.extraBody !== undefined ? { extraBody: patch.extraBody } : {}),
       });
       return;
@@ -260,38 +273,26 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     void updateConversationConfig(activeConv.id, { customParams: next });
   };
 
-  const handleExtraBodyChange = (raw: string) => {
-    setExtraJsonText(raw);
-    const trimmed = raw.trim();
-    if (!trimmed || trimmed === '{}') {
-      setExtraJsonError(null);
-      if (activeConv) {
-        const next: CustomModelParams = { ...(activeConv.customParams || {}) };
-        delete next.extraBody;
+  const clearThinkingBudgetOverride = () => {
+    if (activeConv) {
+      if (activeConv.customParams?.thinkingBudget !== undefined) {
+        const nextCustom: CustomModelParams = { ...activeConv.customParams };
+        delete nextCustom.thinkingBudget;
         void updateConversationConfig(activeConv.id, {
-          customParams: Object.keys(next).length > 0 ? next : undefined,
+          customParams: Object.keys(nextCustom).length > 0 ? nextCustom : undefined,
         });
-      } else {
-        void updateGeneration({ extraBody: undefined });
       }
       return;
     }
-    try {
-      const parsed = JSON.parse(trimmed) as unknown;
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        setExtraJsonError('必须为 JSON 对象，例如 {"stop": ["END"]}');
-        return;
-      }
-      setExtraJsonError(null);
-      patchConvParams({ extraBody: parsed as Record<string, unknown> });
-    } catch {
-      setExtraJsonError('JSON 格式有误，修正后自动生效');
-    }
+    setDraftBudgetOverridden(false);
+    void updateGeneration({
+      reasoningBudgetTokens:
+        activeLevel?.budgetTokens ?? DEFAULT_GENERATION_SETTINGS.reasoningBudgetTokens,
+    });
   };
 
   const handleResetConvParams = () => {
-    setExtraJsonText('{}');
-    setExtraJsonError(null);
+    setDraftBudgetOverridden(false);
     if (activeConv) {
       void updateConversationConfig(activeConv.id, { customParams: undefined });
     } else {
@@ -299,7 +300,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         temperature: DEFAULT_GENERATION_SETTINGS.temperature,
         topP: DEFAULT_GENERATION_SETTINGS.topP,
         maxTokens: DEFAULT_GENERATION_SETTINGS.maxTokens,
-        extraBody: undefined,
+        reasoningBudgetTokens: DEFAULT_GENERATION_SETTINGS.reasoningBudgetTokens,
       });
     }
   };
@@ -392,9 +393,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   const hasCustomParams = Boolean(
-    (activeConv?.customParams && Object.keys(activeConv.customParams).length > 0) ||
+    (activeConv?.customParams &&
+      (activeConv.customParams.temperature !== undefined ||
+        activeConv.customParams.topP !== undefined ||
+        activeConv.customParams.maxTokens !== undefined ||
+        activeConv.customParams.thinkingBudget !== undefined)) ||
       (currentModelDef?.params && Object.keys(currentModelDef.params).length > 0)
   );
+  const currentModelDisplayName = getModelDisplayName(currentModelDef, currentModelId);
+  const currentModelHasAlias = hasCustomModelDisplayName(currentModelDef);
 
   const effectiveTemp =
     activeConv?.customParams?.temperature ??
@@ -406,10 +413,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     activeConv?.customParams?.maxTokens ??
     currentModelDef?.params?.maxTokens ??
     generation.maxTokens;
+  const explicitBudgetOverride = activeConv
+    ? activeConv.customParams?.thinkingBudget ?? currentModelDef?.params?.thinkingBudget
+    : draftBudgetOverridden
+      ? generation.reasoningBudgetTokens
+      : currentModelDef?.params?.thinkingBudget;
+  const hasBudgetOverride = explicitBudgetOverride !== undefined;
   const effectiveBudget =
-    activeConv?.customParams?.thinkingBudget ??
-    currentModelDef?.params?.thinkingBudget ??
+    explicitBudgetOverride ??
     activeLevel?.budgetTokens ??
+    generation.reasoningBudgetTokens ??
     8192;
   const showBudgetSlider =
     (reasoningProfile.strategy === 'gemini-budget' ||
@@ -423,6 +436,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     (effectiveReasoning === 'off' && reasoningProfile.supportsSamplingWhenOff === false);
 
   const convMessages = activeConv ? messagesByConv[activeConv.id] || [] : [];
+  const activeWindowMessagesCount = useMemo(
+    () => selectActiveHistoryMessages(convMessages, activeConv?.compactedUntilMessageId).length,
+    [convMessages, activeConv?.compactedUntilMessageId]
+  );
   const activePresetObj = promptPresets.find((p) => p.id === activePresetId);
   const systemPromptBase = useMemo(
     () =>
@@ -441,24 +458,26 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   );
 
   const relevantMemories = useMemo(
-    () => retrieveRelevantMemories(memoryEntries, text, convMessages, memorySettings),
-    [memoryEntries, text, convMessages, memorySettings]
+    () =>
+      retrieveRelevantMemories(memoryEntries, debouncedDraftText, convMessages, memorySettings),
+    [memoryEntries, debouncedDraftText, convMessages, memorySettings]
   );
   const retrievedMemoriesText = useMemo(
     () => formatMemoriesForPrompt(relevantMemories),
     [relevantMemories]
   );
 
-  const contextStats = useMemo(
+  const baseContextStats = useMemo(
     () =>
       computeContextUsageStats({
         messages: convMessages,
         compactedUntilMessageId: activeConv?.compactedUntilMessageId,
+        compactedAt: activeConv?.compactedAt,
         contextSummary: activeConv?.contextSummary,
         systemPromptBase,
         retrievedMemoriesText,
-        draftText: text,
-        draftImageCount: attachedImages.length,
+        draftText: '',
+        draftImageCount: 0,
         modelId: currentModelId,
         modelDef: currentModelDef,
         contextSettings,
@@ -467,11 +486,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     [
       convMessages,
       activeConv?.compactedUntilMessageId,
+      activeConv?.compactedAt,
       activeConv?.contextSummary,
       systemPromptBase,
       retrievedMemoriesText,
-      text,
-      attachedImages.length,
       currentModelId,
       currentModelDef,
       contextSettings,
@@ -479,10 +497,33 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     ]
   );
 
-  const activeWindowMessagesCount = useMemo(
-    () => selectActiveHistoryMessages(convMessages, activeConv?.compactedUntilMessageId).length,
-    [convMessages, activeConv?.compactedUntilMessageId]
-  );
+  const contextStats = useMemo(() => {
+    const draftTokens = estimateTokens(text) + attachedImages.length * 1024;
+    const usedTokens = baseContextStats.usedTokens + draftTokens;
+    const ratio =
+      baseContextStats.maxTokens > 0 ? Math.min(1, usedTokens / baseContextStats.maxTokens) : 0;
+    const percent = Math.min(100, Math.round(ratio * 100));
+    const willAutoCompact = Boolean(
+      contextSettings.autoCompactEnabled &&
+        ratio >= baseContextStats.threshold &&
+        activeWindowMessagesCount > contextSettings.keepRecentMessages
+    );
+    return {
+      ...baseContextStats,
+      usedTokens,
+      draftTokens,
+      ratio,
+      percent,
+      willAutoCompact,
+    };
+  }, [
+    baseContextStats,
+    text,
+    attachedImages.length,
+    contextSettings.autoCompactEnabled,
+    contextSettings.keepRecentMessages,
+    activeWindowMessagesCount,
+  ]);
   const isCompacting = Boolean(activeConv && compactingByConv[activeConv.id]);
 
   const popoverPanelWidth =
@@ -528,63 +569,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             <div>
             {renderedMenu === 'plus' && (
               <div className="p-3 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-fg">提示词与渲染协议</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveMenu(null);
-                      onOpenSettings('prompts');
-                    }}
-                    className="text-muted hover:text-fg transition"
-                  >
-                    编辑预设
-                  </button>
-                </div>
-
-                {activeConv && (
-                  <>
-                    <div
-                      className="cb-list-item flex items-center justify-between px-2.5 py-2 rounded-xl bg-surface border border-borderc"
-                      style={{ '--stagger-i': 0 } as React.CSSProperties}
-                    >
-                      <span className="text-fg">学术公式与 SVG 渲染增强</span>
-                      <ToggleSwitch
-                        checked={renderEnabled}
-                        onChange={(checked) =>
-                          void updateConversationConfig(activeConv.id, {
-                            enableRenderPrompt: checked,
-                          })
-                        }
-                        ariaLabel="渲染增强"
-                      />
-                    </div>
-
-                    <div className="flex flex-wrap gap-1">
-                      {promptPresets.map((p, idx) => (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() =>
-                            void updateConversationConfig(activeConv.id, {
-                              systemPromptPresetId: p.id,
-                            })
-                          }
-                          style={{ '--stagger-i': idx + 1 } as React.CSSProperties}
-                          className={`cb-list-item px-2.5 py-1 rounded-lg active:scale-[0.97] transition ${
-                            activePresetId === p.id
-                              ? 'bg-accent text-accentfg font-medium'
-                              : 'bg-surface text-muted hover:text-fg'
-                          }`}
-                        >
-                          {p.name}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                <div className="pt-2 border-t border-borderc space-y-1">
+                <div className="space-y-1">
                   <div className="text-[11px] text-muted px-1">多模态与图片输入</div>
                   <button
                     type="button"
@@ -592,34 +577,119 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                       setActiveMenu(null);
                       fileInputRef.current?.click();
                     }}
-                    className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl hover:bg-fg/5 active:scale-[0.985] text-fg transition"
+                    className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl bg-surface/75 hover:bg-fg/10 border border-borderc/60 active:scale-[0.985] text-fg transition"
                   >
                     <span className="flex items-center gap-2">
                       <ImagePlus className="w-4 h-4 text-accent" />
                       <span>上传图片（识图）</span>
                     </span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-fg/10 text-muted">
-                      最多 {MAX_ATTACHED_IMAGES} 张
+                      {attachedImages.length > 0
+                        ? `已附 ${attachedImages.length}/${MAX_ATTACHED_IMAGES} 张`
+                        : `最多 ${MAX_ATTACHED_IMAGES} 张`}
                     </span>
                   </button>
+                </div>
+
+                <div className="pt-2 border-t border-borderc space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-fg">提示词与渲染协议</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveMenu(null);
+                        onOpenSettings('prompts');
+                      }}
+                      className="text-muted hover:text-fg transition"
+                    >
+                      编辑预设
+                    </button>
+                  </div>
+
+                  {activeConv && (
+                    <>
+                      <div
+                        className="cb-list-item flex items-center justify-between px-2.5 py-2 rounded-xl bg-surface border border-borderc"
+                        style={{ '--stagger-i': 0 } as React.CSSProperties}
+                      >
+                        <span className="text-fg">学术公式与 SVG 渲染增强</span>
+                        <ToggleSwitch
+                          checked={renderEnabled}
+                          onChange={(checked) =>
+                            void updateConversationConfig(activeConv.id, {
+                              enableRenderPrompt: checked,
+                            })
+                          }
+                          ariaLabel="渲染增强"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap gap-1">
+                        {promptPresets.map((p, idx) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() =>
+                              void updateConversationConfig(activeConv.id, {
+                                systemPromptPresetId: p.id,
+                              })
+                            }
+                            style={{ '--stagger-i': idx + 1 } as React.CSSProperties}
+                            className={`cb-list-item px-2.5 py-1 rounded-lg active:scale-[0.97] transition ${
+                              activePresetId === p.id
+                                ? 'bg-accent text-accentfg font-medium'
+                                : 'bg-surface text-muted hover:text-fg'
+                            }`}
+                          >
+                            {p.name}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             )}
 
-            {renderedMenu === 'model' && (
+            {renderedMenu === 'model' && (() => {
+              const isProviderCollapsed = (p: ProviderConfig) =>
+                collapsedProviders[p.id] ?? (providers.length > 2 && p.id !== currentProvider?.id);
+              const allCollapsed =
+                providers.length > 1 && providers.every((p) => isProviderCollapsed(p));
+              const toggleAllProviders = () => {
+                const nextVal = !allCollapsed;
+                const next: Record<string, boolean> = {};
+                for (const p of providers) {
+                  next[p.id] = nextVal;
+                }
+                setCollapsedProviders(next);
+              };
+
+              return (
               <div className="p-3 max-h-[60vh] overflow-y-auto no-scrollbar space-y-2.5">
-                <div className="flex items-center justify-between px-1">
+                <div className="flex items-center justify-between gap-2 px-1">
                   <span className="font-semibold text-fg">切换模型</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveMenu(null);
-                      onOpenSettings('providers');
-                    }}
-                    className="text-muted hover:text-fg transition"
-                  >
-                    管理供应商
-                  </button>
+                  <div className="flex items-center gap-2.5">
+                    {providers.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={toggleAllProviders}
+                        className="text-muted hover:text-fg transition"
+                      >
+                        {allCollapsed ? '全部展开' : '全部折叠'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveMenu(null);
+                        onOpenSettings('providers');
+                      }}
+                      className="text-muted hover:text-fg transition"
+                    >
+                      管理供应商
+                    </button>
+                  </div>
                 </div>
 
                 {providers.length === 0 ? (
@@ -637,7 +707,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     </button>
                   </div>
                 ) : (
-                  <div className="space-y-2.5">
+                  <div className="space-y-2">
                     {providers.map((p) => {
                       const modelList =
                         p.models.length > 0
@@ -645,64 +715,113 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                           : p.defaultModel
                             ? [{ id: p.defaultModel, name: p.defaultModel, capabilities: { chat: true } }]
                             : [];
+                      const collapsed = isProviderCollapsed(p);
+                      const isCurrentProvider = currentProvider?.id === p.id;
                       return (
-                        <div key={p.id} className="space-y-1">
-                          <div className="px-1.5 text-[11px] text-muted flex items-center justify-between">
-                            <span className="truncate">{p.name}</span>
-                            <span className="shrink-0 ml-2 font-mono">
+                        <div
+                          key={p.id}
+                          className="rounded-xl border border-borderc/60 bg-surface/35 overflow-hidden"
+                        >
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCollapsedProviders((prev) => ({ ...prev, [p.id]: !collapsed }))
+                            }
+                            aria-expanded={!collapsed}
+                            className="w-full px-2.5 py-2 flex items-center justify-between gap-2 text-[11.5px] text-muted hover:text-fg hover:bg-fg/[0.04] transition"
+                          >
+                            <span className="flex items-center gap-1.5 min-w-0">
+                              <ChevronRight
+                                className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                                  !collapsed ? 'rotate-90 text-fg' : ''
+                                }`}
+                              />
+                              <span className="truncate font-medium text-fg/90">{p.name}</span>
+                              {isCurrentProvider && (
+                                <span
+                                  className="w-1.5 h-1.5 rounded-full bg-accent shrink-0"
+                                  title="当前使用"
+                                />
+                              )}
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-fg/10 text-muted font-mono shrink-0">
+                                {modelList.length}
+                              </span>
+                            </span>
+                            <span className="shrink-0 ml-2 font-mono text-[10px]">
                               {PROTOCOL_TEMPLATES[p.protocol].shortLabel}
                             </span>
-                          </div>
-                          <div className="space-y-0.5">
-                            {modelList.map((m) => {
-                              const idx = modelRowIdx++;
-                              const selected =
-                                currentProvider?.id === p.id && currentModelId === m.id;
-                              const { profile: mProf } = resolveModelReasoningProfile({
-                                modelId: m.id,
-                                protocol: p.protocol,
-                                modelDef: m,
-                                customRules: modelProfileSync.customRules,
-                                remoteRules: modelProfileSync.remoteRules,
-                              });
-                              return (
-                                <button
-                                  key={`${p.id}_${m.id}`}
-                                  type="button"
-                                  onClick={() => {
-                                    void setActiveProviderModel(p.id, m.id);
-                                    setActiveMenu(null);
-                                  }}
-                                  style={{ '--stagger-i': idx } as React.CSSProperties}
-                                  className={`cb-list-item w-full text-left px-2.5 py-1.5 rounded-xl flex items-center justify-between gap-2 active:scale-[0.985] transition ${
-                                    selected
-                                      ? 'bg-accent text-accentfg font-medium'
-                                      : 'text-fg hover:bg-fg/5'
-                                  }`}
-                                >
-                                  <span className="truncate font-mono">{m.name || m.id}</span>
-                                  <span
-                                    className={`text-[10px] shrink-0 ${
-                                      selected ? 'opacity-90' : 'text-muted'
+                          </button>
+                          <Collapsible open={!collapsed}>
+                            <div className="px-1.5 pb-1.5 pt-1 border-t border-borderc/40 space-y-0.5">
+                              {modelList.map((m) => {
+                                const idx = modelRowIdx++;
+                                const selected = isCurrentProvider && currentModelId === m.id;
+                                const { profile: mProf } = resolveModelReasoningProfile({
+                                  modelId: m.id,
+                                  protocol: p.protocol,
+                                  modelDef: m,
+                                  customRules: modelProfileSync.customRules,
+                                  remoteRules: modelProfileSync.remoteRules,
+                                });
+                                const hasAlias = hasCustomModelDisplayName(m);
+                                const labelText = getModelDisplayName(m, m.id);
+                                return (
+                                  <button
+                                    key={`${p.id}_${m.id}`}
+                                    type="button"
+                                    onClick={() => {
+                                      void setActiveProviderModel(p.id, m.id);
+                                      setActiveMenu(null);
+                                    }}
+                                    style={{ '--stagger-i': idx } as React.CSSProperties}
+                                    className={`cb-list-item w-full text-left px-2.5 py-1.5 rounded-xl flex items-center justify-between gap-2 active:scale-[0.985] transition ${
+                                      selected
+                                        ? 'bg-accent text-accentfg font-medium'
+                                        : 'text-fg hover:bg-fg/5'
                                     }`}
                                   >
-                                    {mProf.strategy === 'none'
-                                      ? '标准'
-                                      : mProf.strategy === 'fixed'
-                                        ? '内置思考'
-                                        : `${mProf.levels.length} 档思考`}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
+                                    <div className="min-w-0 flex-1">
+                                      <div
+                                        className={`truncate ${
+                                          hasAlias ? 'font-sans font-medium' : 'font-mono'
+                                        }`}
+                                      >
+                                        {labelText}
+                                      </div>
+                                      {hasAlias && (
+                                        <div
+                                          className={`text-[10px] font-mono truncate ${
+                                            selected ? 'opacity-80' : 'text-muted/85'
+                                          }`}
+                                        >
+                                          {m.id}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <span
+                                      className={`text-[10px] shrink-0 ${
+                                        selected ? 'opacity-90' : 'text-muted'
+                                      }`}
+                                    >
+                                      {mProf.strategy === 'none'
+                                        ? '标准'
+                                        : mProf.strategy === 'fixed'
+                                          ? '内置思考'
+                                          : `${mProf.levels.length} 档思考`}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </Collapsible>
                         </div>
                       );
                     })}
                   </div>
                 )}
               </div>
-            )}
+              );
+            })()}
 
             {renderedMenu === 'reasoning' && (
               <div className="p-2.5 space-y-1.5">
@@ -752,12 +871,25 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                           key={opt.value}
                           type="button"
                           onClick={() => {
+                            setDraftBudgetOverridden(false);
                             if (activeConv) {
-                              void updateConversationConfig(activeConv.id, {
-                                reasoningEffort: opt.value,
-                              });
+                              const patch: Partial<Conversation> = { reasoningEffort: opt.value };
+                              if (activeConv.customParams?.thinkingBudget !== undefined) {
+                                const nextCustom: CustomModelParams = {
+                                  ...activeConv.customParams,
+                                };
+                                delete nextCustom.thinkingBudget;
+                                patch.customParams =
+                                  Object.keys(nextCustom).length > 0 ? nextCustom : undefined;
+                              }
+                              void updateConversationConfig(activeConv.id, patch);
                             }
-                            void updateGeneration({ reasoningEffort: opt.value });
+                            void updateGeneration({
+                              reasoningEffort: opt.value,
+                              ...(opt.budgetTokens !== undefined
+                                ? { reasoningBudgetTokens: opt.budgetTokens }
+                                : {}),
+                            });
                             setActiveMenu(null);
                           }}
                           style={{ '--stagger-i': idx } as React.CSSProperties}
@@ -855,15 +987,34 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
                   {showBudgetSlider && (
                     <label className="block space-y-1">
-                      <div className="flex justify-between text-muted">
-                        <span>思考预算 Tokens</span>
-                        <span className="font-mono tabular-nums text-fg">{effectiveBudget}</span>
+                      <div className="flex justify-between items-center text-muted gap-2">
+                        <span className="flex items-center gap-1.5">
+                          <span>思考预算 Tokens</span>
+                          {hasBudgetOverride && (
+                            <button
+                              type="button"
+                              onClick={clearThinkingBudgetOverride}
+                              className="text-[10px] px-1.5 py-0.5 rounded bg-fg/10 text-muted hover:text-fg transition"
+                            >
+                              跟随档位
+                            </button>
+                          )}
+                        </span>
+                        <span className="font-mono tabular-nums text-fg">
+                          {!hasBudgetOverride && effectiveBudget < 0
+                            ? '动态 (-1)'
+                            : effectiveBudget}
+                        </span>
                       </div>
                       <SmoothSlider
                         min={1024}
                         max={32768}
                         decimals={0}
-                        value={Math.max(1024, effectiveBudget)}
+                        value={
+                          effectiveBudget >= 1024
+                            ? Math.min(32768, effectiveBudget)
+                            : 8192
+                        }
                         onChange={(val) => patchConvParams({ thinkingBudget: val })}
                         ariaLabel="会话思考预算 Tokens"
                       />
@@ -876,26 +1027,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     </p>
                   )}
                 </div>
-
-                <div
-                  className="cb-list-item space-y-1 pt-2 border-t border-borderc"
-                  style={{ '--stagger-i': 1 } as React.CSSProperties}
-                >
-                  <div className="flex items-center justify-between text-muted">
-                    <span>自定义请求体 JSON (extraBody)</span>
-                    {extraJsonError && <span className="text-[10px] text-rose-400">格式错误</span>}
-                  </div>
-                  <textarea
-                    rows={3}
-                    value={extraJsonText}
-                    onChange={(e) => handleExtraBodyChange(e.target.value)}
-                    placeholder='{"seed": 42}'
-                    className="w-full px-2.5 py-1.5 rounded-xl bg-surface border border-borderc font-mono text-[11px] text-fg focus:outline-none focus:border-fg/40"
-                  />
-                  {extraJsonError && (
-                    <div className="text-[10px] text-rose-400">{extraJsonError}</div>
-                  )}
-                </div>
               </div>
             )}
 
@@ -906,9 +1037,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   <span
                     className={`font-mono text-[11px] px-2 py-0.5 rounded-full ${
                       contextStats.ratio >= contextStats.threshold
-                        ? 'bg-rose-500/15 text-rose-400'
+                        ? 'bg-rose-500/15 text-rose-700 dark:text-rose-400'
                         : contextStats.ratio >= 0.6
-                          ? 'bg-amber-500/15 text-amber-300'
+                          ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
                           : 'bg-surface text-muted'
                     }`}
                   >
@@ -980,7 +1111,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     className={`px-2.5 py-1.5 rounded-xl border text-[11px] ${
                       compactFeedback.ok
                         ? 'border-borderc bg-surface text-fg'
-                        : 'border-amber-500/35 bg-amber-500/10 text-amber-300'
+                        : 'border-amber-500/35 bg-amber-500/10 text-amber-800 dark:text-amber-300'
                     }`}
                   >
                     {compactFeedback.text}
@@ -1036,7 +1167,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               setIsDragOver(true);
             }
           }}
-          onDragLeave={() => setIsDragOver(false)}
+          onDragLeave={(e) => {
+            if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+            setIsDragOver(false);
+          }}
           onDrop={(e) => {
             e.preventDefault();
             setIsDragOver(false);
@@ -1065,12 +1199,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           />
 
           {imageError && (
-            <div className="cb-panel-enter mb-2 px-3 py-1.5 rounded-xl border border-rose-500/35 bg-rose-500/10 text-xs text-rose-300 flex items-center justify-between gap-2">
+            <div className="cb-panel-enter mb-2 px-3 py-1.5 rounded-xl border border-rose-500/35 bg-rose-500/10 text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between gap-2">
               <span>{imageError}</span>
               <button
                 type="button"
                 onClick={() => setImageError(null)}
-                className="p-0.5 text-rose-200 hover:text-fg"
+                className="p-0.5 text-rose-700 dark:text-rose-200 hover:text-fg"
                 aria-label="关闭图片提示"
               >
                 <X className="w-3.5 h-3.5" />
@@ -1119,7 +1253,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 ))}
               </div>
               {currentModelDef?.capabilities?.vision === false && (
-                <div className="text-[11px] text-amber-300/90 px-1">
+                <div className="text-[11px] text-amber-700 dark:text-amber-300/90 px-1">
                   提示：当前选中模型标记为不支持图片输入，发送前建议切换支持 Vision 的模型。
                 </div>
               )}
@@ -1158,15 +1292,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           />
 
           <div className="flex items-center justify-between gap-1 sm:gap-2 mt-2 pt-1 min-w-0">
-            {/* Left controls: +, Upload Image, Monospace Model Pill, Dynamic Reasoning Pill, Custom Params Pill */}
+            {/* Left controls: + (prompts & image upload), Model Pill, Dynamic Reasoning Pill, Custom Params Pill */}
             <div className="flex items-center gap-1 sm:gap-1.5 flex-1 min-w-0 overflow-x-auto no-scrollbar">
               <button
                 type="button"
                 onClick={() => toggleMenu('plus')}
-                className={`w-[28px] h-[28px] sm:w-8 sm:h-8 rounded-full flex items-center justify-center hover:text-fg hover:bg-fg/10 active:scale-95 shrink-0 transition ${
+                className={`relative w-[28px] h-[28px] sm:w-8 sm:h-8 rounded-full flex items-center justify-center hover:text-fg hover:bg-fg/10 active:scale-95 shrink-0 transition ${
                   activeMenu === 'plus' ? 'bg-fg/10 text-fg' : 'text-muted'
                 }`}
-                aria-label="更多能力与提示词"
+                title="更多能力、提示词与上传图片"
+                aria-label="更多能力、提示词与上传图片"
                 aria-expanded={activeMenu === 'plus'}
               >
                 <Plus
@@ -1174,16 +1309,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     activeMenu === 'plus' ? 'rotate-45 text-fg' : ''
                   }`}
                 />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="relative w-[28px] h-[28px] sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-muted hover:text-fg hover:bg-fg/10 active:scale-95 shrink-0 transition"
-                title="上传图片（支持拖拽与 Ctrl+V 粘贴）"
-                aria-label="上传图片"
-              >
-                <ImagePlus className="w-[18px] h-[18px]" />
                 {attachedImages.length > 0 && (
                   <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-accent text-accentfg text-[10px] font-semibold flex items-center justify-center">
                     {attachedImages.length}
@@ -1194,13 +1319,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => toggleMenu('model')}
-                className={`flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 py-1 rounded-full border bg-bg/55 hover:bg-elevated active:scale-95 text-[11px] sm:text-xs font-mono text-fg min-w-0 max-w-[72px] sm:max-w-[185px] lg:max-w-[220px] shrink-0 transition ${
+                className={`flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2.5 py-1 rounded-full border bg-bg/55 hover:bg-elevated active:scale-95 text-[11px] sm:text-xs text-fg min-w-0 max-w-[78px] sm:max-w-[185px] lg:max-w-[220px] shrink-0 transition ${
                   activeMenu === 'model' ? 'border-fg/30 bg-elevated' : 'border-borderc'
-                }`}
-                title="切换模型"
+                } ${currentModelHasAlias ? 'font-sans font-medium' : 'font-mono'}`}
+                title={currentModelHasAlias ? `切换模型 (${currentModelId})` : '切换模型'}
                 aria-expanded={activeMenu === 'model'}
               >
-                <span className="truncate">{currentModelId || '选择模型'}</span>
+                <span className="truncate">{currentModelDisplayName || '选择模型'}</span>
                 <ChevronDown
                   className={`w-3.5 h-3.5 text-muted shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                     activeMenu === 'model' ? 'rotate-180 text-fg' : ''
@@ -1280,9 +1405,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 const offset = circumference * (1 - Math.min(1, Math.max(0, contextStats.ratio)));
                 const ringColor =
                   contextStats.ratio >= contextStats.threshold
-                    ? 'text-rose-400'
+                    ? 'text-rose-600 dark:text-rose-400'
                     : contextStats.ratio >= 0.6
-                      ? 'text-amber-400'
+                      ? 'text-amber-600 dark:text-amber-400'
                       : 'text-fg/80';
                 return (
                   <button

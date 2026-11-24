@@ -125,4 +125,32 @@ describe('WebDAV Auto-Directory & Sync', () => {
       'PUT:https://dav.example.com/dav/ChatBeauty/backup.json',
     ]);
   });
+
+  it('normalizes traversal segments (..) / URL-encodes segments and rejects non-2xx in testConnection', async () => {
+    mockSimpleRequest
+      .mockResolvedValueOnce({ status: 401, statusText: 'Unauthorized', headers: {}, body: '' });
+
+    const service = new WebDavSyncService();
+    const failRes = await service.testConnection({
+      ...baseSettings,
+      remotePath: '/../我的 备份/./snap shot.json',
+    });
+    expect(failRes.ok).toBe(false);
+
+    mockSimpleRequest
+      .mockResolvedValueOnce({ status: 207, statusText: 'Multi-Status', headers: {}, body: '' })
+      .mockResolvedValueOnce({ status: 207, statusText: 'Multi-Status', headers: {}, body: '' })
+      .mockResolvedValueOnce({ status: 201, statusText: 'Created', headers: {}, body: '' });
+
+    const pushRes = await service.pushSnapshot({
+      ...baseSettings,
+      remotePath: '/../我的 备份/./snap shot.json',
+    });
+    expect(pushRes.ok).toBe(true);
+    expect(mockSimpleRequest.mock.calls.map((c) => `${c[0].method}:${c[0].url}`)).toEqual([
+      'PROPFIND:https://dav.example.com/dav/',
+      'PROPFIND:https://dav.example.com/dav/%E6%88%91%E7%9A%84%20%E5%A4%87%E4%BB%BD/',
+      'PUT:https://dav.example.com/dav/%E6%88%91%E7%9A%84%20%E5%A4%87%E4%BB%BD/snap%20shot.json',
+    ]);
+  });
 });

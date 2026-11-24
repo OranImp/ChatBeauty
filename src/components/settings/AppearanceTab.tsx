@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { App as CapApp } from '@capacitor/app';
 import {
   BatteryCharging,
   Code2,
@@ -74,9 +75,40 @@ export const AppearanceTab: React.FC<AppearanceTabProps> = ({ section = 'general
   };
 
   useEffect(() => {
-    if (section === 'general') {
-      void refreshBatteryStatus();
+    if (section !== 'general' || runtimeEnv !== 'capacitor') return;
+    let cancelled = false;
+    const syncBattery = async () => {
+      setBatteryChecking(true);
+      try {
+        const status = await getAndroidBatteryStatus();
+        if (!cancelled) {
+          setBatteryIgnored(Boolean(status?.ignoring));
+        }
+      } catch {
+        // Ignore probe error on unsupported runtime
+      } finally {
+        if (!cancelled) {
+          setBatteryChecking(false);
+        }
+      }
+    };
+    void syncBattery();
+
+    let handlePromise: Promise<{ remove: () => Promise<void> }> | null = null;
+    try {
+      handlePromise = CapApp.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) void syncBattery();
+      });
+    } catch {
+      // Ignore outside Capacitor native shell
     }
+
+    return () => {
+      cancelled = true;
+      if (handlePromise) {
+        void handlePromise.then((h) => h.remove()).catch(() => undefined);
+      }
+    };
   }, [runtimeEnv, section]);
 
   if (section === 'typography') {
@@ -126,7 +158,18 @@ export const AppearanceTab: React.FC<AppearanceTabProps> = ({ section = 'general
           action={
             <button
               type="button"
-              onClick={() => void updateAppearance(DEFAULT_APPEARANCE_SETTINGS)}
+              onClick={() =>
+                void updateAppearance({
+                  uiScale: DEFAULT_APPEARANCE_SETTINGS.uiScale,
+                  fontSize: DEFAULT_APPEARANCE_SETTINGS.fontSize,
+                  mathScale: DEFAULT_APPEARANCE_SETTINGS.mathScale,
+                  lineHeight: DEFAULT_APPEARANCE_SETTINGS.lineHeight,
+                  contentMaxWidth: DEFAULT_APPEARANCE_SETTINGS.contentMaxWidth,
+                  fontFamily: DEFAULT_APPEARANCE_SETTINGS.fontFamily,
+                  customFontName: DEFAULT_APPEARANCE_SETTINGS.customFontName,
+                  codeTheme: DEFAULT_APPEARANCE_SETTINGS.codeTheme,
+                })
+              }
               className="flex items-center gap-1 text-xs text-muted hover:text-fg transition"
             >
               <RotateCcw className="w-3.5 h-3.5" />

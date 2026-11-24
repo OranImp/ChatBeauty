@@ -33,11 +33,15 @@ contextBridge.exposeInMainWorld('electronBridge', {
   },
 
   simpleRequest: (payload: {
+    requestId?: string;
+    timeoutMs?: number;
     url: string;
     method: string;
     headers: Record<string, string>;
     body?: string;
   }) => ipcRenderer.invoke('http:simple-request', payload),
+
+  abortSimpleRequest: (requestId: string) => ipcRenderer.invoke('http:simple-abort', requestId),
 
   setBackgroundSettings: (settings: { closeToTray: boolean; backgroundGeneration: boolean }) =>
     ipcRenderer.invoke('app:set-background-settings', settings),

@@ -39,4 +39,10 @@ describe('SSEParser', () => {
     const second = parser.feed('\ndata: ok\r\n\r\n');
     expect(second).toEqual([{ event: 'delta', data: 'ok' }]);
   });
+
+  it('strips leading UTF-8 BOM on first chunk without corrupting event parsing', () => {
+    const parser = new SSEParser();
+    const events = parser.feed('\uFEFFdata: {"ok":true}\n\n');
+    expect(events).toEqual([{ event: 'message', data: '{"ok":true}' }]);
+  });
 });

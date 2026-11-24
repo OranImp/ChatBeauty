@@ -20,6 +20,8 @@ import {
   AUTO_SESSION_HEADER_PLACEHOLDER,
   buildPreviewHeadersJson,
   extractExtraHeadersFromPreviewJson,
+  getModelDisplayName,
+  hasCustomModelDisplayName,
   toStableSessionId,
 } from '@/services/llm/adapters/shared';
 import { BUILTIN_REASONING_PROFILES } from '@/services/llm/modelProfiles';
@@ -769,7 +771,7 @@ describe('LLM Protocol Adapters', () => {
     });
     const models = await getProviderAdapter('anthropic').listModels?.(antProvider);
     expect(mockSimpleRequest).toHaveBeenCalledWith(
-      expect.objectContaining({ url: 'https://relay.example.com/v1/models' })
+      expect.objectContaining({ url: 'https://relay.example.com/v1/models?limit=1000' })
     );
     expect(models?.[0]?.id).toBe('claude-sonnet-5-5');
 
@@ -1139,5 +1141,177 @@ describe('LLM Protocol Adapters', () => {
       switchedProvider
     );
     expect(extractedAfterSwitch).toEqual({ 'X-Custom-Routing': 'canary' });
+  });
+
+  it('handles Wave 2 regressions: Anthropic cache tokens, Gemini leading model/blockReason, Chat reasoning alias & Responses refusal/incomplete', async () => {
+    // 1. Anthropic sums input_tokens + cache_creation_input_tokens + cache_read_input_tokens
+    mockStreamRequest.mockImplementationOnce(async (opts: { onChunk: (c: string) => void }) => {
+      opts.onChunk(
+        'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":100,"cache_creation_input_tokens":40,"cache_read_input_tokens":60}}}\n\n' +
+          'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}\n\n' +
+          'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":25}}\n\n' +
+          'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+      );
+    });
+    const antProv: ProviderConfig = {
+      id: 'p-ant-cache',
+      name: 'Ant',
+      protocol: 'anthropic',
+      baseUrl: 'https://api.anthropic.com/v1',
+      apiKey: 'sk-ant',
+      defaultModel: 'claude-sonnet-4-6',
+      models: [],
+      enabled: true,
+      createdAt: 1,
+    };
+    let antUsage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
+    await getProviderAdapter('anthropic').chatStream(
+      {
+        provider: antProv,
+        modelId: 'claude-sonnet-4-6',
+        systemPrompt: '',
+        messages: userMessages,
+        generation: { ...DEFAULT_GENERATION_SETTINGS, reasoningEffort: 'off' },
+      },
+      { onReasoningDelta: () => {}, onTextDelta: () => {}, onUsage: (u) => (antUsage = u) },
+      new AbortController().signal
+    );
+    expect(antUsage).toEqual({ inputTokens: 200, outputTokens: 25, totalTokens: 225 });
+
+    // 2. Gemini strips leading model turn and surfaces promptFeedback.blockReason
+    const leadingModelMsgs: Message[] = [
+      {
+        id: 'm0',
+        conversationId: 'c1',
+        role: 'assistant',
+        parts: [{ type: 'text', text: 'stale assistant intro' }],
+        createdAt: 0,
+        updatedAt: 0,
+        status: 'done',
+      },
+      ...userMessages,
+    ];
+    mockStreamRequest.mockImplementationOnce(async (opts: { onChunk: (c: string) => void }) => {
+      opts.onChunk('data: {"promptFeedback":{"blockReason":"SAFETY"}}\n\n');
+    });
+    const gemProv: ProviderConfig = {
+      id: 'p-gem',
+      name: 'Gemini',
+      protocol: 'gemini',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: 'AIza',
+      defaultModel: 'gemini-2.5-pro',
+      models: [],
+      enabled: true,
+      createdAt: 1,
+    };
+    await expect(
+      getProviderAdapter('gemini').chatStream(
+        {
+          provider: gemProv,
+          modelId: 'gemini-2.5-pro',
+          systemPrompt: '',
+          messages: leadingModelMsgs,
+          generation: DEFAULT_GENERATION_SETTINGS,
+        },
+        { onReasoningDelta: () => {}, onTextDelta: () => {} },
+        new AbortController().signal
+      )
+    ).rejects.toThrow(/SAFETY/);
+
+    const gemSentBody = JSON.parse(
+      (mockStreamRequest.mock.calls[1][0] as { body: string }).body
+    ) as { contents: Array<{ role: string }> };
+    expect(gemSentBody.contents[0].role).toBe('user');
+
+    // 3. OpenAI Chat parses delta.reasoning alias and maps aggregator anthropic/gemini reasoning_effort
+    mockStreamRequest.mockImplementationOnce(async (opts: { onChunk: (c: string) => void }) => {
+      opts.onChunk(
+        'data: {"choices":[{"delta":{"reasoning":"relay thought"}}]}\n\n' +
+          'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n' +
+          'data: [DONE]\n\n'
+      );
+    });
+    const relayProv: ProviderConfig = {
+      id: 'p-relay',
+      name: 'Relay',
+      protocol: 'openai-chat',
+      baseUrl: 'https://relay.example.com/v1',
+      apiKey: 'sk-relay',
+      defaultModel: 'claude-opus-4-6',
+      models: [],
+      enabled: true,
+      createdAt: 1,
+    };
+    let relayReasoning = '';
+    await getProviderAdapter('openai-chat').chatStream(
+      {
+        provider: relayProv,
+        modelId: 'claude-opus-4-6',
+        systemPrompt: '',
+        messages: userMessages,
+        generation: { ...DEFAULT_GENERATION_SETTINGS, reasoningEffort: 'high' },
+      },
+      { onReasoningDelta: (d) => (relayReasoning += d), onTextDelta: () => {} },
+      new AbortController().signal
+    );
+    expect(relayReasoning).toBe('relay thought');
+    const relayBody = JSON.parse(
+      (mockStreamRequest.mock.calls[2][0] as { body: string }).body
+    ) as Record<string, unknown>;
+    expect(relayBody.reasoning_effort).toBe('high');
+
+    // 4. OpenAI Responses handles response.refusal.delta and response.incomplete usage
+    mockStreamRequest.mockImplementationOnce(async (opts: { onChunk: (c: string) => void }) => {
+      opts.onChunk(
+        'event: response.refusal.delta\ndata: {"type":"response.refusal.delta","delta":"Cannot comply"}\n\n' +
+          'event: response.incomplete\ndata: {"type":"response.incomplete","response":{"usage":{"input_tokens":50,"output_tokens":12,"total_tokens":62}}}\n\n'
+      );
+    });
+    const respProv: ProviderConfig = {
+      id: 'p-resp',
+      name: 'OpenAI',
+      protocol: 'openai-responses',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-resp',
+      defaultModel: 'gpt-6.2-sol',
+      models: [],
+      enabled: true,
+      createdAt: 1,
+    };
+    let respText = '';
+    let respUsage: unknown;
+    await getProviderAdapter('openai-responses').chatStream(
+      {
+        provider: respProv,
+        modelId: 'gpt-6.2-sol',
+        systemPrompt: '',
+        messages: userMessages,
+        generation: DEFAULT_GENERATION_SETTINGS,
+      },
+      { onReasoningDelta: () => {}, onTextDelta: (d) => (respText += d), onUsage: (u) => (respUsage = u) },
+      new AbortController().signal
+    );
+    expect(respText).toBe('Cannot comply');
+    expect(respUsage).toEqual({
+      inputTokens: 50,
+      outputTokens: 12,
+      reasoningTokens: undefined,
+      totalTokens: 62,
+    });
+  });
+
+  it('resolves custom model display names cleanly while falling back to model ID', () => {
+    expect(getModelDisplayName({ id: 'gpt-6.2-sol', name: 'Sol 主力' })).toBe('Sol 主力');
+    expect(hasCustomModelDisplayName({ id: 'gpt-6.2-sol', name: 'Sol 主力' })).toBe(true);
+
+    expect(getModelDisplayName({ id: 'gpt-6.2-sol', name: '   ' })).toBe('gpt-6.2-sol');
+    expect(hasCustomModelDisplayName({ id: 'gpt-6.2-sol', name: '   ' })).toBe(false);
+
+    expect(getModelDisplayName({ id: 'gpt-6.2-sol', name: 'gpt-6.2-sol' })).toBe('gpt-6.2-sol');
+    expect(hasCustomModelDisplayName({ id: 'gpt-6.2-sol', name: 'gpt-6.2-sol' })).toBe(false);
+
+    expect(getModelDisplayName(undefined, 'fallback-id')).toBe('fallback-id');
+    expect(hasCustomModelDisplayName(undefined)).toBe(false);
   });
 });
