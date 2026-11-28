@@ -70,11 +70,44 @@ const CLIPBOARD_IMAGE_MIME_BY_EXT: Record<string, string> = {
   '.gif': 'image/gif',
 };
 
-function readClipboardImagePayload(): {
+function getClipboardImageFilePath(): { filePath: string; mimeType: string } | null {
+  if (process.platform !== 'win32' || !clipboard.has('FileNameW')) {
+    return null;
+  }
+  const filePath = clipboard
+    .readBuffer('FileNameW')
+    .toString('utf16le')
+    .replace(/\0[\s\S]*$/, '')
+    .trim();
+  if (!filePath) return null;
+  const ext = path.extname(filePath).toLowerCase();
+  const mimeType = CLIPBOARD_IMAGE_MIME_BY_EXT[ext];
+  if (!mimeType || !fs.existsSync(filePath)) return null;
+  const stat = fs.statSync(filePath);
+  if (!stat.isFile() || stat.size <= 0 || stat.size > 15 * 1024 * 1024) return null;
+  return { filePath, mimeType };
+}
+
+function hasClipboardImage(): boolean {
+  try {
+    const formats = clipboard.availableFormats();
+    if (formats.some((f) => f.toLowerCase().startsWith('image/'))) {
+      return true;
+    }
+    if (!clipboard.readImage().isEmpty()) {
+      return true;
+    }
+    return getClipboardImageFilePath() !== null;
+  } catch {
+    return false;
+  }
+}
+
+async function readClipboardImagePayloadAsync(): Promise<{
   dataUrl: string;
   mimeType: string;
   name: string;
-} | null {
+} | null> {
   try {
     const img = clipboard.readImage();
     if (!img.isEmpty()) {
@@ -88,32 +121,27 @@ function readClipboardImagePayload(): {
       }
     }
 
-    if (process.platform === 'win32' && clipboard.has('FileNameW')) {
-      const filePath = clipboard
-        .readBuffer('FileNameW')
-        .toString('utf16le')
-        .replace(/\0[\s\S]*$/, '')
-        .trim();
-      if (filePath) {
-        const ext = path.extname(filePath).toLowerCase();
-        const mimeType = CLIPBOARD_IMAGE_MIME_BY_EXT[ext];
-        if (mimeType && fs.existsSync(filePath)) {
-          const stat = fs.statSync(filePath);
-          if (stat.isFile() && stat.size > 0 && stat.size <= 15 * 1024 * 1024) {
-            const bytes = fs.readFileSync(filePath);
-            return {
-              dataUrl: `data:${mimeType};base64,${bytes.toString('base64')}`,
-              mimeType,
-              name: path.basename(filePath),
-            };
-          }
-        }
-      }
+    const fileInfo = getClipboardImageFilePath();
+    if (fileInfo) {
+      const bytes = await fs.promises.readFile(fileInfo.filePath);
+      return {
+        dataUrl: `data:${fileInfo.mimeType};base64,${bytes.toString('base64')}`,
+        mimeType: fileInfo.mimeType,
+        name: path.basename(fileInfo.filePath),
+      };
     }
   } catch {
     // Ignore unsupported clipboard format reads
   }
   return null;
+}
+
+function sendClipboardImageToRenderer(): void {
+  void readClipboardImagePayloadAsync().then((payload) => {
+    if (payload && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('app:paste-clipboard-image', payload);
+    }
+  });
 }
 
 function showMainWindow(): void {
@@ -128,6 +156,9 @@ function showMainWindow(): void {
 
 function updateSuspendBlocker(): void {
   const shouldPreventSuspend = backgroundGenEnabled && activeGenerationCount > 0;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.setBackgroundThrottling(!shouldPreventSuspend);
+  }
   if (shouldPreventSuspend) {
     if (suspendBlockerId === null || !powerSaveBlocker.isStarted(suspendBlockerId)) {
       suspendBlockerId = powerSaveBlocker.start('prevent-app-suspension');
@@ -183,14 +214,23 @@ function ensureTray(): Tray {
   return tray;
 }
 
+const EXPECTED_FILE_HREF = pathToFileURL(
+  path.join(__dirname, '..', 'dist', 'index.html')
+).href.toLowerCase();
+
 function createWindow(): void {
   nativeTheme.themeSource = 'dark';
+
+  if (process.platform !== 'darwin') {
+    Menu.setApplicationMenu(null);
+  }
 
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 820,
     minWidth: 390,
     minHeight: 580,
+    show: false,
     backgroundColor: '#171615',
     autoHideMenuBar: true,
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
@@ -199,8 +239,20 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: false,
+      backgroundThrottling: true,
     },
+  });
+
+  const showFallbackTimer = setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+  }, 1500);
+  mainWindow.once('ready-to-show', () => {
+    clearTimeout(showFallbackTimer);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+    }
   });
 
   mainWindow.on('close', (event) => {
@@ -243,11 +295,8 @@ function createWindow(): void {
     try {
       const targetUrl = new URL(url);
       if (devBase && targetUrl.origin === new URL(devBase).origin) return;
-      const expectedFileHref = pathToFileURL(
-        path.join(__dirname, '..', 'dist', 'index.html')
-      ).href;
       const normalizedTarget = `${targetUrl.origin === 'null' ? `file://${targetUrl.pathname}` : targetUrl.href}`.split(/[?#]/)[0];
-      if (targetUrl.protocol === 'file:' && normalizedTarget.toLowerCase() === expectedFileHref.toLowerCase()) {
+      if (targetUrl.protocol === 'file:' && normalizedTarget.toLowerCase() === EXPECTED_FILE_HREF) {
         return;
       }
     } catch {
@@ -270,8 +319,7 @@ function createWindow(): void {
 
   mainWindow.webContents.on('context-menu', (_event, params) => {
     const hasText = clipboard.readText().length > 0;
-    const clipboardImage = readClipboardImagePayload();
-    const hasImage = Boolean(clipboardImage);
+    const hasImage = hasClipboardImage();
     const template: Electron.MenuItemConstructorOptions[] = [];
 
     if (params.isEditable) {
@@ -285,20 +333,18 @@ function createWindow(): void {
           label: '粘贴',
           enabled: params.editFlags.canPaste || hasText || hasImage,
           click: () => {
-            if (hasImage && !hasText && clipboardImage) {
-              mainWindow?.webContents.send('app:paste-clipboard-image', clipboardImage);
+            if (hasImage && !hasText) {
+              sendClipboardImageToRenderer();
             } else {
               mainWindow?.webContents.paste();
             }
           },
         }
       );
-      if (hasImage && clipboardImage) {
+      if (hasImage) {
         template.push({
           label: '粘贴图片',
-          click: () => {
-            mainWindow?.webContents.send('app:paste-clipboard-image', clipboardImage);
-          },
+          click: sendClipboardImageToRenderer,
         });
       }
       template.push(
@@ -309,12 +355,10 @@ function createWindow(): void {
       if (params.selectionText.trim()) {
         template.push({ label: '复制', role: 'copy' });
       }
-      if (hasImage && clipboardImage) {
+      if (hasImage) {
         template.push({
           label: '粘贴图片到输入框',
-          click: () => {
-            mainWindow?.webContents.send('app:paste-clipboard-image', clipboardImage);
-          },
+          click: sendClipboardImageToRenderer,
         });
       }
     }
@@ -350,7 +394,8 @@ ipcMain.handle('http:stream-start', async (event, payload: StreamStartPayload) =
     });
 
     if (!response.ok) {
-      const errText = await response.text().catch(() => response.statusText);
+      const rawErr = await response.text().catch(() => response.statusText);
+      const errText = rawErr.length > 16_384 ? `${rawErr.slice(0, 16_384)}…` : rawErr;
       activeStreams.delete(requestId);
       throw new Error(`HTTP ${response.status}: ${errText || response.statusText}`);
     }
@@ -364,8 +409,32 @@ ipcMain.handle('http:stream-start', async (event, payload: StreamStartPayload) =
     const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8');
 
-    // Pump stream in background after returning headers
+    // Pump stream in background with short micro-batching to minimize IPC overhead
     void (async () => {
+      let pendingChunk = '';
+      let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const flushPendingChunk = () => {
+        if (flushTimer !== null) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        if (pendingChunk && !sender.isDestroyed()) {
+          sender.send('http:stream-chunk', { requestId, chunk: pendingChunk });
+        }
+        pendingChunk = '';
+      };
+
+      const queueChunk = (chunk: string) => {
+        if (!chunk) return;
+        pendingChunk += chunk;
+        if (pendingChunk.length >= 4096) {
+          flushPendingChunk();
+        } else if (flushTimer === null) {
+          flushTimer = setTimeout(flushPendingChunk, 16);
+        }
+      };
+
       try {
         while (true) {
           if (sender.isDestroyed() || controller.signal.aborted) {
@@ -381,9 +450,8 @@ ipcMain.handle('http:stream-start', async (event, payload: StreamStartPayload) =
           }
           if (done) {
             const tail = decoder.decode();
-            if (tail && !sender.isDestroyed()) {
-              sender.send('http:stream-chunk', { requestId, chunk: tail });
-            }
+            if (tail) pendingChunk += tail;
+            flushPendingChunk();
             if (!sender.isDestroyed()) {
               sender.send('http:stream-end', { requestId });
             }
@@ -391,15 +459,14 @@ ipcMain.handle('http:stream-start', async (event, payload: StreamStartPayload) =
           }
           if (value) {
             const chunk = decoder.decode(value, { stream: true });
-            if (chunk && !sender.isDestroyed()) {
-              sender.send('http:stream-chunk', { requestId, chunk });
-            }
+            queueChunk(chunk);
           }
         }
       } catch (err) {
         if (controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
           return;
         }
+        flushPendingChunk();
         if (!sender.isDestroyed()) {
           sender.send('http:stream-error', {
             requestId,
@@ -407,6 +474,11 @@ ipcMain.handle('http:stream-start', async (event, payload: StreamStartPayload) =
           });
         }
       } finally {
+        if (flushTimer !== null) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        pendingChunk = '';
         activeStreams.delete(requestId);
         try {
           reader.releaseLock();
@@ -500,7 +572,9 @@ ipcMain.handle(
 
 ipcMain.handle('app:set-streaming-state', (_event, count: number) => {
   const prevCount = activeGenerationCount;
-  activeGenerationCount = Math.max(0, Number(count) || 0);
+  const nextCount = Math.max(0, Number(count) || 0);
+  if (prevCount === nextCount) return;
+  activeGenerationCount = nextCount;
   updateSuspendBlocker();
   updateTrayAppearance();
   if (prevCount > 0 && activeGenerationCount === 0 && mainWindow && !mainWindow.isVisible()) {
@@ -517,6 +591,8 @@ ipcMain.handle('app:set-streaming-state', (_event, count: number) => {
   }
 });
 
+let memoryFileWriteQueue: Promise<unknown> = Promise.resolve();
+
 function getMemoryFilePath(): string {
   return path.join(app.getPath('userData'), 'chatbeauty-memory.md');
 }
@@ -524,12 +600,12 @@ function getMemoryFilePath(): string {
 ipcMain.handle('memory:read-file', async () => {
   const filePath = getMemoryFilePath();
   try {
-    if (!fs.existsSync(filePath)) {
-      return { ok: true, content: null, filePath };
-    }
-    const content = fs.readFileSync(filePath, 'utf8');
+    const content = await fs.promises.readFile(filePath, 'utf8');
     return { ok: true, content, filePath };
   } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      return { ok: true, content: null, filePath };
+    }
     return {
       ok: false,
       content: null,
@@ -541,20 +617,26 @@ ipcMain.handle('memory:read-file', async () => {
 
 ipcMain.handle('memory:write-file', async (_event, content: string) => {
   const filePath = getMemoryFilePath();
-  try {
-    const dir = path.dirname(filePath);
-    fs.mkdirSync(dir, { recursive: true });
-    const tmpPath = `${filePath}.tmp`;
-    fs.writeFileSync(tmpPath, typeof content === 'string' ? content : '', 'utf8');
-    fs.renameSync(tmpPath, filePath);
-    return { ok: true, filePath };
-  } catch (err) {
-    return {
-      ok: false,
-      filePath,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
+  const payload = typeof content === 'string' ? content : '';
+  const task = memoryFileWriteQueue.then(async () => {
+    const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      const dir = path.dirname(filePath);
+      await fs.promises.mkdir(dir, { recursive: true });
+      await fs.promises.writeFile(tmpPath, payload, 'utf8');
+      await fs.promises.rename(tmpPath, filePath);
+      return { ok: true, filePath };
+    } catch (err) {
+      await fs.promises.unlink(tmpPath).catch(() => undefined);
+      return {
+        ok: false,
+        filePath,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  });
+  memoryFileWriteQueue = task.catch(() => undefined);
+  return task;
 });
 
 ipcMain.handle('app:quit', () => {

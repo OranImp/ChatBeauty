@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 import type { ContentPart } from '@/types/chat';
 import type { AppearanceSettings } from '@/types/settings';
 import type { ResolvedTheme } from './svgUtils';
@@ -16,24 +16,28 @@ interface MessageRendererProps {
   onInspect: (payload: LightboxPayload) => void;
 }
 
-export const MessageRenderer: React.FC<MessageRendererProps> = ({
+export const MessageRenderer: React.FC<MessageRendererProps> = memo(({
   parts,
   isStreaming,
   theme,
   appearance,
   onInspect,
 }) => {
-  const reasoningPart = parts.find(
-    (p): p is Extract<ContentPart, { type: 'reasoning' }> => p.type === 'reasoning'
-  );
-  const textContent = parts
-    .filter((p): p is Extract<ContentPart, { type: 'text' }> => p.type === 'text')
-    .map((p) => p.text)
-    .join('\n');
-
-  const imageParts = parts.filter(
-    (p): p is Extract<ContentPart, { type: 'image' }> => p.type === 'image'
-  );
+  const { reasoningPart, textContent, imageParts } = useMemo(() => {
+    let reasoning: Extract<ContentPart, { type: 'reasoning' }> | undefined;
+    const texts: string[] = [];
+    const imgs: Array<Extract<ContentPart, { type: 'image' }>> = [];
+    for (const p of parts) {
+      if (p.type === 'reasoning' && !reasoning) reasoning = p;
+      else if (p.type === 'text') texts.push(p.text);
+      else if (p.type === 'image') imgs.push(p);
+    }
+    return {
+      reasoningPart: reasoning,
+      textContent: texts.length === 1 ? texts[0] : texts.join('\n'),
+      imageParts: imgs,
+    };
+  }, [parts]);
 
   const normalized = useMemo(
     () => preprocessLatex(textContent, Boolean(isStreaming)),
@@ -104,4 +108,4 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
       })}
     </div>
   );
-};
+});

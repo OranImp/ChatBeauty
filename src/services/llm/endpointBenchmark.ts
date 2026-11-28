@@ -1,7 +1,12 @@
 import type { ProviderConfig } from '@/types/chat';
 import { getRuntimeEnvironment, simpleRequest } from '@/services/transport/streamHttp';
 import { PROTOCOL_TEMPLATES } from './registry';
-import { buildEffectiveProviderHeaders, toStableSessionId, trimBaseUrl } from './adapters/shared';
+import {
+  buildEffectiveProviderHeaders,
+  buildProtocolModelsUrl,
+  toStableSessionId,
+  trimBaseUrl,
+} from './adapters/shared';
 
 export interface EndpointBenchmarkResult {
   url: string;
@@ -9,36 +14,6 @@ export interface EndpointBenchmarkResult {
   latencyMs: number;
   status?: number;
   error?: string;
-}
-
-function buildProbeUrl(provider: ProviderConfig, baseUrl: string): string {
-  if (provider.protocol === 'gemini') {
-    return baseUrl.endsWith('/models') ? baseUrl : `${baseUrl}/models`;
-  }
-
-  if (provider.protocol === 'anthropic') {
-    if (baseUrl.endsWith('/messages')) {
-      return baseUrl.replace(/\/messages$/, '/models');
-    }
-    if (baseUrl.endsWith('/models')) {
-      return baseUrl;
-    }
-    if (baseUrl.endsWith('/v1')) {
-      return `${baseUrl}/models`;
-    }
-    return `${baseUrl}/v1/models`;
-  }
-
-  if (baseUrl.endsWith('/chat/completions')) {
-    return baseUrl.replace(/\/chat\/completions$/, '/models');
-  }
-  if (baseUrl.endsWith('/responses')) {
-    return baseUrl.replace(/\/responses$/, '/models');
-  }
-  if (baseUrl.endsWith('/models')) {
-    return baseUrl;
-  }
-  return `${baseUrl}/models`;
 }
 
 /**
@@ -52,7 +27,7 @@ export async function benchmarkProviderEndpoint(
     trimBaseUrl(overrideBaseUrl || '') ||
     trimBaseUrl(provider.baseUrl || '') ||
     PROTOCOL_TEMPLATES[provider.protocol].defaultBaseUrl;
-  const probeUrl = buildProbeUrl(provider, baseUrl);
+  const probeUrl = buildProtocolModelsUrl(provider.protocol, baseUrl);
   const mergedHeaders = buildEffectiveProviderHeaders(
     { ...provider, baseUrl },
     {

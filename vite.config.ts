@@ -17,12 +17,33 @@ export default defineConfig({
     chunkSizeWarningLimit: 1800,
     rollupOptions: {
       output: {
-        manualChunks: {
-          katex: ['katex', 'katex/contrib/mhchem'],
-          markdown: ['react-markdown', 'remark-gfm', 'remark-math', 'rehype-katex'],
-          mermaid: ['mermaid'],
-          echarts: ['echarts'],
-          shiki: ['shiki'],
+        manualChunks(id: string) {
+          const normalized = id.replace(/\\/g, '/');
+          if (!normalized.includes('/node_modules/')) return undefined;
+          if (
+            /\/node_modules\/(react|react-dom|scheduler|zustand|dexie|dompurify|lucide-react)\//.test(
+              normalized
+            )
+          ) {
+            return 'vendor-core';
+          }
+          if (/\/node_modules\/katex\//.test(normalized)) {
+            return 'katex';
+          }
+          if (
+            /\/node_modules\/(react-markdown|remark-|rehype-|unified|micromark|mdast-|hast-|unist-)/.test(
+              normalized
+            )
+          ) {
+            return 'markdown';
+          }
+          if (
+            /\/node_modules\/(@shikijs\/core|@shikijs\/engine-javascript)\//.test(normalized) ||
+            /\/node_modules\/shiki\/dist\/core\./.test(normalized)
+          ) {
+            return 'shiki-core';
+          }
+          return undefined;
         },
       },
     },

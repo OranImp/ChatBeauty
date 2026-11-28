@@ -28,8 +28,18 @@ function buildTargetUrl(settings: WebDavSyncSettings): string {
   return `${base}/${segments.join('/')}`;
 }
 
+function utf8ToBase64(str: string): string {
+  const bytes = new TextEncoder().encode(str);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
 function authHeaders(settings: WebDavSyncSettings): Record<string, string> {
-  const token = btoa(unescape(encodeURIComponent(`${settings.username}:${settings.password}`)));
+  const token = utf8ToBase64(`${settings.username}:${settings.password}`);
   return {
     Authorization: `Basic ${token}`,
   };
@@ -41,7 +51,8 @@ function authHeaders(settings: WebDavSyncSettings): Record<string, string> {
  */
 export async function ensureRemoteDirectories(
   settings: WebDavSyncSettings,
-  forceMkcol = false
+  forceMkcol = false,
+  precomputedHeaders?: Record<string, string>
 ): Promise<boolean> {
   const base = settings.endpoint.trim().replace(/\/+$/, '');
   if (!base) return false;
@@ -52,7 +63,7 @@ export async function ensureRemoteDirectories(
 
   let createdAny = false;
   let currentUrl = base;
-  const headers = authHeaders(settings);
+  const headers = precomputedHeaders ?? authHeaders(settings);
 
   for (const seg of dirSegments) {
     currentUrl = `${currentUrl}/${encodeURIComponent(seg)}`;
@@ -122,16 +133,17 @@ export class WebDavSyncService implements SyncProvider {
       return { ok: false, message: '请先填写 WebDAV 服务器地址', timestamp: Date.now() };
     }
     try {
+      const headers = authHeaders(settings);
       const res = await simpleRequest({
         url: settings.endpoint.trim(),
         method: 'PROPFIND',
         headers: {
-          ...authHeaders(settings),
+          ...headers,
           Depth: '0',
         },
       });
       if (res.status >= 200 && res.status < 300) {
-        const created = await ensureRemoteDirectories(settings);
+        const created = await ensureRemoteDirectories(settings, false, headers);
         return {
           ok: true,
           message: created ? '连接成功，已自动创建远端目录' : `连接成功 (HTTP ${res.status})`,
@@ -153,12 +165,14 @@ export class WebDavSyncService implements SyncProvider {
       return { ok: false, message: '请先配置 WebDAV 地址', timestamp: Date.now() };
     }
     try {
-      await ensureRemoteDirectories(settings);
-
-      const snapshot = await exportFullBackup();
+      const headers = authHeaders(settings);
+      const [, snapshot] = await Promise.all([
+        ensureRemoteDirectories(settings, false, headers),
+        exportFullBackup(),
+      ]);
       const targetUrl = buildTargetUrl(settings);
       const putHeaders = {
-        ...authHeaders(settings),
+        ...headers,
         'Content-Type': 'application/json; charset=utf-8',
       };
       const body = JSON.stringify(snapshot);
@@ -171,7 +185,7 @@ export class WebDavSyncService implements SyncProvider {
       });
 
       if (res.status === 404 || res.status === 409) {
-        await ensureRemoteDirectories(settings, true);
+        await ensureRemoteDirectories(settings, true, headers);
         res = await simpleRequest({
           url: targetUrl,
           method: 'PUT',

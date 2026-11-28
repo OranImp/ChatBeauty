@@ -1,7 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Check, Copy, Download, Image as ImageIcon, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { exportSvgToPng, triggerDownload, type ResolvedTheme } from './svgUtils';
-import { copyTextSafe } from '@/services/media/clipboard';
+import { useCopyFeedback } from '@/hooks/useCopyFeedback';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { usePresence } from '@/components/ui/MotionPrimitives';
 
 export type LightboxPayload =
@@ -20,11 +21,10 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
   const [renderedPayload, setRenderedPayload] = useState<LightboxPayload | null>(payload);
   const lightboxPresence = usePresence(Boolean(payload), 190);
   const [displayScale, setDisplayScale] = useState(1);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy: copySource, reset: resetCopied } = useCopyFeedback(1600);
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transformRef = useRef<{ x: number; y: number; scale: number }>({
     x: 0,
     y: 0,
@@ -93,25 +93,12 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
       tapTrackRef.current = null;
       transformRef.current = { x: 0, y: 0, scale: initialScale };
       setDisplayScale(initialScale);
-      setCopied(false);
+      resetCopied();
       applyTransform({ x: 0, y: 0, scale: initialScale }, false);
     }
-  }, [payload]);
+  }, [payload, resetCopied]);
 
-  useEffect(() => {
-    return () => {
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!payload) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [payload, onClose]);
+  useEscapeKey(Boolean(payload), onClose);
 
   const activePayload = payload ?? renderedPayload;
   const activeKind = activePayload?.kind;
@@ -140,14 +127,6 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ payload, theme, on
   if (!lightboxPresence.mounted || !activePayload) return null;
 
   const defaultScale = activePayload.kind === 'math' ? 1.45 : 1;
-
-  const copySource = async (text: string) => {
-    if (await copyTextSafe(text)) {
-      setCopied(true);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 1600);
-    }
-  };
 
   const handlePointerDown: React.PointerEventHandler<HTMLDivElement> = (e) => {
     if (activePayload.kind === 'iframe') return;

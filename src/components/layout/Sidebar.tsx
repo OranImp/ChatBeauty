@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   Check,
   PanelLeftClose,
@@ -14,6 +15,7 @@ import { useAppStore } from '@/store/useAppStore';
 import type { Conversation } from '@/types/chat';
 import type { SettingsTabKey } from '@/components/settings/SettingsModal';
 import { usePresence } from '@/components/ui/MotionPrimitives';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 interface SidebarProps {
   desktopOpen: boolean;
@@ -42,27 +44,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
     renameConversation,
     togglePinConversation,
     deleteConversation,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((s) => ({
+      conversations: s.conversations,
+      activeConversationId: s.activeConversationId,
+      createConversation: s.createConversation,
+      selectConversation: s.selectConversation,
+      renameConversation: s.renameConversation,
+      togglePinConversation: s.togglePinConversation,
+      deleteConversation: s.deleteConversation,
+    }))
+  );
 
   const [query, setQuery] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const drawerPresence = usePresence(mobileOpen, 340);
 
-  useEffect(() => {
-    if (!mobileOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (editingId) {
-          setEditingId(null);
-        } else {
-          onCloseMobile();
-        }
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [mobileOpen, onCloseMobile, editingId]);
+  useEscapeKey(mobileOpen, () => {
+    if (editingId) {
+      setEditingId(null);
+    } else {
+      onCloseMobile();
+    }
+  });
 
   const { pinnedList, recentList } = useMemo(() => {
     const q = query.trim().toLowerCase();

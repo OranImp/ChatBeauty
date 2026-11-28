@@ -1,34 +1,22 @@
 import type { ModelDefinition, ProviderConfig } from '@/types/chat';
 import type { ChatStreamCallbacks, ChatStreamRequest, LLMProviderAdapter } from '@/types/provider';
-import { SSEParser } from '@/services/llm/sseParser';
-import { simpleRequest, streamRequest } from '@/services/transport/streamHttp';
 import {
   buildEffectiveProviderHeaders,
+  buildProtocolModelsUrl,
   deepMergePayload,
   extractTextFromParts,
-  resolveEffectiveParams,
+  fetchJsonWithAuth,
+  resolveRequestExecutionContext,
   sliceContextMessages,
+  streamSseJsonEvents,
   toModelDefinition,
-  toStableSessionId,
   trimBaseUrl,
 } from './shared';
-import {
-  coerceReasoningEffort,
-  resolveModelReasoningProfile,
-} from '@/services/llm/modelProfiles';
 
 function buildResponsesEndpoint(baseUrl: string): string {
   const clean = trimBaseUrl(baseUrl) || 'https://api.openai.com/v1';
   if (clean.endsWith('/responses')) return clean;
   return `${clean}/responses`;
-}
-
-function buildModelsEndpoint(baseUrl: string): string {
-  const clean = trimBaseUrl(baseUrl) || 'https://api.openai.com/v1';
-  if (clean.endsWith('/responses')) {
-    return clean.replace(/\/responses$/, '/models');
-  }
-  return clean.endsWith('/models') ? clean : `${clean}/models`;
 }
 
 export class OpenAIResponsesAdapter implements LLMProviderAdapter {
@@ -70,18 +58,8 @@ export class OpenAIResponsesAdapter implements LLMProviderAdapter {
       }
     }
 
-    const modelDef = req.provider.models.find((m) => m.id === req.modelId);
-    const modelParams = req.modelParams ?? modelDef?.params;
-    const profile =
-      req.reasoningProfile ??
-      resolveModelReasoningProfile({
-        modelId: req.modelId,
-        protocol: 'openai-responses',
-        modelDef,
-      }).profile;
-    const effort = coerceReasoningEffort(req.generation.reasoningEffort, profile);
-    const activeLevel = profile.levels.find((l) => l.value === effort);
-    const effective = resolveEffectiveParams(req.generation, modelParams, req.conversationParams);
+    const { profile, effort, activeLevel, effective, allowSampling } =
+      resolveRequestExecutionContext(req, 'openai-responses');
 
     let payload: Record<string, unknown> = {
       model: req.modelId,
@@ -112,10 +90,6 @@ export class OpenAIResponsesAdapter implements LLMProviderAdapter {
       }
     }
 
-    const thinkingActive = profile.strategy !== 'none' && effort !== 'off';
-    const allowSampling = thinkingActive
-      ? profile.supportsSamplingWhenThinking !== false
-      : profile.supportsSamplingWhenOff !== false;
     if (allowSampling) {
       if (effective.temperature !== undefined) payload.temperature = effective.temperature;
       if (effective.topP !== undefined) payload.top_p = effective.topP;
@@ -128,115 +102,83 @@ export class OpenAIResponsesAdapter implements LLMProviderAdapter {
       sessionId: req.sessionId,
     });
 
-    const parser = new SSEParser();
-
-    const handleEvent = (eventName: string, rawData: string) => {
-      if (rawData === '[DONE]') return;
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(rawData) as Record<string, unknown>;
-      } catch {
-        return;
-      }
-
-      const type = (typeof parsed.type === 'string' ? parsed.type : eventName) || '';
-
-      if (type === 'response.output_text.delta' || type === 'response.refusal.delta') {
-        if (typeof parsed.delta === 'string' && parsed.delta.length > 0) {
-          callbacks.onTextDelta(parsed.delta);
-        }
-        return;
-      }
-
-      if (
-        type === 'response.reasoning_summary_text.delta' ||
-        type === 'response.reasoning_text.delta' ||
-        type === 'response.reasoning.delta'
-      ) {
-        if (typeof parsed.delta === 'string' && parsed.delta.length > 0) {
-          callbacks.onReasoningDelta(parsed.delta);
-        }
-        return;
-      }
-
-      if (
-        type === 'response.completed' ||
-        type === 'response.done' ||
-        type === 'response.incomplete'
-      ) {
-        const resp = parsed.response as
-          | {
-              usage?: {
-                input_tokens?: number;
-                output_tokens?: number;
-                total_tokens?: number;
-                output_tokens_details?: { reasoning_tokens?: number };
-              };
-            }
-          | undefined;
-        if (resp?.usage) {
-          callbacks.onUsage?.({
-            inputTokens: resp.usage.input_tokens,
-            outputTokens: resp.usage.output_tokens,
-            reasoningTokens: resp.usage.output_tokens_details?.reasoning_tokens,
-            totalTokens: resp.usage.total_tokens,
-          });
-        }
-        return;
-      }
-
-      if (type === 'error' || type === 'response.failed') {
-        const err = (parsed.error ||
-          (parsed.response as { error?: { message?: string } } | undefined)?.error) as
-          | { message?: string }
-          | undefined;
-        const msg =
-          (typeof parsed.message === 'string' && parsed.message) ||
-          err?.message ||
-          'OpenAI Responses API 返回错误';
-        throw new Error(msg);
-      }
-    };
-
-    await streamRequest({
-      url: endpoint,
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-      signal,
-      onChunk: (chunk) => {
-        for (const evt of parser.feed(chunk)) {
-          handleEvent(evt.event, evt.data);
-        }
+    await streamSseJsonEvents(
+      {
+        url: endpoint,
+        headers,
+        body: JSON.stringify(payload),
+        signal,
+        onDone: callbacks.onDone,
       },
-    });
+      (eventName, parsed) => {
+        const type = (typeof parsed.type === 'string' ? parsed.type : eventName) || '';
 
-    for (const evt of parser.flush()) {
-      handleEvent(evt.event, evt.data);
-    }
+        if (type === 'response.output_text.delta' || type === 'response.refusal.delta') {
+          if (typeof parsed.delta === 'string' && parsed.delta.length > 0) {
+            callbacks.onTextDelta(parsed.delta);
+          }
+          return;
+        }
 
-    callbacks.onDone?.();
+        if (
+          type === 'response.reasoning_summary_text.delta' ||
+          type === 'response.reasoning_text.delta' ||
+          type === 'response.reasoning.delta'
+        ) {
+          if (typeof parsed.delta === 'string' && parsed.delta.length > 0) {
+            callbacks.onReasoningDelta(parsed.delta);
+          }
+          return;
+        }
+
+        if (
+          type === 'response.completed' ||
+          type === 'response.done' ||
+          type === 'response.incomplete'
+        ) {
+          const resp = parsed.response as
+            | {
+                usage?: {
+                  input_tokens?: number;
+                  output_tokens?: number;
+                  total_tokens?: number;
+                  output_tokens_details?: { reasoning_tokens?: number };
+                };
+              }
+            | undefined;
+          if (resp?.usage) {
+            callbacks.onUsage?.({
+              inputTokens: resp.usage.input_tokens,
+              outputTokens: resp.usage.output_tokens,
+              reasoningTokens: resp.usage.output_tokens_details?.reasoning_tokens,
+              totalTokens: resp.usage.total_tokens,
+            });
+          }
+          return;
+        }
+
+        if (type === 'error' || type === 'response.failed') {
+          const err = (parsed.error ||
+            (parsed.response as { error?: { message?: string } } | undefined)?.error) as
+            | { message?: string }
+            | undefined;
+          const msg =
+            (typeof parsed.message === 'string' && parsed.message) ||
+            err?.message ||
+            'OpenAI Responses API 返回错误';
+          throw new Error(msg);
+        }
+      }
+    );
   }
 
   async listModels(provider: ProviderConfig, signal?: AbortSignal): Promise<ModelDefinition[]> {
-    const res = await simpleRequest({
-      url: buildModelsEndpoint(provider.baseUrl),
-      method: 'GET',
-      headers: buildEffectiveProviderHeaders(provider, {
-        includeContentType: false,
-        sessionId: toStableSessionId(`models_${provider.id}`),
-      }),
+    const json = await fetchJsonWithAuth<{ data?: Array<{ id: string }> }>({
+      url: buildProtocolModelsUrl('openai-responses', provider.baseUrl),
+      provider,
+      sessionPrefix: 'models',
       signal,
     });
-    if (res.status < 200 || res.status >= 300) {
-      throw new Error(`拉取模型失败 (HTTP ${res.status}): ${res.body.slice(0, 200)}`);
-    }
-    let json: { data?: Array<{ id: string }> };
-    try {
-      json = JSON.parse(res.body) as typeof json;
-    } catch {
-      throw new Error('拉取模型失败：返回内容非有效 JSON');
-    }
     return (json.data ?? [])
       .map((item) => toModelDefinition(item.id))
       .sort((a, b) => a.id.localeCompare(b.id));

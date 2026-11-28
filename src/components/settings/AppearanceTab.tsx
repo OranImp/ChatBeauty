@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { App as CapApp } from '@capacitor/app';
+import React, { useEffect, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   BatteryCharging,
   Code2,
@@ -13,12 +13,10 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
-import {
-  getAndroidBatteryStatus,
-  getRuntimeEnvironment,
-  openAndroidBatterySettings,
-} from '@/services/transport/streamHttp';
-import { DEFAULT_APPEARANCE_SETTINGS, type ThemeMode } from '@/types/settings';
+import { getRuntimeEnvironment, openAndroidBatterySettings } from '@/services/transport/streamHttp';
+import { useAndroidBatteryStatus } from '@/hooks/useAndroidBatteryStatus';
+import { DEFAULT_APPEARANCE_SETTINGS, THEME_OPTIONS } from '@/types/settings';
+export { THEME_OPTIONS };
 import { SmoothSlider } from '@/components/ui/SmoothSlider';
 import {
   SettingsCollapsibleRow,
@@ -40,13 +38,6 @@ const ACCENT_PRESETS = [
   { hex: '#b87c96', label: '干枯玫瑰' },
 ];
 
-export const THEME_OPTIONS: Array<{ id: ThemeMode; name: string; desc: string }> = [
-  { id: 'dark', name: '暖炭黑', desc: '深邃暖灰' },
-  { id: 'oled', name: 'OLED 纯黑', desc: '纯黑省电' },
-  { id: 'light', name: '暖纸白', desc: '羊皮纸亮色' },
-  { id: 'system', name: '跟随系统', desc: '自动切换' },
-];
-
 const UI_SCALE_PRESETS = [
   { label: '紧凑 95%', value: 0.95 },
   { label: '舒适 106% (默认)', value: 1.06 },
@@ -55,61 +46,26 @@ const UI_SCALE_PRESETS = [
 ];
 
 export const AppearanceTab: React.FC<AppearanceTabProps> = ({ section = 'general' }) => {
-  const { appearance, updateAppearance } = useAppStore();
+  const { appearance, updateAppearance } = useAppStore(
+    useShallow((s) => ({
+      appearance: s.appearance,
+      updateAppearance: s.updateAppearance,
+    }))
+  );
   const [customCssOpen, setCustomCssOpen] = useState(false);
   const runtimeEnv = getRuntimeEnvironment();
-  const [batteryIgnored, setBatteryIgnored] = useState<boolean | null>(null);
-  const [batteryChecking, setBatteryChecking] = useState(false);
-
-  const refreshBatteryStatus = async () => {
-    if (runtimeEnv !== 'capacitor') return;
-    setBatteryChecking(true);
-    try {
-      const status = await getAndroidBatteryStatus();
-      setBatteryIgnored(Boolean(status?.ignoring));
-    } catch {
-      // Ignore probe error on unsupported runtime
-    } finally {
-      setBatteryChecking(false);
-    }
-  };
+  const batteryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const {
+    ignoring: batteryIgnored,
+    checking: batteryChecking,
+    refresh: refreshBatteryStatus,
+  } = useAndroidBatteryStatus(section === 'general' && runtimeEnv === 'capacitor');
 
   useEffect(() => {
-    if (section !== 'general' || runtimeEnv !== 'capacitor') return;
-    let cancelled = false;
-    const syncBattery = async () => {
-      setBatteryChecking(true);
-      try {
-        const status = await getAndroidBatteryStatus();
-        if (!cancelled) {
-          setBatteryIgnored(Boolean(status?.ignoring));
-        }
-      } catch {
-        // Ignore probe error on unsupported runtime
-      } finally {
-        if (!cancelled) {
-          setBatteryChecking(false);
-        }
-      }
-    };
-    void syncBattery();
-
-    let handlePromise: Promise<{ remove: () => Promise<void> }> | null = null;
-    try {
-      handlePromise = CapApp.addListener('appStateChange', ({ isActive }) => {
-        if (isActive) void syncBattery();
-      });
-    } catch {
-      // Ignore outside Capacitor native shell
-    }
-
     return () => {
-      cancelled = true;
-      if (handlePromise) {
-        void handlePromise.then((h) => h.remove()).catch(() => undefined);
-      }
+      if (batteryTimerRef.current) clearTimeout(batteryTimerRef.current);
     };
-  }, [runtimeEnv, section]);
+  }, []);
 
   if (section === 'typography') {
     return (
@@ -489,7 +445,8 @@ export const AppearanceTab: React.FC<AppearanceTabProps> = ({ section = 'general
                     type="button"
                     onClick={() => {
                       void openAndroidBatterySettings().then(() => {
-                        setTimeout(() => void refreshBatteryStatus(), 800);
+                        if (batteryTimerRef.current) clearTimeout(batteryTimerRef.current);
+                        batteryTimerRef.current = setTimeout(() => void refreshBatteryStatus(), 800);
                       });
                     }}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-accent text-accentfg text-xs font-semibold transition"

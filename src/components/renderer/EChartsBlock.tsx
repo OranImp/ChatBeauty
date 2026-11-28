@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { Check, Code2, Copy, Image as ImageIcon } from 'lucide-react';
 import { triggerDownload, type ResolvedTheme } from './svgUtils';
-import { copyTextSafe } from '@/services/media/clipboard';
+import { useCopyFeedback } from '@/hooks/useCopyFeedback';
 import { getChartChromeTokens, getChartPalette } from './chartPalette';
 
 function isPlainRecord(val: unknown): val is Record<string, unknown> {
@@ -41,50 +41,65 @@ interface EChartsBlockProps {
   frameless?: boolean;
 }
 
-export const EChartsBlock: React.FC<EChartsBlockProps> = ({
+interface EChartsInstanceLike {
+  getDataURL: (opts: Record<string, unknown>) => string;
+  setOption: (option: Record<string, unknown>, notMerge?: boolean) => void;
+  resize: () => void;
+  dispose: () => void;
+}
+
+export const EChartsBlock: React.FC<EChartsBlockProps> = memo(({
   code,
   theme,
   isStreaming,
   frameless = false,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const chartRef = useRef<{ getDataURL: (opts: Record<string, unknown>) => string; resize: () => void; dispose: () => void } | null>(null);
+  const chartRef = useRef<EChartsInstanceLike | null>(null);
+  const chartThemeRef = useRef<ResolvedTheme | null>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
+  const resizeRafRef = useRef<number | null>(null);
   const [showCode, setShowCode] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback();
   const [error, setError] = useState<string | null>(null);
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const disposeChart = () => {
+    if (resizeRafRef.current !== null && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(resizeRafRef.current);
+    }
+    resizeRafRef.current = null;
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+    chartRef.current?.dispose();
+    chartRef.current = null;
+    chartThemeRef.current = null;
+  };
+
+  // Only tear down the chart instance when theme changes, switching to source view, or unmounting
   useEffect(() => {
     return () => {
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      disposeChart();
     };
-  }, []);
+  }, [theme, showCode]);
 
   useEffect(() => {
-    if (showCode) return;
-    let disposed = false;
-    let observer: ResizeObserver | null = null;
+    if (showCode || isStreaming) return;
+    let cancelled = false;
 
-    const init = async () => {
+    const renderChart = async () => {
       if (!containerRef.current) return;
       let option: Record<string, unknown>;
       try {
         const parsed = JSON.parse(code) as unknown;
         if (!isPlainRecord(parsed)) {
-          if (!isStreaming) {
-            chartRef.current?.dispose();
-            chartRef.current = null;
-            setError('ECharts 配置必须是 JSON 对象');
-          }
+          disposeChart();
+          setError('ECharts 配置必须是 JSON 对象');
           return;
         }
         option = parsed;
       } catch {
-        if (!isStreaming) {
-          chartRef.current?.dispose();
-          chartRef.current = null;
-          setError('ECharts 配置 JSON 尚不完整或格式有误');
-        }
+        disposeChart();
+        setError('ECharts 配置 JSON 尚不完整或格式有误');
         return;
       }
 
@@ -92,15 +107,31 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({
 
       try {
         const echarts = await import('echarts');
-        if (disposed || !containerRef.current) return;
+        if (cancelled || !containerRef.current) return;
 
-        chartRef.current?.dispose();
-        const chart = echarts.init(
-          containerRef.current,
-          theme === 'light' ? undefined : 'dark',
-          { renderer: 'canvas' }
-        );
-        chartRef.current = chart;
+        let chart = chartRef.current;
+        if (!chart || chartThemeRef.current !== theme) {
+          disposeChart();
+          chart = echarts.init(
+            containerRef.current,
+            theme === 'light' ? undefined : 'dark',
+            { renderer: 'canvas' }
+          ) as unknown as EChartsInstanceLike;
+          chartRef.current = chart;
+          chartThemeRef.current = theme;
+
+          if (typeof ResizeObserver !== 'undefined') {
+            const observer = new ResizeObserver(() => {
+              if (resizeRafRef.current !== null) return;
+              resizeRafRef.current = requestAnimationFrame(() => {
+                resizeRafRef.current = null;
+                chartRef.current?.resize();
+              });
+            });
+            observer.observe(containerRef.current);
+            observerRef.current = observer;
+          }
+        }
 
         const palette = getChartPalette(theme);
         const { fg, mutedFg, gridLine, tooltipBg, tooltipBorder } = getChartChromeTokens(theme);
@@ -164,43 +195,26 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({
             ? { yAxis: withMutedSplitLine(option.yAxis, gridLine, mutedFg) }
             : {}),
         };
-        chart.setOption(mergedOption);
+        chart.setOption(mergedOption, true);
         setError(null);
-
-        observer = new ResizeObserver(() => {
-          chart.resize();
-        });
-        observer.observe(containerRef.current);
         requestAnimationFrame(() => {
-          if (!disposed) chart.resize();
+          if (!cancelled) chartRef.current?.resize();
         });
       } catch (err) {
-        if (!disposed) {
+        if (!cancelled) {
           setError(err instanceof Error ? err.message : 'ECharts 渲染失败');
         }
       }
     };
 
-    const timer = setTimeout(() => {
-      void init();
-    }, isStreaming ? 250 : 20);
+    void renderChart();
 
     return () => {
-      disposed = true;
-      clearTimeout(timer);
-      observer?.disconnect();
-      chartRef.current?.dispose();
-      chartRef.current = null;
+      cancelled = true;
     };
   }, [code, theme, showCode, isStreaming]);
 
-  const handleCopy = async () => {
-    if (await copyTextSafe(code)) {
-      setCopied(true);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
-    }
-  };
+  const handleCopy = () => copy(code);
 
   const handleExportPng = () => {
     if (!chartRef.current) return;
@@ -271,12 +285,12 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({
         <pre className="p-4 text-xs font-mono overflow-x-auto text-muted m-0">
           <code>{code}</code>
         </pre>
+      ) : isStreaming ? (
+        <div className="p-6 text-center text-xs text-muted">正在生成图表数据…</div>
       ) : (
         <>
           {error && (
-            <div className="p-4 text-xs text-muted">
-              {isStreaming ? '正在生成图表数据…' : error}
-            </div>
+            <div className="p-4 text-xs text-muted">{error}</div>
           )}
           <div
             ref={containerRef}
@@ -286,4 +300,4 @@ export const EChartsBlock: React.FC<EChartsBlockProps> = ({
       )}
     </div>
   );
-};
+});

@@ -1,9 +1,14 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { Check, Copy, Play, WrapText } from 'lucide-react';
 import type { ResolvedTheme } from './svgUtils';
-import { copyTextSafe } from '@/services/media/clipboard';
+import { useCopyFeedback } from '@/hooks/useCopyFeedback';
 import type { LightboxPayload } from './LightboxModal';
 import { SandboxArtifactCard } from './SandboxArtifactCard';
+import {
+  getCachedHighlight,
+  highlightCode,
+  type SupportedShikiTheme,
+} from './shikiHighlighter';
 
 interface CodeBlockProps {
   language: string;
@@ -16,7 +21,7 @@ interface CodeBlockProps {
   onInspect: (payload: LightboxPayload) => void;
 }
 
-export const CodeBlock: React.FC<CodeBlockProps> = ({
+export const CodeBlock: React.FC<CodeBlockProps> = memo(({
   language,
   code,
   theme,
@@ -26,54 +31,53 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
   isStreaming,
   onInspect,
 }) => {
-  const [highlightedHtml, setHighlightedHtml] = useState<string>('');
-  const [copied, setCopied] = useState(false);
-  const [wrap, setWrap] = useState(false);
-  const [previewHtml, setPreviewHtml] = useState(false);
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    };
-  }, []);
-
   const lang = (language || 'text').toLowerCase();
   const isHtml = lang === 'html' || lang === 'htm';
 
-  const resolvedShikiTheme =
+  const resolvedShikiTheme: SupportedShikiTheme =
     codeThemePref === 'auto'
       ? theme === 'light'
         ? 'github-light'
         : 'github-dark-default'
       : codeThemePref;
 
+  const initialCached = getCachedHighlight(code, lang, resolvedShikiTheme) ?? '';
+  const [highlightedHtml, setHighlightedHtml] = useState<string>(initialCached);
+  const { copied, copy } = useCopyFeedback();
+  const [wrap, setWrap] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState(false);
+  const lastHighlightedKeyRef = useRef<string>(
+    initialCached ? `${resolvedShikiTheme}\0${lang}\0${code}` : ''
+  );
+
   useEffect(() => {
+    const key = `${resolvedShikiTheme}\0${lang}\0${code}`;
+    if (lastHighlightedKeyRef.current === key) {
+      return;
+    }
+
+    const cached = getCachedHighlight(code, lang, resolvedShikiTheme);
+    if (cached !== null) {
+      lastHighlightedKeyRef.current = key;
+      setHighlightedHtml(cached);
+      return;
+    }
+
     let cancelled = false;
-    const highlight = async () => {
+    const runHighlight = async () => {
       try {
-        const shiki = await import('shiki');
-        const html = await shiki.codeToHtml(code, {
-          lang: lang || 'text',
-          theme: resolvedShikiTheme,
-        });
-        if (!cancelled) setHighlightedHtml(html);
-      } catch {
-        try {
-          const shiki = await import('shiki');
-          const html = await shiki.codeToHtml(code, {
-            lang: 'text',
-            theme: resolvedShikiTheme,
-          });
-          if (!cancelled) setHighlightedHtml(html);
-        } catch {
-          if (!cancelled) setHighlightedHtml('');
+        const html = await highlightCode(code, lang, resolvedShikiTheme);
+        if (!cancelled) {
+          lastHighlightedKeyRef.current = key;
+          setHighlightedHtml(html);
         }
+      } catch {
+        if (!cancelled) setHighlightedHtml('');
       }
     };
 
     const timer = setTimeout(() => {
-      void highlight();
+      void runHighlight();
     }, isStreaming ? 120 : 0);
 
     return () => {
@@ -106,13 +110,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
     );
   }
 
-  const handleCopy = async () => {
-    if (await copyTextSafe(code)) {
-      setCopied(true);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
-    }
-  };
+  const handleCopy = () => copy(code);
 
   return (
     <div className="my-3.5 rounded-xl border border-borderc bg-surface/60 overflow-hidden text-sm">
@@ -174,4 +172,4 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
       </div>
     </div>
   );
-};
+});

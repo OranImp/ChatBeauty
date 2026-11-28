@@ -1,7 +1,7 @@
-import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Check, Code2, Copy, Maximize2, Play, RotateCcw } from 'lucide-react';
 import type { ResolvedTheme } from './svgUtils';
-import { copyTextSafe } from '@/services/media/clipboard';
+import { useCopyFeedback } from '@/hooks/useCopyFeedback';
 import type { LightboxPayload } from './LightboxModal';
 import { getChartPalette } from './chartPalette';
 
@@ -117,7 +117,7 @@ function buildInjectedDocument(
   return `<!doctype html><html><head><meta charset="utf-8"/>${themeStyle}</head><body>${rawHtml}${resizeScript}</body></html>`;
 }
 
-export const SandboxArtifactCard: React.FC<SandboxArtifactCardProps> = ({
+export const SandboxArtifactCard: React.FC<SandboxArtifactCardProps> = memo(({
   code,
   theme,
   accentColor,
@@ -128,29 +128,18 @@ export const SandboxArtifactCard: React.FC<SandboxArtifactCardProps> = ({
 }) => {
   const frameId = useId();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [mode, setMode] = useState<'preview' | 'code'>(defaultPreview ? 'preview' : 'code');
   const [height, setHeight] = useState(240);
   const [reloadNonce, setReloadNonce] = useState(0);
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    return () => {
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    };
-  }, []);
+  const { copied, copy } = useCopyFeedback();
 
   const srcDoc = useMemo(
-    () => buildInjectedDocument(code, frameId, theme, accentColor, true),
-    [code, frameId, theme, accentColor]
-  );
-
-  const lightboxSrcDoc = useMemo(
-    () => buildInjectedDocument(code, `${frameId}_lb`, theme, accentColor, false),
-    [code, frameId, theme, accentColor]
+    () => (mode === 'preview' && !isStreaming ? buildInjectedDocument(code, frameId, theme, accentColor, true) : ''),
+    [code, frameId, theme, accentColor, mode, isStreaming]
   );
 
   useEffect(() => {
+    if (mode !== 'preview' || isStreaming) return;
     const onMessage = (evt: MessageEvent) => {
       if (!iframeRef.current?.contentWindow || evt.source !== iframeRef.current.contentWindow) {
         return;
@@ -167,14 +156,10 @@ export const SandboxArtifactCard: React.FC<SandboxArtifactCardProps> = ({
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [frameId]);
+  }, [frameId, mode, isStreaming]);
 
   const handleCopy = async () => {
-    if (await copyTextSafe(code)) {
-      setCopied(true);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
-    }
+    await copy(code);
   };
 
   const hideChrome = frameless && mode === 'preview';
@@ -243,7 +228,7 @@ export const SandboxArtifactCard: React.FC<SandboxArtifactCardProps> = ({
               onInspect({
                 kind: 'iframe',
                 title: '交互式实验全屏视图',
-                htmlDoc: lightboxSrcDoc,
+                htmlDoc: buildInjectedDocument(code, `${frameId}_lb`, theme, accentColor, false),
                 rawSource: code,
               })
             }
@@ -275,4 +260,4 @@ export const SandboxArtifactCard: React.FC<SandboxArtifactCardProps> = ({
       )}
     </div>
   );
-};
+});

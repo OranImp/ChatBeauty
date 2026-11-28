@@ -2,6 +2,13 @@ const FENCE_OPEN_RE = /^([ \t]*)(`{3,}(?=[^`\n]*$)|~{3,})/;
 const LIST_ITEM_RE = /^ {0,3}(?:[-*+]|\d{1,9}[.)])\s/;
 const INDENTED_CONT_RE = /^(?: {2,}|\t)\S/;
 
+function isRepeatedChar(str: string, ch: string): boolean {
+  for (let i = 0; i < str.length; i++) {
+    if (str[i] !== ch) return false;
+  }
+  return str.length > 0;
+}
+
 function isCurrentInList(current: string[]): boolean {
   for (let k = current.length - 1; k >= 0; k--) {
     const l = current[k];
@@ -83,7 +90,7 @@ export function splitMarkdownBlocks(markdown: string): string[] {
       }
     } else if (inFence) {
       current.push(line);
-      if (trimmed.length >= fenceLen && [...trimmed].every((c) => c === fenceChar)) {
+      if (trimmed.length >= fenceLen && isRepeatedChar(trimmed, fenceChar)) {
         inFence = false;
         flush();
       }

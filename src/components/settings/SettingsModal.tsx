@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   ArrowLeft,
   Brain,
@@ -13,11 +14,13 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { BUILTIN_MODEL_PROFILE_RULES } from '@/services/llm/modelProfiles';
+import { THEME_OPTIONS } from '@/types/settings';
 import { usePresence } from '@/components/ui/MotionPrimitives';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { ProvidersTab } from './ProvidersTab';
 import { PromptsTab } from './PromptsTab';
 import { MemoryTab } from './MemoryTab';
-import { AppearanceTab, THEME_OPTIONS } from './AppearanceTab';
+import { AppearanceTab } from './AppearanceTab';
 import { DataSyncTab } from './DataSyncTab';
 import { AboutTab } from './AboutTab';
 import { SettingsNavRow, SettingsSection } from './SettingsPrimitives';
@@ -171,7 +174,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     appearance,
     webdav,
     openDemoShowcase,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((s) => ({
+      providers: s.providers,
+      contextSettings: s.contextSettings,
+      memorySettings: s.memorySettings,
+      memoryEntries: s.memoryEntries,
+      modelProfileSync: s.modelProfileSync,
+      promptPresets: s.promptPresets,
+      promptSettings: s.promptSettings,
+      appearance: s.appearance,
+      webdav: s.webdav,
+      openDemoShowcase: s.openDemoShowcase,
+    }))
+  );
 
   const resolvedSection = normalizeSection(activeTab);
   const [isMobile, setIsMobile] = useState<boolean>(detectMobileViewport);
@@ -203,16 +219,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const syncViewport = () => setIsMobile(detectMobileViewport());
     syncViewport();
 
-    let mq: MediaQueryList | null = null;
     if (typeof window.matchMedia === 'function') {
-      mq = window.matchMedia('(max-width: 767px)');
+      const mq = window.matchMedia('(max-width: 767px)');
       mq.addEventListener('change', syncViewport);
+      return () => mq.removeEventListener('change', syncViewport);
     }
     window.addEventListener('resize', syncViewport);
-    return () => {
-      mq?.removeEventListener('change', syncViewport);
-      window.removeEventListener('resize', syncViewport);
-    };
+    return () => window.removeEventListener('resize', syncViewport);
   }, []);
 
   useEffect(() => {
@@ -229,20 +242,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     };
   }, [mobileBackRef, open, isMobile, mobileScreen]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (isMobile && mobileScreen === 'detail') {
-          setMobileScreen('root');
-        } else {
-          onClose();
-        }
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose, isMobile, mobileScreen]);
+  useEscapeKey(open, () => {
+    if (isMobile && mobileScreen === 'detail') {
+      setMobileScreen('root');
+    } else {
+      onClose();
+    }
+  });
 
   if (!modalPresence.mounted) return null;
 
@@ -263,7 +269,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     general: activeThemeLabel,
     typography: `${appearance.fontSize.toFixed(0)}px · ${Math.round((appearance.uiScale ?? 1.06) * 100)}%`,
     data: webdav.enabled ? 'WebDAV 已开启' : '仅本地存储',
-    about: 'v0.5.2',
+    about: 'v0.5.3',
   };
 
   const activeMeta = ITEM_BY_KEY[resolvedSection];
@@ -344,7 +350,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </SettingsSection>
               ))}
               <div className="pt-1 pb-2 text-center text-[11px] font-mono text-muted/80">
-                ChatBeauty v0.5.2 · MIT License
+                ChatBeauty v0.5.3 · MIT License
               </div>
             </div>
           </div>
@@ -435,7 +441,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </nav>
 
             <div className="px-4 py-3 border-t border-borderc text-[11px] font-mono text-muted/80 shrink-0">
-              ChatBeauty v0.5.2 · MIT
+              ChatBeauty v0.5.3 · MIT
             </div>
           </aside>
 

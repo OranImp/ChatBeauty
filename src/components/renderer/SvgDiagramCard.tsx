@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useMemo, useState } from 'react';
 import { Check, Code2, Copy, Download, Maximize2, Image as ImageIcon } from 'lucide-react';
 import {
   exportSvgToPng,
@@ -6,8 +6,29 @@ import {
   triggerDownload,
   type ResolvedTheme,
 } from './svgUtils';
-import { copyTextSafe } from '@/services/media/clipboard';
+import { useCopyFeedback } from '@/hooks/useCopyFeedback';
 import type { LightboxPayload } from './LightboxModal';
+
+type SanitizedSvgResult = ReturnType<typeof sanitizeAndHarmonizeSvg>;
+const MAX_SVG_CACHE = 50;
+const svgSanitizeCache = new Map<string, SanitizedSvgResult>();
+
+function getSanitizedSvgCached(code: string, theme: ResolvedTheme): SanitizedSvgResult {
+  const key = `${theme}\0${code}`;
+  if (svgSanitizeCache.has(key)) {
+    const cached = svgSanitizeCache.get(key) ?? null;
+    svgSanitizeCache.delete(key);
+    svgSanitizeCache.set(key, cached);
+    return cached;
+  }
+  const result = sanitizeAndHarmonizeSvg(code, theme);
+  svgSanitizeCache.set(key, result);
+  if (svgSanitizeCache.size > MAX_SVG_CACHE) {
+    const oldestKey = svgSanitizeCache.keys().next().value;
+    if (oldestKey !== undefined) svgSanitizeCache.delete(oldestKey);
+  }
+  return result;
+}
 
 interface SvgDiagramCardProps {
   code: string;
@@ -18,7 +39,7 @@ interface SvgDiagramCardProps {
   onInspect: (payload: LightboxPayload) => void;
 }
 
-export const SvgDiagramCard: React.FC<SvgDiagramCardProps> = ({
+export const SvgDiagramCard: React.FC<SvgDiagramCardProps> = memo(({
   code,
   caption,
   theme,
@@ -27,31 +48,18 @@ export const SvgDiagramCard: React.FC<SvgDiagramCardProps> = ({
   onInspect,
 }) => {
   const [showCode, setShowCode] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    };
-  }, []);
+  const { copied, copy } = useCopyFeedback();
 
   const hasCompleteSvg = /<\/svg\s*>/i.test(code);
 
   const processed = useMemo(() => {
     if (!hasCompleteSvg) return null;
-    return sanitizeAndHarmonizeSvg(code, theme);
+    return getSanitizedSvgCached(code, theme);
   }, [code, theme, hasCompleteSvg]);
 
   const finalCaption = caption || processed?.caption;
 
-  const handleCopy = async () => {
-    if (await copyTextSafe(code)) {
-      setCopied(true);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
-    }
-  };
+  const handleCopy = () => copy(code);
 
   if (!hasCompleteSvg && isStreaming) {
     return (
@@ -176,4 +184,4 @@ export const SvgDiagramCard: React.FC<SvgDiagramCardProps> = ({
       )}
     </figure>
   );
-};
+});

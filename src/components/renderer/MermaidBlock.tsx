@@ -1,10 +1,32 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { memo, useEffect, useId, useRef, useState } from 'react';
 import { Check, Code2, Copy, Image as ImageIcon, Maximize2 } from 'lucide-react';
 import { exportSvgToPng, type ResolvedTheme } from './svgUtils';
-import { copyTextSafe } from '@/services/media/clipboard';
+import { useCopyFeedback } from '@/hooks/useCopyFeedback';
 import type { LightboxPayload } from './LightboxModal';
 
 let mermaidRenderQueue: Promise<void> = Promise.resolve();
+let lastInitializedMermaidTheme: ResolvedTheme | null = null;
+const MAX_MERMAID_CACHE = 40;
+const mermaidSvgCache = new Map<string, string>();
+
+function getCachedMermaidSvg(code: string, theme: ResolvedTheme): string {
+  const key = `${theme}\0${code}`;
+  if (!mermaidSvgCache.has(key)) return '';
+  const cached = mermaidSvgCache.get(key) ?? '';
+  mermaidSvgCache.delete(key);
+  mermaidSvgCache.set(key, cached);
+  return cached;
+}
+
+function setCachedMermaidSvg(code: string, theme: ResolvedTheme, svg: string): void {
+  const key = `${theme}\0${code}`;
+  if (mermaidSvgCache.has(key)) mermaidSvgCache.delete(key);
+  mermaidSvgCache.set(key, svg);
+  if (mermaidSvgCache.size > MAX_MERMAID_CACHE) {
+    const oldest = mermaidSvgCache.keys().next().value;
+    if (oldest !== undefined) mermaidSvgCache.delete(oldest);
+  }
+}
 
 interface MermaidBlockProps {
   code: string;
@@ -14,7 +36,7 @@ interface MermaidBlockProps {
   onInspect: (payload: LightboxPayload) => void;
 }
 
-export const MermaidBlock: React.FC<MermaidBlockProps> = ({
+export const MermaidBlock: React.FC<MermaidBlockProps> = memo(({
   code,
   theme,
   isStreaming,
@@ -22,35 +44,50 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
   onInspect,
 }) => {
   const reactId = useId().replace(/:/g, '');
-  const [svg, setSvg] = useState<string>('');
+  const [svg, setSvg] = useState<string>(() => getCachedMermaidSvg(code, theme));
   const [error, setError] = useState<string | null>(null);
   const [showCode, setShowCode] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { copied, copy } = useCopyFeedback();
+  const lastRenderedKeyRef = useRef<string>(
+    getCachedMermaidSvg(code, theme) ? `${theme}\0${code}` : ''
+  );
 
   useEffect(() => {
-    return () => {
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    };
-  }, []);
+    if (!code.trim()) {
+      setSvg('');
+      setError(null);
+      lastRenderedKeyRef.current = '';
+      return;
+    }
 
-  useEffect(() => {
+    const cacheKey = `${theme}\0${code}`;
+    const cached = getCachedMermaidSvg(code, theme);
+    if (cached) {
+      setSvg(cached);
+      setError(null);
+      lastRenderedKeyRef.current = cacheKey;
+      return;
+    }
+
+    // Avoid repeatedly failing to parse partial Mermaid syntax mid-stream
+    if (isStreaming) {
+      return;
+    }
+
+    if (lastRenderedKeyRef.current === cacheKey) {
+      return;
+    }
+
     let cancelled = false;
-
-    const renderDiagram = () => {
-      if (!code.trim()) {
-        setSvg('');
-        setError(null);
-        return;
-      }
-      mermaidRenderQueue = mermaidRenderQueue
-        .catch(() => undefined)
-        .then(async () => {
+    mermaidRenderQueue = mermaidRenderQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (cancelled) return;
+        try {
+          const mermaidMod = await import('mermaid');
           if (cancelled) return;
-          try {
-            const mermaidMod = await import('mermaid');
-            if (cancelled) return;
-            const mermaid = mermaidMod.default;
+          const mermaid = mermaidMod.default;
+          if (lastInitializedMermaidTheme !== theme) {
             mermaid.initialize({
               startOnLoad: false,
               suppressErrorRendering: true,
@@ -87,43 +124,34 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
                       edgeLabelBackground: '#171615',
                     },
             });
-
-            const { svg: rendered } = await mermaid.render(
-              `cb_mmd_${reactId}_${Date.now()}`,
-              code
-            );
-            if (!cancelled) {
-              setSvg(rendered);
-              setError(null);
-            }
-          } catch (err) {
-            if (!cancelled) {
-              if (!isStreaming) {
-                setSvg('');
-              }
-              setError(err instanceof Error ? err.message : 'Mermaid 语法渲染失败');
-            }
+            lastInitializedMermaidTheme = theme;
           }
-        });
-    };
 
-    const timer = setTimeout(() => {
-      renderDiagram();
-    }, isStreaming ? 260 : 20);
+          const { svg: rendered } = await mermaid.render(
+            `cb_mmd_${reactId}_${Date.now()}`,
+            code
+          );
+          if (!cancelled) {
+            setCachedMermaidSvg(code, theme, rendered);
+            lastRenderedKeyRef.current = cacheKey;
+            setSvg(rendered);
+            setError(null);
+          }
+        } catch (err) {
+          if (!cancelled) {
+            lastRenderedKeyRef.current = '';
+            setSvg('');
+            setError(err instanceof Error ? err.message : 'Mermaid 语法渲染失败');
+          }
+        }
+      });
 
     return () => {
       cancelled = true;
-      clearTimeout(timer);
     };
   }, [code, theme, isStreaming, reactId]);
 
-  const handleCopy = async () => {
-    if (await copyTextSafe(code)) {
-      setCopied(true);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
-    }
-  };
+  const handleCopy = () => copy(code);
 
   return (
     <div
@@ -241,4 +269,4 @@ export const MermaidBlock: React.FC<MermaidBlockProps> = ({
       )}
     </div>
   );
-};
+});

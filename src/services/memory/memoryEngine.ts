@@ -48,12 +48,22 @@ function parseDateIso(raw?: string): number {
  * Serializes memory entries into a clean single Markdown file (`chatbeauty-memory.md`).
  */
 export function serializeMemoryDocument(entries: MemoryEntry[]): string {
+  const buckets: Record<MemoryCategory, MemoryEntry[]> = {
+    profile: [],
+    preference: [],
+    project: [],
+    fact: [],
+  };
+  for (const entry of entries) {
+    (buckets[entry.category] ?? buckets.fact).push(entry);
+  }
+
   const lines: string[] = [MEMORY_FILE_HEADER, ''];
   for (const cat of CATEGORY_ORDER) {
     lines.push(CATEGORY_HEADINGS[cat]);
-    const items = entries
-      .filter((e) => e.category === cat)
-      .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt - a.updatedAt);
+    const items = buckets[cat].sort(
+      (a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt - a.updatedAt
+    );
 
     if (items.length === 0) {
       lines.push('');
@@ -157,7 +167,7 @@ export function parseMemoryDocument(markdown: string): MemoryEntry[] {
         content,
         tags,
         pinned,
-        sensitive: hasSensitiveKey ? sensitive : detectSensitiveInfo(content).isSensitive,
+        sensitive: hasSensitiveKey ? sensitive : hasSensitiveInfo(content),
         createdAt: updatedAt,
         updatedAt,
       });
@@ -178,7 +188,7 @@ export function parseMemoryDocument(markdown: string): MemoryEntry[] {
         content,
         tags: extractAutoTags(content),
         pinned: false,
-        sensitive: detectSensitiveInfo(content).isSensitive,
+        sensitive: hasSensitiveInfo(content),
         createdAt: now,
         updatedAt: now,
       });
@@ -246,6 +256,18 @@ const SENSITIVE_PATTERNS: Array<{ reason: string; regex: RegExp; replacement: st
   },
 ];
 
+export function hasSensitiveInfo(text: string): boolean {
+  for (const rule of SENSITIVE_PATTERNS) {
+    rule.regex.lastIndex = 0;
+    if (rule.regex.test(text)) {
+      rule.regex.lastIndex = 0;
+      return true;
+    }
+    rule.regex.lastIndex = 0;
+  }
+  return false;
+}
+
 export function detectSensitiveInfo(text: string): { isSensitive: boolean; reasons: string[] } {
   const reasons: string[] = [];
   for (const rule of SENSITIVE_PATTERNS) {
@@ -271,19 +293,20 @@ export function sanitizeSensitiveText(text: string): string {
   return out;
 }
 
+const AUTO_TAG_KEYWORD_MAP: Array<[RegExp, string]> = [
+  [/TypeScript|TS|React|Vue|Python|Rust|Go|Java|C\+\+/i, '编程'],
+  [/学生|研究生|本科|大学|学院|专业|学校/, '学业'],
+  [/工程|架构|代码|前端|后端|全栈|开发/, '工程'],
+  [/偏好|习惯|喜欢|风格|格式|简短|详细/, '偏好'],
+  [/项目|产品|App|应用|ChatBeauty/i, '项目'],
+];
+
 function extractAutoTags(text: string): string[] {
   const tags = new Set<string>();
   const ascii = text.toLowerCase().match(/\b[a-z][a-z0-9.+_-]{1,20}\b/g) || [];
   for (const w of ascii.slice(0, 4)) tags.add(w);
 
-  const keywordMap: Array<[RegExp, string]> = [
-    [/TypeScript|TS|React|Vue|Python|Rust|Go|Java|C\+\+/i, '编程'],
-    [/学生|研究生|本科|大学|学院|专业|学校/, '学业'],
-    [/工程|架构|代码|前端|后端|全栈|开发/, '工程'],
-    [/偏好|习惯|喜欢|风格|格式|简短|详细/, '偏好'],
-    [/项目|产品|App|应用|ChatBeauty/i, '项目'],
-  ];
-  for (const [re, tag] of keywordMap) {
+  for (const [re, tag] of AUTO_TAG_KEYWORD_MAP) {
     if (re.test(text)) tags.add(tag);
   }
   return Array.from(tags).slice(0, 5);
@@ -337,8 +360,8 @@ export function extractMemoriesLocal(
       continue;
     }
 
-    const sens = detectSensitiveInfo(cleaned);
-    if (sens.isSensitive && !settings.recordSensitiveInfo) {
+    const isSens = hasSensitiveInfo(cleaned);
+    if (isSens && !settings.recordSensitiveInfo) {
       continue;
     }
 
@@ -349,7 +372,7 @@ export function extractMemoriesLocal(
       content: cleaned,
       tags: extractAutoTags(cleaned),
       pinned: category === 'profile' || trigger === 'explicit',
-      sensitive: sens.isSensitive,
+      sensitive: isSens,
       createdAt: now,
       updatedAt: now,
       sourceConvId: convId,
@@ -406,8 +429,7 @@ export function parseLlmMemoryExtractionDetailed(
     const content = typeof obj.content === 'string' ? obj.content.replace(/\s+/g, ' ').trim() : '';
     if (!content || content.length < 3) continue;
 
-    const sens = detectSensitiveInfo(content);
-    const markedSensitive = Boolean(obj.sensitive) || sens.isSensitive;
+    const markedSensitive = Boolean(obj.sensitive) || hasSensitiveInfo(content);
     if (markedSensitive && !allowSensitive) {
       skippedSensitiveCount += 1;
       continue;
@@ -465,6 +487,15 @@ export function mergeMemoryEntries(
   skippedSensitiveCount: number;
 } {
   const next = [...existing];
+  const normalizedExisting = next.map((e) => normalizeForDedup(e.content));
+  const exactIndexMap = new Map<string, number>();
+  for (let i = 0; i < normalizedExisting.length; i++) {
+    if (!exactIndexMap.has(normalizedExisting[i])) {
+      exactIndexMap.set(normalizedExisting[i], i);
+    }
+  }
+  const newlyAdded: MemoryEntry[] = [];
+  const normalizedAdded: string[] = [];
   let addedCount = 0;
   let updatedCount = 0;
   let skippedSensitiveCount = 0;
@@ -472,64 +503,140 @@ export function mergeMemoryEntries(
   for (const item of incoming) {
     const clean = item.content.replace(/[\r\n]+/g, ' ').trim();
     if (!clean) continue;
-    const sens = Boolean(item.sensitive) || detectSensitiveInfo(clean).isSensitive;
+    const sens = Boolean(item.sensitive) || hasSensitiveInfo(clean);
     if (sens && !allowSensitive) {
       skippedSensitiveCount += 1;
       continue;
     }
 
     const normNew = normalizeForDedup(clean);
-    const dupIdx = next.findIndex((e) => {
-      const normOld = normalizeForDedup(e.content);
-      if (normOld === normNew) return true;
-      if (normOld.length < 6 || normNew.length < 6) return false;
-      const minLen = Math.min(normOld.length, normNew.length);
-      const maxLen = Math.max(normOld.length, normNew.length);
-      if (minLen / maxLen < 0.5) return false;
-      return normOld.includes(normNew) || normNew.includes(normOld);
-    });
+    let dupInExistingIdx = exactIndexMap.get(normNew) ?? -1;
+    if (dupInExistingIdx === -1 && normNew.length >= 6) {
+      for (let i = 0; i < normalizedExisting.length; i++) {
+        const normOld = normalizedExisting[i];
+        if (normOld.length < 6) continue;
+        const minLen = Math.min(normOld.length, normNew.length);
+        const maxLen = Math.max(normOld.length, normNew.length);
+        if (minLen / maxLen >= 0.5 && (normOld.includes(normNew) || normNew.includes(normOld))) {
+          dupInExistingIdx = i;
+          break;
+        }
+      }
+    }
 
-    if (dupIdx >= 0) {
-      const prev = next[dupIdx];
-      next[dupIdx] = {
+    if (dupInExistingIdx >= 0) {
+      const prev = next[dupInExistingIdx];
+      const nextContent = clean.length >= prev.content.length ? clean : prev.content;
+      next[dupInExistingIdx] = {
         ...prev,
-        content: clean.length >= prev.content.length ? clean : prev.content,
+        content: nextContent,
         category: item.category || prev.category,
         tags: Array.from(new Set([...prev.tags, ...item.tags])).slice(0, 6),
         pinned: Boolean(prev.pinned || item.pinned),
         sensitive: Boolean(prev.sensitive || sens),
         updatedAt: Date.now(),
       };
+      const updatedNorm = normalizeForDedup(nextContent);
+      normalizedExisting[dupInExistingIdx] = updatedNorm;
+      exactIndexMap.set(updatedNorm, dupInExistingIdx);
+      updatedCount += 1;
+      continue;
+    }
+
+    // Check against earlier items within the same incoming batch
+    let dupInAddedIdx = -1;
+    for (let i = 0; i < normalizedAdded.length; i++) {
+      const normOld = normalizedAdded[i];
+      if (normOld === normNew) {
+        dupInAddedIdx = i;
+        break;
+      }
+      if (normOld.length >= 6 && normNew.length >= 6) {
+        const minLen = Math.min(normOld.length, normNew.length);
+        const maxLen = Math.max(normOld.length, normNew.length);
+        if (minLen / maxLen >= 0.5 && (normOld.includes(normNew) || normNew.includes(normOld))) {
+          dupInAddedIdx = i;
+          break;
+        }
+      }
+    }
+
+    if (dupInAddedIdx >= 0) {
+      const prev = newlyAdded[dupInAddedIdx];
+      const nextContent = clean.length >= prev.content.length ? clean : prev.content;
+      newlyAdded[dupInAddedIdx] = {
+        ...prev,
+        content: nextContent,
+        category: item.category || prev.category,
+        tags: Array.from(new Set([...prev.tags, ...item.tags])).slice(0, 6),
+        pinned: Boolean(prev.pinned || item.pinned),
+        sensitive: Boolean(prev.sensitive || sens),
+        updatedAt: Date.now(),
+      };
+      normalizedAdded[dupInAddedIdx] = normalizeForDedup(nextContent);
       updatedCount += 1;
     } else {
-      next.unshift({
+      newlyAdded.push({
         ...item,
         content: clean,
         sensitive: sens,
       });
+      normalizedAdded.push(normNew);
       addedCount += 1;
     }
   }
 
-  return { entries: next, addedCount, updatedCount, skippedSensitiveCount };
+  const entries = newlyAdded.length > 0 ? [...newlyAdded.reverse(), ...next] : next;
+  return { entries, addedCount, updatedCount, skippedSensitiveCount };
+}
+
+const MAX_QUERY_SCAN_CHARS = 1200;
+const MAX_QUERY_TOKENS = 160;
+
+interface PreparedMemoryMeta {
+  contentLower: string;
+  tagsLower: string[];
+  tokenCost: number;
+}
+
+const memoryMetaCache = new WeakMap<MemoryEntry, PreparedMemoryMeta>();
+
+function getPreparedMemoryMeta(entry: MemoryEntry): PreparedMemoryMeta {
+  const cached = memoryMetaCache.get(entry);
+  if (cached) return cached;
+  const meta: PreparedMemoryMeta = {
+    contentLower: entry.content.toLowerCase(),
+    tagsLower: entry.tags.map((t) => t.toLowerCase()),
+    tokenCost: estimateTokens(entry.content) + 8,
+  };
+  memoryMetaCache.set(entry, meta);
+  return meta;
 }
 
 function tokenizeQuery(text: string): string[] {
+  if (!text) return [];
+  const bounded = text.length > MAX_QUERY_SCAN_CHARS ? text.slice(0, MAX_QUERY_SCAN_CHARS) : text;
   const tokens = new Set<string>();
-  const lower = text.toLowerCase();
+  const lower = bounded.toLowerCase();
 
   const asciiWords = lower.match(/[a-z0-9][a-z0-9._+-]{1,24}/g) || [];
   for (const w of asciiWords) {
     tokens.add(w);
+    if (tokens.size >= MAX_QUERY_TOKENS) return Array.from(tokens);
   }
 
   const cjkRuns = lower.match(/[\u4e00-\u9fff]{2,}/g) || [];
   for (const run of cjkRuns) {
-    if (run.length <= 6) tokens.add(run);
+    if (run.length <= 6) {
+      tokens.add(run);
+      if (tokens.size >= MAX_QUERY_TOKENS) return Array.from(tokens);
+    }
     for (let i = 0; i <= run.length - 2; i++) {
       tokens.add(run.slice(i, i + 2));
+      if (tokens.size >= MAX_QUERY_TOKENS) return Array.from(tokens);
       if (i <= run.length - 3) {
         tokens.add(run.slice(i, i + 3));
+        if (tokens.size >= MAX_QUERY_TOKENS) return Array.from(tokens);
       }
     }
   }
@@ -554,32 +661,57 @@ export function retrieveRelevantMemories(
     : entries.filter((e) => !e.sensitive);
   if (eligible.length === 0) return [];
 
-  const recentUserTexts = recentMessages
-    .filter((m) => m.role === 'user')
-    .slice(-2)
-    .map((m) => extractTextFromParts(m.parts));
-  const combinedQuery = [queryText, ...recentUserTexts].filter(Boolean).join('\n');
+  const recentUserTexts: string[] = [];
+  for (let i = recentMessages.length - 1; i >= 0 && recentUserTexts.length < 2; i--) {
+    const m = recentMessages[i];
+    if (m.role === 'user') {
+      const t = extractTextFromParts(m.parts);
+      if (t) recentUserTexts.push(t);
+    }
+  }
+  recentUserTexts.reverse();
+
+  const combinedParts = [queryText, ...recentUserTexts].filter(Boolean);
+  const combinedQuery = combinedParts.join('\n');
   const queryTokens = tokenizeQuery(combinedQuery);
 
-  const scored = eligible
-    .map((entry) => {
-      const contentLower = entry.content.toLowerCase();
-      const tagsLower = entry.tags.map((t) => t.toLowerCase());
+  const scored: Array<{ entry: MemoryEntry; meta: PreparedMemoryMeta; relevance: number; totalScore: number }> = [];
+  if (queryTokens.length === 0) {
+    for (const entry of eligible) {
+      if (entry.pinned) {
+        scored.push({
+          entry,
+          meta: getPreparedMemoryMeta(entry),
+          relevance: 0,
+          totalScore: 1.5,
+        });
+      }
+    }
+  } else {
+    for (const entry of eligible) {
+      const meta = getPreparedMemoryMeta(entry);
+      const { contentLower, tagsLower } = meta;
       let relevance = 0;
 
       for (const tok of queryTokens) {
-        if (tagsLower.some((t) => t.includes(tok) || (t.length >= 2 && tok.includes(t)) || t === tok)) {
-          relevance += 4;
+        for (let i = 0; i < tagsLower.length; i++) {
+          const t = tagsLower[i];
+          if (t.includes(tok) || (t.length >= 2 && tok.includes(t))) {
+            relevance += 4;
+            break;
+          }
         }
         if (contentLower.includes(tok)) {
           relevance += 2;
         }
       }
 
-      const pinScore = entry.pinned ? 1.5 : 0;
-      return { entry, relevance, totalScore: relevance + pinScore };
-    })
-    .filter((row) => row.relevance > 0 || row.entry.pinned);
+      if (relevance > 0 || entry.pinned) {
+        const pinScore = entry.pinned ? 1.5 : 0;
+        scored.push({ entry, meta, relevance, totalScore: relevance + pinScore });
+      }
+    }
+  }
 
   scored.sort(
     (a, b) =>
@@ -600,7 +732,7 @@ export function retrieveRelevantMemories(
     if (isPinnedFallback && pinnedFallbackCount >= 2) {
       continue;
     }
-    const cost = estimateTokens(row.entry.content) + 8;
+    const cost = row.meta.tokenCost;
     if (selected.length > 0 && tokenSum + cost > maxTokens) {
       continue;
     }

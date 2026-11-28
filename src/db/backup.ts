@@ -1,4 +1,12 @@
-import { db, getKv, KV_KEYS, setKv } from './database';
+import {
+  db,
+  discardPendingSettingsKv,
+  flushPendingSettingsKv,
+  getKv,
+  KV_KEYS,
+  resolveKvValue,
+  type KvRecord,
+} from './database';
 import type { Conversation, Message } from '@/types/chat';
 import {
   DEFAULT_APPEARANCE_SETTINGS,
@@ -24,20 +32,8 @@ import {
 import type { PromptSettings } from '@/types/prompt';
 
 export async function exportFullBackup(): Promise<AppBackupV1> {
-  const [
-    conversations,
-    messages,
-    providers,
-    promptPresets,
-    appearance,
-    generation,
-    prompt,
-    webdav,
-    modelProfiles,
-    context,
-    memory,
-    memoryDocument,
-  ] = await db.transaction(
+  await flushPendingSettingsKv();
+  const [conversations, messages, providers, promptPresets, kvRows] = await db.transaction(
     'r',
     [db.conversations, db.messages, db.providers, db.promptPresets, db.kv],
     () =>
@@ -46,19 +42,30 @@ export async function exportFullBackup(): Promise<AppBackupV1> {
         db.messages.toArray(),
         db.providers.toArray(),
         db.promptPresets.toArray(),
-        getKv<AppearanceSettings>(KV_KEYS.APPEARANCE, DEFAULT_APPEARANCE_SETTINGS),
-        getKv<GenerationSettings>(KV_KEYS.GENERATION, DEFAULT_GENERATION_SETTINGS),
-        getKv<PromptSettings>(KV_KEYS.PROMPT, DEFAULT_PROMPT_SETTINGS),
-        getKv<WebDavSyncSettings>(KV_KEYS.WEBDAV, DEFAULT_WEBDAV_SETTINGS),
-        getKv<ModelProfileSyncSettings>(
+        db.kv.bulkGet([
+          KV_KEYS.APPEARANCE,
+          KV_KEYS.GENERATION,
+          KV_KEYS.PROMPT,
+          KV_KEYS.WEBDAV,
           KV_KEYS.MODEL_PROFILES,
-          DEFAULT_MODEL_PROFILE_SYNC_SETTINGS
-        ),
-        getKv<ContextSettings>(KV_KEYS.CONTEXT, DEFAULT_CONTEXT_SETTINGS),
-        getKv<MemorySettings>(KV_KEYS.MEMORY_SETTINGS, DEFAULT_MEMORY_SETTINGS),
-        getKv<string>(KV_KEYS.MEMORY_DOCUMENT, ''),
+          KV_KEYS.CONTEXT,
+          KV_KEYS.MEMORY_SETTINGS,
+          KV_KEYS.MEMORY_DOCUMENT,
+        ]),
       ])
   );
+
+  const appearance = resolveKvValue<AppearanceSettings>(kvRows[0], DEFAULT_APPEARANCE_SETTINGS);
+  const generation = resolveKvValue<GenerationSettings>(kvRows[1], DEFAULT_GENERATION_SETTINGS);
+  const prompt = resolveKvValue<PromptSettings>(kvRows[2], DEFAULT_PROMPT_SETTINGS);
+  const webdav = resolveKvValue<WebDavSyncSettings>(kvRows[3], DEFAULT_WEBDAV_SETTINGS);
+  const modelProfiles = resolveKvValue<ModelProfileSyncSettings>(
+    kvRows[4],
+    DEFAULT_MODEL_PROFILE_SYNC_SETTINGS
+  );
+  const context = resolveKvValue<ContextSettings>(kvRows[5], DEFAULT_CONTEXT_SETTINGS);
+  const memory = resolveKvValue<MemorySettings>(kvRows[6], DEFAULT_MEMORY_SETTINGS);
+  const memoryDocument = resolveKvValue<string>(kvRows[7], '');
 
   return {
     version: 1,
@@ -89,6 +96,12 @@ export async function importFullBackup(
     throw new Error('无效的 ChatBeauty 备份文件格式');
   }
 
+  discardPendingSettingsKv();
+  const incomingEntries =
+    mode === 'merge' && typeof data.memoryDocument === 'string'
+      ? parseMemoryDocument(data.memoryDocument)
+      : null;
+
   await db.transaction(
     'rw',
     [db.conversations, db.messages, db.providers, db.promptPresets, db.kv],
@@ -102,73 +115,97 @@ export async function importFullBackup(
         ]);
       }
 
-      if (data.conversations?.length) await db.conversations.bulkPut(data.conversations);
-      if (data.messages?.length) await db.messages.bulkPut(data.messages);
-      if (data.providers?.length) await db.providers.bulkPut(data.providers);
-      if (data.promptPresets?.length) await db.promptPresets.bulkPut(data.promptPresets);
+      const putOps: Array<Promise<unknown>> = [];
+      if (data.conversations?.length) putOps.push(db.conversations.bulkPut(data.conversations));
+      if (data.messages?.length) putOps.push(db.messages.bulkPut(data.messages));
+      if (data.providers?.length) putOps.push(db.providers.bulkPut(data.providers));
+      if (data.promptPresets?.length) putOps.push(db.promptPresets.bulkPut(data.promptPresets));
+      if (putOps.length > 0) {
+        await Promise.all(putOps);
+      }
 
+      const kvUpdates: KvRecord[] = [];
       if (mode === 'replace') {
-        await setKv(
-          KV_KEYS.MEMORY_DOCUMENT,
-          typeof data.memoryDocument === 'string' ? data.memoryDocument : ''
+        kvUpdates.push(
+          {
+            key: KV_KEYS.MEMORY_DOCUMENT,
+            value: typeof data.memoryDocument === 'string' ? data.memoryDocument : '',
+          },
+          {
+            key: KV_KEYS.APPEARANCE,
+            value: data.settings?.appearance ?? DEFAULT_APPEARANCE_SETTINGS,
+          },
+          {
+            key: KV_KEYS.GENERATION,
+            value: data.settings?.generation ?? DEFAULT_GENERATION_SETTINGS,
+          },
+          {
+            key: KV_KEYS.PROMPT,
+            value: data.settings?.prompt ?? DEFAULT_PROMPT_SETTINGS,
+          },
+          {
+            key: KV_KEYS.WEBDAV,
+            value: data.settings?.webdav ?? DEFAULT_WEBDAV_SETTINGS,
+          },
+          {
+            key: KV_KEYS.MODEL_PROFILES,
+            value: data.settings?.modelProfiles ?? DEFAULT_MODEL_PROFILE_SYNC_SETTINGS,
+          },
+          {
+            key: KV_KEYS.CONTEXT,
+            value: data.settings?.context ?? DEFAULT_CONTEXT_SETTINGS,
+          },
+          {
+            key: KV_KEYS.MEMORY_SETTINGS,
+            value: data.settings?.memory ?? DEFAULT_MEMORY_SETTINGS,
+          },
+          { key: KV_KEYS.ACTIVE_CONVERSATION, value: null },
+          { key: KV_KEYS.ACTIVE_PROVIDER, value: null },
+          { key: KV_KEYS.ACTIVE_MODEL, value: null }
         );
-      } else if (typeof data.memoryDocument === 'string') {
-        const incomingEntries = parseMemoryDocument(data.memoryDocument);
-        if (incomingEntries.length > 0) {
+      } else {
+        if (incomingEntries && incomingEntries.length > 0) {
           const existingDoc = await getKv<string>(KV_KEYS.MEMORY_DOCUMENT, '');
           const existingEntries = parseMemoryDocument(existingDoc);
           const merged = mergeMemoryEntries(existingEntries, incomingEntries, true);
-          await setKv(KV_KEYS.MEMORY_DOCUMENT, serializeMemoryDocument(merged.entries));
+          kvUpdates.push({
+            key: KV_KEYS.MEMORY_DOCUMENT,
+            value: serializeMemoryDocument(merged.entries),
+          });
+        }
+        if (data.settings) {
+          if (data.settings.appearance) {
+            kvUpdates.push({ key: KV_KEYS.APPEARANCE, value: data.settings.appearance });
+          }
+          if (data.settings.generation) {
+            kvUpdates.push({ key: KV_KEYS.GENERATION, value: data.settings.generation });
+          }
+          if (data.settings.prompt) {
+            kvUpdates.push({ key: KV_KEYS.PROMPT, value: data.settings.prompt });
+          }
+          if (data.settings.webdav) {
+            const currentWebdav = await getKv<WebDavSyncSettings>(
+              KV_KEYS.WEBDAV,
+              DEFAULT_WEBDAV_SETTINGS
+            );
+            if (!currentWebdav.endpoint.trim()) {
+              kvUpdates.push({ key: KV_KEYS.WEBDAV, value: data.settings.webdav });
+            }
+          }
+          if (data.settings.modelProfiles) {
+            kvUpdates.push({ key: KV_KEYS.MODEL_PROFILES, value: data.settings.modelProfiles });
+          }
+          if (data.settings.context) {
+            kvUpdates.push({ key: KV_KEYS.CONTEXT, value: data.settings.context });
+          }
+          if (data.settings.memory) {
+            kvUpdates.push({ key: KV_KEYS.MEMORY_SETTINGS, value: data.settings.memory });
+          }
         }
       }
 
-      if (mode === 'replace') {
-        await Promise.all([
-          setKv(
-            KV_KEYS.APPEARANCE,
-            data.settings?.appearance ?? DEFAULT_APPEARANCE_SETTINGS
-          ),
-          setKv(
-            KV_KEYS.GENERATION,
-            data.settings?.generation ?? DEFAULT_GENERATION_SETTINGS
-          ),
-          setKv(KV_KEYS.PROMPT, data.settings?.prompt ?? DEFAULT_PROMPT_SETTINGS),
-          setKv(KV_KEYS.WEBDAV, data.settings?.webdav ?? DEFAULT_WEBDAV_SETTINGS),
-          setKv(
-            KV_KEYS.MODEL_PROFILES,
-            data.settings?.modelProfiles ?? DEFAULT_MODEL_PROFILE_SYNC_SETTINGS
-          ),
-          setKv(KV_KEYS.CONTEXT, data.settings?.context ?? DEFAULT_CONTEXT_SETTINGS),
-          setKv(
-            KV_KEYS.MEMORY_SETTINGS,
-            data.settings?.memory ?? DEFAULT_MEMORY_SETTINGS
-          ),
-          setKv(KV_KEYS.ACTIVE_CONVERSATION, null),
-          setKv(KV_KEYS.ACTIVE_PROVIDER, null),
-          setKv(KV_KEYS.ACTIVE_MODEL, null),
-        ]);
-      } else if (data.settings) {
-        if (data.settings.appearance) await setKv(KV_KEYS.APPEARANCE, data.settings.appearance);
-        if (data.settings.generation) await setKv(KV_KEYS.GENERATION, data.settings.generation);
-        if (data.settings.prompt) await setKv(KV_KEYS.PROMPT, data.settings.prompt);
-        if (data.settings.webdav) {
-          const currentWebdav = await getKv<WebDavSyncSettings>(
-            KV_KEYS.WEBDAV,
-            DEFAULT_WEBDAV_SETTINGS
-          );
-          if (!currentWebdav.endpoint.trim()) {
-            await setKv(KV_KEYS.WEBDAV, data.settings.webdav);
-          }
-        }
-        if (data.settings.modelProfiles) {
-          await setKv(KV_KEYS.MODEL_PROFILES, data.settings.modelProfiles);
-        }
-        if (data.settings.context) {
-          await setKv(KV_KEYS.CONTEXT, data.settings.context);
-        }
-        if (data.settings.memory) {
-          await setKv(KV_KEYS.MEMORY_SETTINGS, data.settings.memory);
-        }
+      if (kvUpdates.length > 0) {
+        await db.kv.bulkPut(kvUpdates);
       }
     }
   );
@@ -199,12 +236,15 @@ export function exportConversationMarkdown(conv: Conversation, messages: Message
   return `${header}\n${body}\n`;
 }
 
+const HTML_ESCAPE_MAP: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+};
+
 function escapeHtml(raw: string): string {
-  return raw
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+  return raw.replace(/[&<>"]/g, (ch) => HTML_ESCAPE_MAP[ch]);
 }
 
 export function exportConversationHtml(conv: Conversation, messages: Message[]): string {

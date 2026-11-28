@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { memo, useMemo, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { MarkdownBlock } from './MarkdownBlock';
 import { preprocessLatex } from './latexPreprocessor';
@@ -17,7 +17,7 @@ interface ReasoningCardProps {
   onInspect: (payload: LightboxPayload) => void;
 }
 
-export const ReasoningCard: React.FC<ReasoningCardProps> = ({
+export const ReasoningCard: React.FC<ReasoningCardProps> = memo(({
   text,
   durationMs,
   isStreaming,
@@ -28,8 +28,8 @@ export const ReasoningCard: React.FC<ReasoningCardProps> = ({
   const [open, setOpen] = useState(Boolean(isStreaming));
 
   const blocks = useMemo(
-    () => splitMarkdownBlocks(preprocessLatex(text, Boolean(isStreaming))),
-    [text, isStreaming]
+    () => (open ? splitMarkdownBlocks(preprocessLatex(text, Boolean(isStreaming))) : []),
+    [open, text, isStreaming]
   );
 
   if (!text.trim() && !isStreaming) return null;
@@ -77,4 +77,4 @@ export const ReasoningCard: React.FC<ReasoningCardProps> = ({
       </Collapsible>
     </div>
   );
-};
+});

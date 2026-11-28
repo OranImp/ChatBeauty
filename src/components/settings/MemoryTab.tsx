@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   Brain,
   Check,
@@ -20,6 +21,7 @@ import { useAppStore } from '@/store/useAppStore';
 import type { MemoryCategory, MemoryEntry } from '@/types/memory';
 import { MEMORY_FILE_HEADER, detectSensitiveInfo, parseMemoryDocument } from '@/services/memory/memoryEngine';
 import { triggerDownload } from '@/components/renderer/svgUtils';
+import { useFlashNotice } from '@/hooks/useFlashNotice';
 import { SmoothSlider } from '@/components/ui/SmoothSlider';
 import {
   SettingsCollapsibleRow,
@@ -44,7 +46,18 @@ export const MemoryTab: React.FC = () => {
     upsertMemoryEntry,
     deleteMemoryEntry,
     clearAllMemories,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((s) => ({
+      memorySettings: s.memorySettings,
+      memoryEntries: s.memoryEntries,
+      memoryDocument: s.memoryDocument,
+      updateMemorySettings: s.updateMemorySettings,
+      saveMemoryDocument: s.saveMemoryDocument,
+      upsertMemoryEntry: s.upsertMemoryEntry,
+      deleteMemoryEntry: s.deleteMemoryEntry,
+      clearAllMemories: s.clearAllMemories,
+    }))
+  );
 
   const [viewMode, setViewMode] = useState<'entries' | 'source'>('entries');
   const [searchQuery, setSearchQuery] = useState('');
@@ -54,7 +67,7 @@ export const MemoryTab: React.FC = () => {
   // Source editor state
   const [sourceText, setSourceText] = useState(memoryDocument || `${MEMORY_FILE_HEADER}\n`);
   const [sourceDirty, setSourceDirty] = useState(false);
-  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const { notice, showNotice } = useFlashNotice<{ ok: boolean; text: string }>(2400);
 
   // New / Edit entry composer
   const [creating, setCreating] = useState(false);
@@ -74,8 +87,7 @@ export const MemoryTab: React.FC = () => {
   }, [memoryDocument, sourceDirty]);
 
   const flash = (ok: boolean, text: string) => {
-    setNotice({ ok, text });
-    setTimeout(() => setNotice(null), 2400);
+    showNotice({ ok, text });
   };
 
   const filteredEntries = useMemo(() => {
@@ -94,8 +106,8 @@ export const MemoryTab: React.FC = () => {
   }, [memoryEntries, searchQuery, catFilter]);
 
   const parsedSourcePreviewCount = useMemo(
-    () => parseMemoryDocument(sourceText).length,
-    [sourceText]
+    () => (viewMode === 'source' ? parseMemoryDocument(sourceText).length : 0),
+    [viewMode, sourceText]
   );
 
   const openNewEntry = () => {

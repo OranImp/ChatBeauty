@@ -1,23 +1,19 @@
 import type { ModelDefinition, ProviderConfig } from '@/types/chat';
 import type { ChatStreamCallbacks, ChatStreamRequest, LLMProviderAdapter } from '@/types/provider';
-import { SSEParser } from '@/services/llm/sseParser';
-import { simpleRequest, streamRequest } from '@/services/transport/streamHttp';
 import {
   buildEffectiveProviderHeaders,
+  buildProtocolModelsUrl,
   deepMergePayload,
   extractDataUrlParts,
   extractTextFromParts,
-  resolveEffectiveParams,
+  fetchJsonWithAuth,
+  resolveRequestExecutionContext,
   resolveThinkingBudget,
   sliceContextMessages,
+  streamSseJsonEvents,
   toModelDefinition,
-  toStableSessionId,
   trimBaseUrl,
 } from './shared';
-import {
-  coerceReasoningEffort,
-  resolveModelReasoningProfile,
-} from '@/services/llm/modelProfiles';
 
 function normalizeGeminiModel(modelId: string): string {
   return modelId.replace(/^models\//, '');
@@ -28,12 +24,6 @@ function buildGeminiStreamEndpoint(baseUrl: string, modelId: string): string {
     trimBaseUrl(baseUrl) || 'https://generativelanguage.googleapis.com/v1beta';
   const model = encodeURIComponent(normalizeGeminiModel(modelId));
   return `${clean}/models/${model}:streamGenerateContent?alt=sse`;
-}
-
-function buildGeminiModelsEndpoint(baseUrl: string): string {
-  const clean =
-    trimBaseUrl(baseUrl) || 'https://generativelanguage.googleapis.com/v1beta';
-  return clean.endsWith('/models') ? `${clean}?pageSize=1000` : `${clean}/models?pageSize=1000`;
 }
 
 export class GeminiAdapter implements LLMProviderAdapter {
@@ -51,6 +41,8 @@ export class GeminiAdapter implements LLMProviderAdapter {
 
     for (const msg of contextMsgs) {
       const role: 'user' | 'model' = msg.role === 'assistant' ? 'model' : 'user';
+      // Gemini requires starting with a user turn; skip leading assistant messages before decoding images
+      if (contents.length === 0 && role !== 'user') continue;
       const parts: Array<Record<string, unknown>> = [];
       const text = extractTextFromParts(msg.parts);
       if (text) parts.push({ text });
@@ -74,27 +66,8 @@ export class GeminiAdapter implements LLMProviderAdapter {
       }
     }
 
-    while (contents.length > 0 && contents[0].role !== 'user') {
-      contents.shift();
-    }
-
-    const modelDef = req.provider.models.find((m) => m.id === req.modelId);
-    const modelParams = req.modelParams ?? modelDef?.params;
-    const profile =
-      req.reasoningProfile ??
-      resolveModelReasoningProfile({
-        modelId: req.modelId,
-        protocol: 'gemini',
-        modelDef,
-      }).profile;
-    const effort = coerceReasoningEffort(req.generation.reasoningEffort, profile);
-    const activeLevel = profile.levels.find((l) => l.value === effort);
-    const effective = resolveEffectiveParams(req.generation, modelParams, req.conversationParams);
-
-    const thinkingActive = profile.strategy !== 'none' && effort !== 'off';
-    const allowSampling = thinkingActive
-      ? profile.supportsSamplingWhenThinking !== false
-      : profile.supportsSamplingWhenOff !== false;
+    const { profile, effort, activeLevel, effective, allowSampling } =
+      resolveRequestExecutionContext(req, 'gemini');
 
     const generationConfig: Record<string, unknown> = {};
     if (allowSampling) {
@@ -152,107 +125,75 @@ export class GeminiAdapter implements LLMProviderAdapter {
       sessionId: req.sessionId,
     });
 
-    const parser = new SSEParser();
-
-    const handleData = (raw: string) => {
-      if (raw === '[DONE]') return;
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(raw) as Record<string, unknown>;
-      } catch {
-        return;
-      }
-
-      if (parsed.error && typeof parsed.error === 'object') {
-        const err = parsed.error as { message?: string };
-        throw new Error(err.message || 'Gemini API 返回错误');
-      }
-
-      const candidates = parsed.candidates as
-        | Array<{
-            content?: {
-              parts?: Array<{ text?: string; thought?: boolean }>;
-            };
-          }>
-        | undefined;
-
-      const promptFeedback = parsed.promptFeedback as { blockReason?: string } | undefined;
-      if (promptFeedback?.blockReason && (!Array.isArray(candidates) || candidates.length === 0)) {
-        throw new Error(`Gemini 拦截了请求 (${promptFeedback.blockReason})`);
-      }
-
-      const parts = candidates?.[0]?.content?.parts;
-      if (Array.isArray(parts)) {
-        for (const part of parts) {
-          if (typeof part.text !== 'string' || part.text.length === 0) continue;
-          if (part.thought) {
-            callbacks.onReasoningDelta(part.text);
-          } else {
-            callbacks.onTextDelta(part.text);
-          }
-        }
-      }
-
-      const usage = parsed.usageMetadata as
-        | {
-            promptTokenCount?: number;
-            candidatesTokenCount?: number;
-            thoughtsTokenCount?: number;
-            totalThoughtTokens?: number;
-            totalTokenCount?: number;
-          }
-        | undefined;
-      if (usage) {
-        callbacks.onUsage?.({
-          inputTokens: usage.promptTokenCount,
-          outputTokens: usage.candidatesTokenCount,
-          reasoningTokens: usage.thoughtsTokenCount ?? usage.totalThoughtTokens,
-          totalTokens: usage.totalTokenCount,
-        });
-      }
-    };
-
-    await streamRequest({
-      url: endpoint,
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-      signal,
-      onChunk: (chunk) => {
-        for (const evt of parser.feed(chunk)) {
-          handleData(evt.data);
-        }
+    await streamSseJsonEvents(
+      {
+        url: endpoint,
+        headers,
+        body: JSON.stringify(payload),
+        signal,
+        onDone: callbacks.onDone,
       },
-    });
+      (_eventName, parsed) => {
+        if (parsed.error && typeof parsed.error === 'object') {
+          const err = parsed.error as { message?: string };
+          throw new Error(err.message || 'Gemini API 返回错误');
+        }
 
-    for (const evt of parser.flush()) {
-      handleData(evt.data);
-    }
+        const candidates = parsed.candidates as
+          | Array<{
+              content?: {
+                parts?: Array<{ text?: string; thought?: boolean }>;
+              };
+            }>
+          | undefined;
 
-    callbacks.onDone?.();
+        const promptFeedback = parsed.promptFeedback as { blockReason?: string } | undefined;
+        if (promptFeedback?.blockReason && (!Array.isArray(candidates) || candidates.length === 0)) {
+          throw new Error(`Gemini 拦截了请求 (${promptFeedback.blockReason})`);
+        }
+
+        const parts = candidates?.[0]?.content?.parts;
+        if (Array.isArray(parts)) {
+          for (const part of parts) {
+            if (typeof part.text !== 'string' || part.text.length === 0) continue;
+            if (part.thought) {
+              callbacks.onReasoningDelta(part.text);
+            } else {
+              callbacks.onTextDelta(part.text);
+            }
+          }
+        }
+
+        const usage = parsed.usageMetadata as
+          | {
+              promptTokenCount?: number;
+              candidatesTokenCount?: number;
+              thoughtsTokenCount?: number;
+              totalThoughtTokens?: number;
+              totalTokenCount?: number;
+            }
+          | undefined;
+        if (usage) {
+          callbacks.onUsage?.({
+            inputTokens: usage.promptTokenCount,
+            outputTokens: usage.candidatesTokenCount,
+            reasoningTokens: usage.thoughtsTokenCount ?? usage.totalThoughtTokens,
+            totalTokens: usage.totalTokenCount,
+          });
+        }
+      }
+    );
   }
 
   async listModels(provider: ProviderConfig, signal?: AbortSignal): Promise<ModelDefinition[]> {
-    const res = await simpleRequest({
-      url: buildGeminiModelsEndpoint(provider.baseUrl),
-      method: 'GET',
-      headers: buildEffectiveProviderHeaders(provider, {
-        includeContentType: false,
-        sessionId: toStableSessionId(`models_${provider.id}`),
-      }),
+    const json = await fetchJsonWithAuth<{
+      models?: Array<{ name: string; displayName?: string; supportedGenerationMethods?: string[] }>;
+    }>({
+      url: buildProtocolModelsUrl('gemini', provider.baseUrl, { geminiPageSize: 1000 }),
+      provider,
+      sessionPrefix: 'models',
       signal,
     });
-    if (res.status < 200 || res.status >= 300) {
-      throw new Error(`拉取模型失败 (HTTP ${res.status}): ${res.body.slice(0, 200)}`);
-    }
-    let json: {
-      models?: Array<{ name: string; displayName?: string; supportedGenerationMethods?: string[] }>;
-    };
-    try {
-      json = JSON.parse(res.body) as typeof json;
-    } catch {
-      throw new Error('拉取模型失败：返回内容非有效 JSON');
-    }
     return (json.models ?? [])
       .filter(
         (m) =>

@@ -23,7 +23,6 @@ export interface PresenceState {
  */
 export function usePresence(open: boolean, exitMs = 200): PresenceState {
   const [mounted, setMounted] = useState<boolean>(open);
-  const [entered, setEntered] = useState<boolean>(open);
 
   if (open && !mounted) {
     setMounted(true);
@@ -31,37 +30,28 @@ export function usePresence(open: boolean, exitMs = 200): PresenceState {
   const isMounted = open || mounted;
 
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const delay = prefersReducedMotion() ? 0 : exitMs;
-
     if (open) {
       setMounted(true);
-      if (delay <= 0) {
-        setEntered(true);
-      } else {
-        timer = setTimeout(() => {
-          setEntered(true);
-        }, delay);
-      }
-    } else {
-      setEntered(false);
-      timer = setTimeout(() => {
-        setMounted(false);
-      }, delay);
+      return;
     }
+    if (!mounted) {
+      return;
+    }
+    const delay = prefersReducedMotion() ? 0 : exitMs;
+    const timer = setTimeout(() => {
+      setMounted(false);
+    }, delay);
 
     return () => {
-      if (timer !== null) clearTimeout(timer);
+      clearTimeout(timer);
     };
-  }, [open, exitMs]);
+  }, [open, mounted, exitMs]);
 
   const phase: PresenceState['phase'] = !isMounted
     ? 'unmounted'
     : !open
       ? 'exit'
-      : entered
-        ? 'entered'
-        : 'enter';
+      : 'entered';
 
   return {
     mounted: isMounted,

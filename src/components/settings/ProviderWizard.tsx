@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   ArrowLeft,
   ArrowRight,
@@ -20,8 +21,6 @@ import {
   type ProviderBrandPreset,
 } from '@/services/llm/registry';
 import {
-  buildPreviewHeadersJson,
-  extractExtraHeadersFromPreviewJson,
   getModelDisplayName,
   hasCustomModelDisplayName,
   toModelDefinition,
@@ -29,6 +28,11 @@ import {
 import type { ProtocolType, ProviderConfig } from '@/types/chat';
 import { Collapsible } from '@/components/ui/MotionPrimitives';
 import { ProtocolSelector } from './ProtocolSelector';
+import {
+  ProviderHeadersAccordion,
+  mergeFetchedModelsPreservingAliases,
+  useProviderHeadersEditor,
+} from './providerShared';
 
 interface ProviderWizardProps {
   onCancel: () => void;
@@ -36,14 +40,18 @@ interface ProviderWizardProps {
 }
 
 export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComplete }) => {
-  const { fetchProviderModels, testProviderConnection } = useAppStore();
+  const { fetchProviderModels, testProviderConnection } = useAppStore(
+    useShallow((s) => ({
+      fetchProviderModels: s.fetchProviderModels,
+      testProviderConnection: s.testProviderConnection,
+    }))
+  );
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [direction, setDirection] = useState<'forward' | 'backward'>('forward');
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'global' | 'cn' | 'infra'>('all');
   const [isCustomProvider, setIsCustomProvider] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
-  const [headersOpen, setHeadersOpen] = useState(false);
   const [draft, setDraft] = useState<ProviderConfig>(() => {
     const tpl = PROTOCOL_TEMPLATES['openai-chat'];
     return {
@@ -60,19 +68,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
       createdAt: Date.now(),
     };
   });
-  const [customExtraHeaders, setCustomExtraHeaders] = useState<Record<string, string>>({});
-  const [headersErr, setHeadersErr] = useState<string | null>(null);
-  const [headersText, setHeadersText] = useState(() =>
-    buildPreviewHeadersJson(
-      {
-        protocol: 'openai-chat',
-        baseUrl: PROTOCOL_TEMPLATES['openai-chat'].defaultBaseUrl,
-        apiKey: '',
-        presetId: undefined,
-      },
-      {}
-    )
-  );
+  const headersEditor = useProviderHeadersEditor(draft, false);
   const [backupUrlsText, setBackupUrlsText] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [newModelId, setNewModelId] = useState('');
@@ -84,40 +80,6 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
 
   const isOptionalKeyEndpoint = (presetId?: string, url?: string) =>
     presetId === 'ollama' || /:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test((url || '').trim());
-
-  const customExtraHeadersRef = useRef(customExtraHeaders);
-  customExtraHeadersRef.current = customExtraHeaders;
-  const headersErrRef = useRef(headersErr);
-  headersErrRef.current = headersErr;
-
-  useEffect(() => {
-    if (headersErrRef.current) return;
-    const nextText = buildPreviewHeadersJson(draft, customExtraHeadersRef.current);
-    setHeadersText((prev) => (prev === nextText ? prev : nextText));
-  }, [draft.protocol, draft.baseUrl, draft.apiKey, draft.presetId]);
-
-  const handleHeadersJsonChange = (raw: string) => {
-    setHeadersText(raw);
-    try {
-      const extracted = extractExtraHeadersFromPreviewJson(raw, draft);
-      customExtraHeadersRef.current = extracted;
-      headersErrRef.current = null;
-      setCustomExtraHeaders(extracted);
-      setHeadersErr(null);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : '自定义 Headers JSON 格式无效';
-      headersErrRef.current = msg;
-      setHeadersErr(msg);
-    }
-  };
-
-  const resetAutoHeaders = () => {
-    customExtraHeadersRef.current = {};
-    headersErrRef.current = null;
-    setCustomExtraHeaders({});
-    setHeadersErr(null);
-    setHeadersText(buildPreviewHeadersJson(draft, {}));
-  };
 
   const selectPreset = (preset: ProviderBrandPreset) => {
     const backups = preset.backupBaseUrls ? [...preset.backupBaseUrls] : [];
@@ -136,11 +98,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
     };
     setIsCustomProvider(false);
     setDraft(nextDraft);
-    customExtraHeadersRef.current = {};
-    headersErrRef.current = null;
-    setCustomExtraHeaders({});
-    setHeadersErr(null);
-    setHeadersText(buildPreviewHeadersJson(nextDraft, {}));
+    headersEditor.syncHeadersForDraft(nextDraft, {});
     setBackupUrlsText(backups.join('\n'));
     setStatusMsg(null);
     setDirection('forward');
@@ -163,11 +121,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
     };
     setIsCustomProvider(true);
     setDraft(nextDraft);
-    customExtraHeadersRef.current = {};
-    headersErrRef.current = null;
-    setCustomExtraHeaders({});
-    setHeadersErr(null);
-    setHeadersText(buildPreviewHeadersJson(nextDraft, {}));
+    headersEditor.syncHeadersForDraft(nextDraft, {});
     setBackupUrlsText('');
     setStatusMsg(null);
     setDirection('forward');
@@ -199,7 +153,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
   const buildCandidate = (): ProviderConfig | null => {
     let parsedHeaders: Record<string, string>;
     try {
-      parsedHeaders = extractExtraHeadersFromPreviewJson(headersText, draft);
+      parsedHeaders = headersEditor.resolveLiveExtraHeaders(draft);
     } catch (err) {
       setStatusMsg({
         ok: false,
@@ -279,12 +233,7 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
         setStatusMsg({ ok: false, text: '接口未返回模型列表，可手动输入添加' });
       } else {
         setDraft((prev) => {
-          const prevMap = new Map(prev.models.map((m) => [m.id, m]));
-          const merged = models.map((m) => {
-            const existing = prevMap.get(m.id);
-            const hasAlias = Boolean(existing?.name?.trim() && existing.name.trim() !== existing.id);
-            return hasAlias ? { ...m, name: existing!.name.trim() } : m;
-          });
+          const merged = mergeFetchedModelsPreservingAliases(models, prev.models);
           return {
             ...prev,
             models: merged,
@@ -550,46 +499,17 @@ export const ProviderWizard: React.FC<ProviderWizardProps> = ({ onCancel, onComp
             </Collapsible>
           </div>
 
-          <div className="rounded-xl border border-borderc bg-surface/40 overflow-hidden min-w-0">
-            <button
-              type="button"
-              onClick={() => setHeadersOpen((v) => !v)}
-              aria-expanded={headersOpen}
-              className="w-full min-w-0 flex items-center justify-between gap-2 px-3 py-2.5 text-left text-muted hover:text-fg hover:bg-fg/[0.03] transition"
-            >
-              <span className="truncate">高级：自定义请求头 (JSON · 实时反映当前鉴权与协议头)</span>
-              <ChevronRight
-                className={`w-4 h-4 shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                  headersOpen ? 'rotate-90 text-fg' : ''
-                }`}
-              />
-            </button>
-            <Collapsible open={headersOpen}>
-              <div className="px-3 pb-3 pt-2 border-t border-borderc space-y-1.5 min-w-0">
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <span className="text-muted">
-                    修改上方密钥或协议会同步更新，可直接追加额外字段
-                  </span>
-                  <button
-                    type="button"
-                    onClick={resetAutoHeaders}
-                    className="px-2 py-0.5 rounded-lg border border-borderc bg-bg hover:bg-elevated text-muted hover:text-fg transition shrink-0"
-                  >
-                    恢复自动头
-                  </button>
-                </div>
-                <textarea
-                  rows={5}
-                  value={headersText}
-                  onChange={(e) => handleHeadersJsonChange(e.target.value)}
-                  className="w-full min-w-0 px-3 py-2 rounded-xl bg-bg border border-borderc font-mono text-xs text-fg focus:outline-none focus:border-fg/40"
-                />
-                {headersErr && (
-                  <div className="text-xs text-rose-600 dark:text-rose-400">{headersErr}</div>
-                )}
-              </div>
-            </Collapsible>
-          </div>
+          <ProviderHeadersAccordion
+            title="高级：自定义请求头 (JSON · 实时反映当前鉴权与协议头)"
+            subtitle="修改上方密钥或协议会同步更新，可直接追加额外字段"
+            open={headersEditor.headersOpen}
+            onToggle={() => headersEditor.setHeadersOpen((v) => !v)}
+            headersText={headersEditor.headersText}
+            headersErr={headersEditor.headersErr}
+            onChange={headersEditor.handleHeadersJsonChange}
+            onReset={headersEditor.resetAutoHeaders}
+            variant="wizard"
+          />
 
           {statusMsg && (
             <div

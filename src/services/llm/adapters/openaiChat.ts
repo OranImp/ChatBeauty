@@ -1,34 +1,22 @@
 import type { ModelDefinition, ProviderConfig } from '@/types/chat';
 import type { ChatStreamCallbacks, ChatStreamRequest, LLMProviderAdapter } from '@/types/provider';
-import { SSEParser } from '@/services/llm/sseParser';
-import { simpleRequest, streamRequest } from '@/services/transport/streamHttp';
 import {
   buildEffectiveProviderHeaders,
+  buildProtocolModelsUrl,
   deepMergePayload,
   extractTextFromParts,
-  resolveEffectiveParams,
+  fetchJsonWithAuth,
+  resolveRequestExecutionContext,
   sliceContextMessages,
+  streamSseJsonEvents,
   toModelDefinition,
-  toStableSessionId,
   trimBaseUrl,
 } from './shared';
-import {
-  coerceReasoningEffort,
-  resolveModelReasoningProfile,
-} from '@/services/llm/modelProfiles';
 
 function buildChatEndpoint(baseUrl: string): string {
   const clean = trimBaseUrl(baseUrl) || 'https://api.openai.com/v1';
   if (clean.endsWith('/chat/completions')) return clean;
   return `${clean}/chat/completions`;
-}
-
-function buildModelsEndpoint(baseUrl: string): string {
-  const clean = trimBaseUrl(baseUrl) || 'https://api.openai.com/v1';
-  if (clean.endsWith('/chat/completions')) {
-    return clean.replace(/\/chat\/completions$/, '/models');
-  }
-  return clean.endsWith('/models') ? clean : `${clean}/models`;
 }
 
 export class OpenAIChatAdapter implements LLMProviderAdapter {
@@ -70,18 +58,8 @@ export class OpenAIChatAdapter implements LLMProviderAdapter {
       }
     }
 
-    const modelDef = req.provider.models.find((m) => m.id === req.modelId);
-    const modelParams = req.modelParams ?? modelDef?.params;
-    const profile =
-      req.reasoningProfile ??
-      resolveModelReasoningProfile({
-        modelId: req.modelId,
-        protocol: 'openai-chat',
-        modelDef,
-      }).profile;
-    const effort = coerceReasoningEffort(req.generation.reasoningEffort, profile);
-    const activeLevel = profile.levels.find((l) => l.value === effort);
-    const effective = resolveEffectiveParams(req.generation, modelParams, req.conversationParams);
+    const { profile, effort, activeLevel, effective, allowSampling } =
+      resolveRequestExecutionContext(req, 'openai-chat');
 
     const modelLower = req.modelId.toLowerCase();
     const usesMaxCompletionTokens = /(^|\/)(o[134]($|[-._])|gpt-[56]($|[-._]))/.test(modelLower);
@@ -101,10 +79,6 @@ export class OpenAIChatAdapter implements LLMProviderAdapter {
       }
     }
 
-    const thinkingActive = profile.strategy !== 'none' && effort !== 'off';
-    const allowSampling = thinkingActive
-      ? profile.supportsSamplingWhenThinking !== false
-      : profile.supportsSamplingWhenOff !== false;
     if (allowSampling) {
       if (effective.temperature !== undefined) payload.temperature = effective.temperature;
       if (effective.topP !== undefined) payload.top_p = effective.topP;
@@ -167,105 +141,73 @@ export class OpenAIChatAdapter implements LLMProviderAdapter {
       sessionId: req.sessionId,
     });
 
-    const parser = new SSEParser();
-
-    const handleEventData = (raw: string) => {
-      if (raw === '[DONE]') return;
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(raw) as Record<string, unknown>;
-      } catch {
-        return;
-      }
-
-      if (parsed.error && typeof parsed.error === 'object') {
-        const errObj = parsed.error as { message?: string };
-        throw new Error(errObj.message || 'OpenAI Chat 流返回错误');
-      }
-
-      const choices = parsed.choices as
-        | Array<{
-            delta?: {
-              content?: string | null;
-              reasoning_content?: string | null;
-              reasoning?: string | null;
-            };
-          }>
-        | undefined;
-
-      const delta = choices?.[0]?.delta;
-      if (delta) {
-        const reasoning = delta.reasoning_content || delta.reasoning;
-        if (typeof reasoning === 'string' && reasoning.length > 0) {
-          callbacks.onReasoningDelta(reasoning);
-        }
-        if (typeof delta.content === 'string' && delta.content.length > 0) {
-          callbacks.onTextDelta(delta.content);
-        }
-      }
-
-      const usage = parsed.usage as
-        | {
-            prompt_tokens?: number;
-            completion_tokens?: number;
-            total_tokens?: number;
-            completion_tokens_details?: { reasoning_tokens?: number };
-          }
-        | undefined;
-      if (
-        usage &&
-        (typeof usage.prompt_tokens === 'number' ||
-          typeof usage.completion_tokens === 'number' ||
-          typeof usage.total_tokens === 'number')
-      ) {
-        callbacks.onUsage?.({
-          inputTokens: usage.prompt_tokens,
-          outputTokens: usage.completion_tokens,
-          reasoningTokens: usage.completion_tokens_details?.reasoning_tokens,
-          totalTokens: usage.total_tokens,
-        });
-      }
-    };
-
-    await streamRequest({
-      url: endpoint,
-      method: 'POST',
-      headers,
-      body,
-      signal,
-      onChunk: (chunk) => {
-        for (const evt of parser.feed(chunk)) {
-          handleEventData(evt.data);
-        }
+    await streamSseJsonEvents(
+      {
+        url: endpoint,
+        headers,
+        body,
+        signal,
+        onDone: callbacks.onDone,
       },
-    });
+      (_eventName, parsed) => {
+        if (parsed.error && typeof parsed.error === 'object') {
+          const errObj = parsed.error as { message?: string };
+          throw new Error(errObj.message || 'OpenAI Chat 流返回错误');
+        }
 
-    for (const evt of parser.flush()) {
-      handleEventData(evt.data);
-    }
+        const choices = parsed.choices as
+          | Array<{
+              delta?: {
+                content?: string | null;
+                reasoning_content?: string | null;
+                reasoning?: string | null;
+              };
+            }>
+          | undefined;
 
-    callbacks.onDone?.();
+        const delta = choices?.[0]?.delta;
+        if (delta) {
+          const reasoning = delta.reasoning_content || delta.reasoning;
+          if (typeof reasoning === 'string' && reasoning.length > 0) {
+            callbacks.onReasoningDelta(reasoning);
+          }
+          if (typeof delta.content === 'string' && delta.content.length > 0) {
+            callbacks.onTextDelta(delta.content);
+          }
+        }
+
+        const usage = parsed.usage as
+          | {
+              prompt_tokens?: number;
+              completion_tokens?: number;
+              total_tokens?: number;
+              completion_tokens_details?: { reasoning_tokens?: number };
+            }
+          | undefined;
+        if (
+          usage &&
+          (typeof usage.prompt_tokens === 'number' ||
+            typeof usage.completion_tokens === 'number' ||
+            typeof usage.total_tokens === 'number')
+        ) {
+          callbacks.onUsage?.({
+            inputTokens: usage.prompt_tokens,
+            outputTokens: usage.completion_tokens,
+            reasoningTokens: usage.completion_tokens_details?.reasoning_tokens,
+            totalTokens: usage.total_tokens,
+          });
+        }
+      }
+    );
   }
 
   async listModels(provider: ProviderConfig, signal?: AbortSignal): Promise<ModelDefinition[]> {
-    const res = await simpleRequest({
-      url: buildModelsEndpoint(provider.baseUrl),
-      method: 'GET',
-      headers: buildEffectiveProviderHeaders(provider, {
-        includeContentType: false,
-        sessionId: toStableSessionId(`models_${provider.id}`),
-      }),
+    const json = await fetchJsonWithAuth<{ data?: Array<{ id: string }> }>({
+      url: buildProtocolModelsUrl('openai-chat', provider.baseUrl),
+      provider,
+      sessionPrefix: 'models',
       signal,
     });
-    if (res.status < 200 || res.status >= 300) {
-      throw new Error(`拉取模型失败 (HTTP ${res.status}): ${res.body.slice(0, 200)}`);
-    }
-    let json: { data?: Array<{ id: string }> };
-    try {
-      json = JSON.parse(res.body) as typeof json;
-    } catch {
-      throw new Error('拉取模型失败：返回内容非有效 JSON');
-    }
     const list = json.data ?? [];
     return list
       .map((item) => toModelDefinition(item.id))

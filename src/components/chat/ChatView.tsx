@@ -1,14 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { ArrowDown, BatteryCharging } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { getModelDisplayName } from '@/services/llm/adapters/shared';
-import { App as CapApp } from '@capacitor/app';
-import {
-  getAndroidBatteryStatus,
-  getRuntimeEnvironment,
-  openAndroidBatterySettings,
-} from '@/services/transport/streamHttp';
-import type { ContentPart } from '@/types/chat';
+import { getRuntimeEnvironment, openAndroidBatterySettings } from '@/services/transport/streamHttp';
+import { useAndroidBatteryStatus } from '@/hooks/useAndroidBatteryStatus';
+import type { ContentPart, Message, ModelDefinition } from '@/types/chat';
 import type { ResolvedTheme } from '@/components/renderer/svgUtils';
 import type { LightboxPayload } from '@/components/renderer/LightboxModal';
 import type { SettingsTabKey } from '@/components/settings/SettingsModal';
@@ -22,6 +19,8 @@ interface ChatViewProps {
   onOpenSettings: (tab?: SettingsTabKey) => void;
 }
 
+const EMPTY_MESSAGES: Message[] = [];
+
 const STARTER_PROMPTS = [
   '请分步推导傅里叶变换的直觉意义，并用 SVG 绘制时域与频域对照图',
   '用两个半加器和一个或门设计一位全加器，写出布尔代数推导并画电路图',
@@ -30,15 +29,27 @@ const STARTER_PROMPTS = [
 ];
 
 export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSettings }) => {
+  const activeConversationId = useAppStore((s) => s.activeConversationId);
+  const activeConv = useAppStore((s) =>
+    s.activeConversationId
+      ? s.conversations.find((c) => c.id === s.activeConversationId)
+      : undefined
+  );
+  const messages = useAppStore((s) =>
+    s.activeConversationId ? s.messagesByConv[s.activeConversationId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES
+  );
+  const isStreaming = useAppStore((s) =>
+    Boolean(
+      s.activeConversationId &&
+        (s.abortControllers[s.activeConversationId] || s.streamingByConv[s.activeConversationId])
+    )
+  );
+  const isCompacting = useAppStore((s) =>
+    Boolean(s.activeConversationId && s.compactingByConv[s.activeConversationId])
+  );
   const {
-    conversations,
-    messagesByConv,
-    activeConversationId,
     providers,
     appearance,
-    abortControllers,
-    streamingByConv,
-    compactingByConv,
     memoryNotice,
     sendMessage,
     stopStreaming,
@@ -47,7 +58,20 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
     deleteMessage,
     updateAppearance,
     clearMemoryNotice,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((s) => ({
+      providers: s.providers,
+      appearance: s.appearance,
+      memoryNotice: s.memoryNotice,
+      sendMessage: s.sendMessage,
+      stopStreaming: s.stopStreaming,
+      regenerateMessage: s.regenerateMessage,
+      editAndResend: s.editAndResend,
+      deleteMessage: s.deleteMessage,
+      updateAppearance: s.updateAppearance,
+      clearMemoryNotice: s.clearMemoryNotice,
+    }))
+  );
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -57,7 +81,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const scrollBtnPresence = usePresence(showScrollBottom, 180);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
-  const [showBatteryPrompt, setShowBatteryPrompt] = useState(false);
+  const shouldCheckBattery =
+    getRuntimeEnvironment() === 'capacitor' &&
+    (appearance.backgroundGeneration ?? true) &&
+    !appearance.androidBatteryPromptDismissed;
+  const batteryStatus = useAndroidBatteryStatus(shouldCheckBattery);
+  const showBatteryPrompt = shouldCheckBattery && batteryStatus.supported && !batteryStatus.ignoring;
 
   useEffect(() => {
     return () => {
@@ -65,50 +94,49 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
     };
   }, []);
 
-  useEffect(() => {
-    const env = getRuntimeEnvironment();
-    const shouldCheck =
-      env === 'capacitor' &&
-      (appearance.backgroundGeneration ?? true) &&
-      !appearance.androidBatteryPromptDismissed;
-
-    if (!shouldCheck) {
-      setShowBatteryPrompt(false);
-      return;
-    }
-
-    let cancelled = false;
-    const checkBattery = async () => {
-      const status = await getAndroidBatteryStatus();
-      if (!cancelled) {
-        setShowBatteryPrompt(Boolean(status.supported && !status.ignoring));
-      }
-    };
-
-    void checkBattery();
-    let handlePromise: Promise<{ remove: () => Promise<void> }> | null = null;
-    try {
-      handlePromise = CapApp.addListener('appStateChange', ({ isActive }) => {
-        if (isActive) void checkBattery();
-      });
-    } catch {
-      // Ignore outside Capacitor native shell
-    }
-
-    return () => {
-      cancelled = true;
-      if (handlePromise) {
-        void handlePromise.then((h) => h.remove()).catch(() => undefined);
-      }
-    };
-  }, [appearance.backgroundGeneration, appearance.androidBatteryPromptDismissed]);
-
-  const activeConv = conversations.find((c) => c.id === activeConversationId);
-  const messages = activeConv ? messagesByConv[activeConv.id] || [] : [];
-  const isStreaming = Boolean(
-    activeConv && (abortControllers[activeConv.id] || streamingByConv[activeConv.id])
+  const hasConfiguredProvider = useMemo(
+    () => providers.some((p) => p.apiKey.trim().length > 0),
+    [providers]
   );
-  const hasConfiguredProvider = providers.some((p) => p.apiKey.trim().length > 0);
+
+  const modelLookup = useMemo(() => {
+    const byProviderAndModel = new Map<string, ModelDefinition>();
+    const byModel = new Map<string, ModelDefinition>();
+    for (const p of providers) {
+      for (const m of p.models) {
+        byProviderAndModel.set(`${p.id}\0${m.id}`, m);
+        if (!byModel.has(m.id)) {
+          byModel.set(m.id, m);
+        }
+      }
+    }
+    return { byProviderAndModel, byModel };
+  }, [providers]);
+
+  const scrollRafRef = useRef<number | null>(null);
+  const scheduleAutoScroll = useCallback(() => {
+    if (!autoFollowRef.current) return;
+    if (scrollRafRef.current !== null) return;
+    const run = () => {
+      scrollRafRef.current = null;
+      if (!autoFollowRef.current) return;
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      scrollRafRef.current = requestAnimationFrame(run);
+    } else {
+      run();
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (scrollRafRef.current !== null && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(scrollRafRef.current);
+      }
+    };
+  }, []);
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     const el = scrollRef.current;
@@ -135,30 +163,26 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
     autoFollowRef.current = true;
     isProgrammaticScrollRef.current = false;
     setShowScrollBottom(false);
-  }, [activeConversationId]);
+    scheduleAutoScroll();
+  }, [activeConversationId, scheduleAutoScroll]);
 
   useEffect(() => {
-    if (autoFollowRef.current) {
-      const el = scrollRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
-    }
-  }, [messages, activeConversationId]);
+    scheduleAutoScroll();
+  }, [messages.length, scheduleAutoScroll]);
 
   useEffect(() => {
     const el = scrollRef.current;
     const contentEl = contentRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => {
-      if (autoFollowRef.current) {
-        el.scrollTop = el.scrollHeight;
-      }
+      scheduleAutoScroll();
     });
     observer.observe(el);
     if (contentEl) {
       observer.observe(contentEl);
     }
     return () => observer.disconnect();
-  }, [activeConversationId]);
+  }, [activeConversationId, scheduleAutoScroll]);
 
   const handleScroll = () => {
     const el = scrollRef.current;
@@ -180,23 +204,67 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
     setShowScrollBottom(!nearBottom && el.scrollHeight > el.clientHeight + 120);
   };
 
-  const dispatchSend = async (
-    text: string,
-    images?: Array<Extract<ContentPart, { type: 'image' }>>
-  ) => {
-    setErrorBanner(null);
-    autoFollowRef.current = true;
-    try {
-      await sendMessage(text, images);
-    } catch (err) {
-      if (err instanceof Error && err.message === 'NO_PROVIDER_CONFIGURED') {
-        setErrorBanner('尚未配置可用的模型 API Key，请先在设置中添加模型供应商。');
-        onOpenSettings('providers');
-      } else {
-        setErrorBanner(err instanceof Error ? err.message : '发送失败');
+  const dispatchSend = useCallback(
+    async (text: string, images?: Array<Extract<ContentPart, { type: 'image' }>>) => {
+      setErrorBanner(null);
+      autoFollowRef.current = true;
+      try {
+        await sendMessage(text, images);
+      } catch (err) {
+        if (err instanceof Error && err.message === 'NO_PROVIDER_CONFIGURED') {
+          setErrorBanner('尚未配置可用的模型 API Key，请先在设置中添加模型供应商。');
+          onOpenSettings('providers');
+        } else {
+          setErrorBanner(err instanceof Error ? err.message : '发送失败');
+        }
       }
-    }
-  };
+    },
+    [sendMessage, onOpenSettings]
+  );
+
+  const handleRegenerate = useCallback(
+    (id: string) => {
+      void regenerateMessage(id).catch((e) => {
+        if (e instanceof Error && e.message === 'NO_PROVIDER_CONFIGURED') {
+          onOpenSettings('providers');
+        } else if (e instanceof Error) {
+          setErrorBanner(e.message);
+        }
+      });
+    },
+    [regenerateMessage, onOpenSettings]
+  );
+
+  const handleEditResend = useCallback(
+    (id: string, newText: string) => {
+      void editAndResend(id, newText).catch((e) => {
+        if (e instanceof Error && e.message === 'NO_PROVIDER_CONFIGURED') {
+          onOpenSettings('providers');
+        } else if (e instanceof Error) {
+          setErrorBanner(e.message);
+        }
+      });
+    },
+    [editAndResend, onOpenSettings]
+  );
+
+  const handleDeleteMessage = useCallback(
+    (id: string) => {
+      void deleteMessage(id);
+    },
+    [deleteMessage]
+  );
+
+  const handleComposerSend = useCallback(
+    (t: string, imgs?: Array<Extract<ContentPart, { type: 'image' }>>) => {
+      void dispatchSend(t, imgs);
+    },
+    [dispatchSend]
+  );
+
+  const handleComposerStop = useCallback(() => {
+    stopStreaming();
+  }, [stopStreaming]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0 relative">
@@ -223,7 +291,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
             <button
               type="button"
               onClick={() => {
-                setShowBatteryPrompt(false);
                 void updateAppearance({ androidBatteryPromptDismissed: true });
               }}
               className="px-2 py-1 rounded-lg border border-borderc text-muted hover:text-fg"
@@ -259,7 +326,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
         </div>
       )}
 
-      {activeConv && compactingByConv[activeConv.id] && (
+      {isCompacting && (
         <div className="cb-panel-enter mx-4 mt-2 px-3.5 py-2 rounded-xl border border-borderc bg-surface/90 text-xs text-muted flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-accent animate-pulse shrink-0" />
           <span>正在自动摘要并压缩较早对话上下文，界面历史将完整保留…</span>
@@ -343,12 +410,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
               </div>
             ) : (
               messages.map((msg) => {
-                const msgProv = msg.providerId
-                  ? providers.find((p) => p.id === msg.providerId)
-                  : undefined;
                 const msgModelDef = msg.modelId
-                  ? msgProv?.models.find((m) => m.id === msg.modelId) ||
-                    providers.flatMap((p) => p.models).find((m) => m.id === msg.modelId)
+                  ? (msg.providerId
+                      ? modelLookup.byProviderAndModel.get(`${msg.providerId}\0${msg.modelId}`)
+                      : undefined) ?? modelLookup.byModel.get(msg.modelId)
                   : undefined;
                 const modelDisplayName = msg.modelId
                   ? getModelDisplayName(msgModelDef, msg.modelId)
@@ -362,25 +427,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
                     appearance={appearance}
                     isConversationStreaming={isStreaming}
                     onInspect={onInspect}
-                    onRegenerate={(id) =>
-                      void regenerateMessage(id).catch((e) => {
-                        if (e instanceof Error && e.message === 'NO_PROVIDER_CONFIGURED') {
-                          onOpenSettings('providers');
-                        } else if (e instanceof Error) {
-                          setErrorBanner(e.message);
-                        }
-                      })
-                    }
-                    onEditResend={(id, newText) =>
-                      void editAndResend(id, newText).catch((e) => {
-                        if (e instanceof Error && e.message === 'NO_PROVIDER_CONFIGURED') {
-                          onOpenSettings('providers');
-                        } else if (e instanceof Error) {
-                          setErrorBanner(e.message);
-                        }
-                      })
-                    }
-                    onDelete={(id) => void deleteMessage(id)}
+                    onRegenerate={handleRegenerate}
+                    onEditResend={handleEditResend}
+                    onDelete={handleDeleteMessage}
                   />
                   {activeConv?.compactedUntilMessageId === msg.id && (
                     <div className="my-4 flex items-center gap-3 text-[11px] text-muted/85 select-none">
@@ -418,8 +467,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ theme, onInspect, onOpenSett
       </div>
 
       <ChatInput
-        onSend={(t, imgs) => void dispatchSend(t, imgs)}
-        onStop={() => stopStreaming()}
+        onSend={handleComposerSend}
+        onStop={handleComposerStop}
         isStreaming={isStreaming}
         onOpenSettings={onOpenSettings}
         onInspect={onInspect}

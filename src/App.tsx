@@ -1,15 +1,37 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { Capacitor } from '@capacitor/core';
 import { StatusBar, Style } from '@capacitor/status-bar';
 import { App as CapApp } from '@capacitor/app';
 import { useAppStore } from '@/store/useAppStore';
 import type { ResolvedTheme } from '@/components/renderer/svgUtils';
-import { LightboxModal, type LightboxPayload } from '@/components/renderer/LightboxModal';
+import type { LightboxPayload } from '@/components/renderer/LightboxModal';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
 import { ChatView } from '@/components/chat/ChatView';
-import { SettingsModal, type SettingsTabKey } from '@/components/settings/SettingsModal';
+import type { SettingsTabKey } from '@/components/settings/SettingsModal';
 import { syncDesktopBackgroundSettings } from '@/services/transport/streamHttp';
+
+const SettingsModal = lazy(() =>
+  import('@/components/settings/SettingsModal').then((m) => ({ default: m.SettingsModal }))
+);
+const LightboxModal = lazy(() =>
+  import('@/components/renderer/LightboxModal').then((m) => ({ default: m.LightboxModal }))
+);
+
+let serifFontLoaded = false;
+function loadSerifFontOnce(): void {
+  if (serifFontLoaded) return;
+  serifFontLoaded = true;
+  void Promise.all([
+    import('@fontsource/newsreader/latin-400.css'),
+    import('@fontsource/newsreader/latin-500.css'),
+    import('@fontsource/newsreader/latin-600.css'),
+    import('@fontsource/newsreader/latin-400-italic.css'),
+  ]).catch(() => {
+    serifFontLoaded = false;
+  });
+}
 
 function resolveFontFamily(
   kind: 'system' | 'serif' | 'mono' | 'custom',
@@ -52,7 +74,14 @@ function getContrastFg(hex: string): string {
 }
 
 export const App: React.FC = () => {
-  const { ready, appearance, initApp, createConversation } = useAppStore();
+  const { ready, appearance, initApp, createConversation } = useAppStore(
+    useShallow((s) => ({
+      ready: s.ready,
+      appearance: s.appearance,
+      initApp: s.initApp,
+      createConversation: s.createConversation,
+    }))
+  );
 
   const [systemPrefersLight, setSystemPrefersLight] = useState<boolean>(() =>
     typeof window !== 'undefined' && window.matchMedia
@@ -63,12 +92,24 @@ export const App: React.FC = () => {
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState<boolean>(true);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState<boolean>(false);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+  const [hasOpenedSettings, setHasOpenedSettings] = useState<boolean>(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTabKey>('providers');
   const [settingsMobileRoot, setSettingsMobileRoot] = useState<boolean>(true);
   const [lightbox, setLightbox] = useState<LightboxPayload | null>(null);
+  const [hasOpenedLightbox, setHasOpenedLightbox] = useState<boolean>(false);
+
+  if (settingsOpen && !hasOpenedSettings) {
+    setHasOpenedSettings(true);
+  }
+  if (lightbox && !hasOpenedLightbox) {
+    setHasOpenedLightbox(true);
+  }
   const searchInputRef = useRef<HTMLInputElement>(null);
   const mobileSearchInputRef = useRef<HTMLInputElement>(null);
   const settingsBackRef = useRef<(() => boolean) | null>(null);
+  const lastAppHeightRef = useRef<number>(-1);
+  const overlayStateRef = useRef({ lightbox: null as LightboxPayload | null, settingsOpen: false, mobileDrawerOpen: false });
+  overlayStateRef.current = { lightbox, settingsOpen, mobileDrawerOpen };
 
   useEffect(() => {
     void initApp();
@@ -77,8 +118,11 @@ export const App: React.FC = () => {
   useEffect(() => {
     const syncViewportHeight = () => {
       const vv = window.visualViewport;
-      const height = vv ? vv.height : window.innerHeight;
-      document.documentElement.style.setProperty('--app-height', `${Math.round(height)}px`);
+      const height = Math.round(vv ? vv.height : window.innerHeight);
+      if (lastAppHeightRef.current !== height) {
+        lastAppHeightRef.current = height;
+        document.documentElement.style.setProperty('--app-height', `${height}px`);
+      }
       if (window.scrollY !== 0 || window.scrollX !== 0 || (vv && vv.offsetTop !== 0)) {
         window.scrollTo(0, 0);
       }
@@ -111,12 +155,25 @@ export const App: React.FC = () => {
     return appearance.theme;
   }, [appearance.theme, systemPrefersLight]);
 
-  // Apply CSS theme variables & custom CSS
+  // 1. Theme & native Android StatusBar sync
   useEffect(() => {
     const root = document.documentElement;
     root.setAttribute('data-theme', resolvedTheme);
     root.classList.toggle('dark', resolvedTheme !== 'light');
 
+    if (Capacitor.isNativePlatform()) {
+      const bgColor =
+        resolvedTheme === 'oled' ? '#000000' : resolvedTheme === 'dark' ? '#171615' : '#faf9f5';
+      void StatusBar.setBackgroundColor({ color: bgColor }).catch(() => undefined);
+      void StatusBar.setStyle({
+        style: resolvedTheme === 'light' ? Style.Light : Style.Dark,
+      }).catch(() => undefined);
+    }
+  }, [resolvedTheme]);
+
+  // 2. Accent color CSS variables
+  useEffect(() => {
+    const root = document.documentElement;
     const rawAccent = (appearance.accentColor || '#d97757').trim();
     const candidateAccent =
       resolvedTheme === 'light' && rawAccent.toLowerCase() === '#ededed'
@@ -137,7 +194,11 @@ export const App: React.FC = () => {
         `${accentFgRgb.r} ${accentFgRgb.g} ${accentFgRgb.b}`
       );
     }
+  }, [resolvedTheme, appearance.accentColor]);
 
+  // 3. Typography & layout CSS variables
+  useEffect(() => {
+    const root = document.documentElement;
     const uiScale = Math.min(1.35, Math.max(0.85, appearance.uiScale ?? 1.06));
     root.style.fontSize = `${(16 * uiScale).toFixed(2)}px`;
     root.style.setProperty('--chat-font-size', `${appearance.fontSize}px`);
@@ -148,7 +209,21 @@ export const App: React.FC = () => {
       '--chat-font-family',
       resolveFontFamily(appearance.fontFamily, appearance.customFontName)
     );
+    if (appearance.fontFamily === 'serif') {
+      loadSerifFontOnce();
+    }
+  }, [
+    appearance.uiScale,
+    appearance.fontSize,
+    appearance.lineHeight,
+    appearance.mathScale,
+    appearance.contentMaxWidth,
+    appearance.fontFamily,
+    appearance.customFontName,
+  ]);
 
+  // 4. Custom user CSS injection
+  useEffect(() => {
     let styleEl = document.getElementById('chatbeauty-custom-css') as HTMLStyleElement | null;
     if (!styleEl) {
       styleEl = document.createElement('style');
@@ -156,17 +231,7 @@ export const App: React.FC = () => {
       document.head.appendChild(styleEl);
     }
     styleEl.textContent = appearance.customCss || '';
-
-    // Native Android StatusBar sync
-    if (Capacitor.isNativePlatform()) {
-      const bgColor =
-        resolvedTheme === 'oled' ? '#000000' : resolvedTheme === 'dark' ? '#171615' : '#faf9f5';
-      void StatusBar.setBackgroundColor({ color: bgColor }).catch(() => undefined);
-      void StatusBar.setStyle({
-        style: resolvedTheme === 'light' ? Style.Light : Style.Dark,
-      }).catch(() => undefined);
-    }
-  }, [resolvedTheme, appearance]);
+  }, [appearance.customCss]);
 
   useEffect(() => {
     void syncDesktopBackgroundSettings({
@@ -175,16 +240,17 @@ export const App: React.FC = () => {
     });
   }, [appearance.closeToTray, appearance.backgroundGeneration]);
 
-  // Android hardware back button handling
+  // Android hardware back button handling (registered once)
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     const sub = CapApp.addListener('backButton', ({ canGoBack }) => {
-      if (lightbox) {
+      const current = overlayStateRef.current;
+      if (current.lightbox) {
         setLightbox(null);
-      } else if (settingsOpen) {
+      } else if (current.settingsOpen) {
         if (settingsBackRef.current?.()) return;
         setSettingsOpen(false);
-      } else if (mobileDrawerOpen) {
+      } else if (current.mobileDrawerOpen) {
         setMobileDrawerOpen(false);
       } else if (!canGoBack) {
         void CapApp.minimizeApp();
@@ -193,20 +259,21 @@ export const App: React.FC = () => {
     return () => {
       void sub.then((h) => h.remove());
     };
-  }, [lightbox, settingsOpen, mobileDrawerOpen]);
+  }, []);
 
-  // Desktop keyboard shortcuts
+  // Desktop keyboard shortcuts (registered once)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
-      if (!mod || lightbox) return;
+      const current = overlayStateRef.current;
+      if (!mod || current.lightbox) return;
       const key = e.key.toLowerCase();
       if (key === 'n') {
-        if (settingsOpen) return;
+        if (current.settingsOpen) return;
         e.preventDefault();
         void createConversation('新对话');
       } else if (key === 'k') {
-        if (settingsOpen) return;
+        if (current.settingsOpen) return;
         e.preventDefault();
         if (window.innerWidth < 768) {
           setMobileDrawerOpen(true);
@@ -223,9 +290,9 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [createConversation, lightbox, settingsOpen]);
+  }, [createConversation]);
 
-  const openSettings = (tab?: SettingsTabKey) => {
+  const openSettings = useCallback((tab?: SettingsTabKey) => {
     if (tab) {
       setSettingsTab(tab);
       setSettingsMobileRoot(false);
@@ -233,7 +300,19 @@ export const App: React.FC = () => {
       setSettingsMobileRoot(true);
     }
     setSettingsOpen(true);
-  };
+  }, []);
+
+  const handleCloseMobile = useCallback(() => setMobileDrawerOpen(false), []);
+  const handleCollapseDesktop = useCallback(() => setDesktopSidebarOpen(false), []);
+  const handleToggleSidebar = useCallback(() => {
+    if (window.innerWidth < 768) {
+      setMobileDrawerOpen((v) => !v);
+    } else {
+      setDesktopSidebarOpen((v) => !v);
+    }
+  }, []);
+  const handleCloseSettings = useCallback(() => setSettingsOpen(false), []);
+  const handleCloseLightbox = useCallback(() => setLightbox(null), []);
 
   if (!ready) {
     return (
@@ -248,8 +327,8 @@ export const App: React.FC = () => {
       <Sidebar
         desktopOpen={desktopSidebarOpen}
         mobileOpen={mobileDrawerOpen}
-        onCloseMobile={() => setMobileDrawerOpen(false)}
-        onCollapseDesktop={() => setDesktopSidebarOpen(false)}
+        onCloseMobile={handleCloseMobile}
+        onCollapseDesktop={handleCollapseDesktop}
         onOpenSettings={openSettings}
         searchInputRef={searchInputRef}
         mobileSearchInputRef={mobileSearchInputRef}
@@ -258,37 +337,39 @@ export const App: React.FC = () => {
       <main className="flex-1 flex flex-col min-w-0 h-full relative">
         <TopBar
           sidebarOpen={desktopSidebarOpen}
-          onToggleSidebar={() => {
-            if (window.innerWidth < 768) {
-              setMobileDrawerOpen((v) => !v);
-            } else {
-              setDesktopSidebarOpen((v) => !v);
-            }
-          }}
+          onToggleSidebar={handleToggleSidebar}
           onOpenSettings={openSettings}
         />
 
         <ChatView
           theme={resolvedTheme}
-          onInspect={(payload) => setLightbox(payload)}
+          onInspect={setLightbox}
           onOpenSettings={openSettings}
         />
       </main>
 
-      <SettingsModal
-        open={settingsOpen}
-        activeTab={settingsTab}
-        initialMobileRoot={settingsMobileRoot}
-        mobileBackRef={settingsBackRef}
-        onTabChange={setSettingsTab}
-        onClose={() => setSettingsOpen(false)}
-      />
+      {hasOpenedSettings && (
+        <Suspense fallback={null}>
+          <SettingsModal
+            open={settingsOpen}
+            activeTab={settingsTab}
+            initialMobileRoot={settingsMobileRoot}
+            mobileBackRef={settingsBackRef}
+            onTabChange={setSettingsTab}
+            onClose={handleCloseSettings}
+          />
+        </Suspense>
+      )}
 
-      <LightboxModal
-        payload={lightbox}
-        theme={resolvedTheme}
-        onClose={() => setLightbox(null)}
-      />
+      {hasOpenedLightbox && (
+        <Suspense fallback={null}>
+          <LightboxModal
+            payload={lightbox}
+            theme={resolvedTheme}
+            onClose={handleCloseLightbox}
+          />
+        </Suspense>
+      )}
     </div>
   );
 };

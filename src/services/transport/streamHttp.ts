@@ -15,6 +15,7 @@ export interface SimpleHttpOptions {
   method?: string;
   headers?: Record<string, string>;
   body?: string;
+  timeoutMs?: number;
   signal?: AbortSignal;
 }
 
@@ -125,6 +126,66 @@ export function getRuntimeEnvironment(): 'electron' | 'capacitor' | 'web' {
   return 'web';
 }
 
+interface StreamRouterEntry {
+  onChunk: (chunk: string) => void;
+  onEnd: () => void;
+  onError: (error: string) => void;
+}
+
+const electronStreamRoutes = new Map<string, StreamRouterEntry>();
+let boundElectronBridge: ElectronBridge | null = null;
+let electronUnsubs: Array<() => void> = [];
+
+function ensureElectronStreamDispatcher(bridge: ElectronBridge): void {
+  if (boundElectronBridge === bridge) return;
+  for (const unsub of electronUnsubs) {
+    try {
+      unsub();
+    } catch {
+      // Ignore cleanup errors on stale bridge
+    }
+  }
+  electronUnsubs = [
+    bridge.onStreamChunk((data) => {
+      electronStreamRoutes.get(data.requestId)?.onChunk(data.chunk);
+    }),
+    bridge.onStreamEnd((data) => {
+      electronStreamRoutes.get(data.requestId)?.onEnd();
+    }),
+    bridge.onStreamError((data) => {
+      electronStreamRoutes.get(data.requestId)?.onError(data.error || '请求失败');
+    }),
+  ];
+  boundElectronBridge = bridge;
+}
+
+const capacitorStreamRoutes = new Map<string, StreamRouterEntry>();
+let capacitorInitPromise: Promise<void> | null = null;
+
+function ensureCapacitorStreamDispatcher(): Promise<void> {
+  if (!capacitorInitPromise) {
+    capacitorInitPromise = Promise.all([
+      NativeStream.addListener('streamChunk', (data) => {
+        capacitorStreamRoutes.get(data.requestId)?.onChunk(data.chunk);
+      }),
+      NativeStream.addListener('streamEnd', (data) => {
+        capacitorStreamRoutes.get(data.requestId)?.onEnd();
+      }),
+      NativeStream.addListener('streamError', (data) => {
+        capacitorStreamRoutes
+          .get(data.requestId)
+          ?.onError(data.error || `HTTP ${data.status ?? 'Error'}`);
+      }),
+    ])
+      .then(() => undefined)
+      .catch((err) => {
+        capacitorInitPromise = null;
+        throw err;
+      });
+  }
+  return capacitorInitPromise;
+}
+
 export async function streamRequest(options: StreamHttpOptions): Promise<void> {
   const { url, method = 'POST', headers = {}, body, signal, onOpen, onChunk } = options;
 
@@ -137,13 +198,12 @@ export async function streamRequest(options: StreamHttpOptions): Promise<void> {
   if (env === 'electron' && window.electronBridge) {
     const bridge = window.electronBridge;
     const requestId = createRequestId();
+    ensureElectronStreamDispatcher(bridge);
 
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       const cleanup = () => {
-        offChunk();
-        offEnd();
-        offError();
+        electronStreamRoutes.delete(requestId);
         signal?.removeEventListener('abort', onAbort);
       };
 
@@ -155,32 +215,30 @@ export async function streamRequest(options: StreamHttpOptions): Promise<void> {
         reject(new DOMException('Aborted', 'AbortError'));
       };
 
-      const offChunk = bridge.onStreamChunk((data) => {
-        if (data.requestId !== requestId || settled) return;
-        try {
-          onChunk(data.chunk);
-        } catch (err) {
-          settled = true;
-          cleanup();
-          void bridge.abortStream(requestId);
-          reject(err instanceof Error ? err : new Error(String(err)));
-        }
-      });
-
-      const offEnd = bridge.onStreamEnd((data) => {
-        if (data.requestId === requestId && !settled) {
+      electronStreamRoutes.set(requestId, {
+        onChunk: (chunk) => {
+          if (settled) return;
+          try {
+            onChunk(chunk);
+          } catch (err) {
+            settled = true;
+            cleanup();
+            void bridge.abortStream(requestId);
+            reject(err instanceof Error ? err : new Error(String(err)));
+          }
+        },
+        onEnd: () => {
+          if (settled) return;
           settled = true;
           cleanup();
           resolve();
-        }
-      });
-
-      const offError = bridge.onStreamError((data) => {
-        if (data.requestId === requestId && !settled) {
+        },
+        onError: (error) => {
+          if (settled) return;
           settled = true;
           cleanup();
-          reject(new Error(data.error || '请求失败'));
-        }
+          reject(new Error(error));
+        },
       });
 
       signal?.addEventListener('abort', onAbort, { once: true });
@@ -213,14 +271,9 @@ export async function streamRequest(options: StreamHttpOptions): Promise<void> {
     const requestId = createRequestId();
     await new Promise<void>((resolve, reject) => {
       let settled = false;
-      const handles: PluginListenerHandle[] = [];
-
       const cleanup = () => {
+        capacitorStreamRoutes.delete(requestId);
         signal?.removeEventListener('abort', onAbort);
-        while (handles.length > 0) {
-          const h = handles.pop();
-          if (h) void h.remove();
-        }
       };
 
       const onAbort = () => {
@@ -231,58 +284,40 @@ export async function streamRequest(options: StreamHttpOptions): Promise<void> {
         reject(new DOMException('Aborted', 'AbortError'));
       };
 
-      signal?.addEventListener('abort', onAbort, { once: true });
-
-      Promise.allSettled([
-        NativeStream.addListener('streamChunk', (data) => {
-          if (data.requestId !== requestId || settled) return;
+      capacitorStreamRoutes.set(requestId, {
+        onChunk: (chunk) => {
+          if (settled) return;
           try {
-            onChunk(data.chunk);
+            onChunk(chunk);
           } catch (err) {
             settled = true;
             cleanup();
             void NativeStream.abortStream({ requestId });
             reject(err instanceof Error ? err : new Error(String(err)));
           }
-        }),
-        NativeStream.addListener('streamEnd', (data) => {
-          if (data.requestId === requestId && !settled) {
-            settled = true;
-            cleanup();
-            resolve();
-          }
-        }),
-        NativeStream.addListener('streamError', (data) => {
-          if (data.requestId === requestId && !settled) {
-            settled = true;
-            cleanup();
-            reject(new Error(data.error || `HTTP ${data.status ?? 'Error'}`));
-          }
-        }),
-      ])
-        .then((results) => {
-          let firstErr: unknown = null;
-          for (const res of results) {
-            if (res.status === 'fulfilled') {
-              handles.push(res.value);
-            } else if (!firstErr) {
-              firstErr = res.reason;
-            }
-          }
+        },
+        onEnd: () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve();
+        },
+        onError: (error) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(new Error(error));
+        },
+      });
 
+      signal?.addEventListener('abort', onAbort, { once: true });
+
+      ensureCapacitorStreamDispatcher()
+        .then(() => {
           if (settled || signal?.aborted) {
-            cleanup();
             if (!settled) onAbort();
             return;
           }
-
-          if (firstErr) {
-            settled = true;
-            cleanup();
-            reject(firstErr instanceof Error ? firstErr : new Error(String(firstErr)));
-            return;
-          }
-
           return NativeStream.startStream({ requestId, url, method, headers, body }).then((res) => {
             if (settled) return;
             try {
@@ -380,7 +415,7 @@ function raceWithAbort<T>(
 }
 
 export async function simpleRequest(options: SimpleHttpOptions): Promise<SimpleHttpResponse> {
-  const { url, method = 'GET', headers = {}, body, signal } = options;
+  const { url, method = 'GET', headers = {}, body, timeoutMs, signal } = options;
 
   if (signal?.aborted) {
     throw new DOMException('Aborted', 'AbortError');
@@ -391,7 +426,7 @@ export async function simpleRequest(options: SimpleHttpOptions): Promise<SimpleH
     const bridge = window.electronBridge;
     const requestId = createRequestId();
     return raceWithAbort(
-      bridge.simpleRequest({ requestId, url, method, headers, body }),
+      bridge.simpleRequest({ requestId, timeoutMs, url, method, headers, body }),
       signal,
       () => {
         void bridge.abortSimpleRequest?.(requestId);

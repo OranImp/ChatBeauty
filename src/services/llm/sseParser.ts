@@ -34,17 +34,25 @@ export class SSEParser {
     if (normalized.endsWith('\r')) {
       this.pendingCR = true;
     }
-    this.buffer += normalized.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    if (normalized.indexOf('\r') !== -1) {
+      normalized = normalized.replace(/\r\n?/g, '\n');
+    }
+    this.buffer += normalized;
 
     const events: SSEEvent[] = [];
-    let newlineIndex = this.buffer.indexOf('\n');
+    let start = 0;
+    let newlineIndex = this.buffer.indexOf('\n', start);
 
     while (newlineIndex !== -1) {
-      const line = this.buffer.slice(0, newlineIndex);
-      this.buffer = this.buffer.slice(newlineIndex + 1);
+      const line = this.buffer.slice(start, newlineIndex);
+      start = newlineIndex + 1;
       const evt = this.processLine(line);
       if (evt) events.push(evt);
-      newlineIndex = this.buffer.indexOf('\n');
+      newlineIndex = this.buffer.indexOf('\n', start);
+    }
+
+    if (start > 0) {
+      this.buffer = start >= this.buffer.length ? '' : this.buffer.slice(start);
     }
 
     return events;
@@ -99,14 +107,16 @@ export class SSEParser {
       this.currentId = undefined;
       return null;
     }
+    const data =
+      this.dataLines.length === 1 ? this.dataLines[0] : this.dataLines.join('\n');
     const event: SSEEvent = {
       event: this.currentEvent || 'message',
-      data: this.dataLines.join('\n'),
+      data,
       ...(this.currentId !== undefined ? { id: this.currentId } : {}),
     };
     this.currentEvent = 'message';
     this.currentId = undefined;
-    this.dataLines = [];
+    this.dataLines.length = 0;
     return event;
   }
 }

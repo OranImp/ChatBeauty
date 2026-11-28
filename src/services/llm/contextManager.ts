@@ -1,6 +1,6 @@
 import type { Message, ModelDefinition } from '@/types/chat';
 import type { ContextSettings } from '@/types/settings';
-import { extractTextFromParts, sliceContextMessages } from './adapters/shared';
+import { extractTextFromParts } from './adapters/shared';
 
 export interface ContextUsageStats {
   usedTokens: number;
@@ -18,16 +18,28 @@ export interface ContextUsageStats {
   willAutoCompact: boolean;
 }
 
-const CJK_REGEX = /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u3000-\u303f\uff00-\uffef]/g;
+const messageTokenCache = new WeakMap<Message, number>();
 
 /**
- * Estimates token usage for bilingual (CJK + Latin/code) strings.
+ * Estimates token usage for bilingual (CJK + Latin/code) strings without intermediate allocations.
  */
 export function estimateTokens(text: string): number {
   if (!text) return 0;
-  const cjkMatches = text.match(CJK_REGEX);
-  const cjkCount = cjkMatches ? cjkMatches.length : 0;
-  const nonCjkCount = Math.max(0, text.length - cjkCount);
+  let cjkCount = 0;
+  const len = text.length;
+  for (let i = 0; i < len; i++) {
+    const code = text.charCodeAt(i);
+    if (
+      (code >= 0x4e00 && code <= 0x9fff) ||
+      (code >= 0x3040 && code <= 0x30ff) ||
+      (code >= 0xac00 && code <= 0xd7af) ||
+      (code >= 0x3000 && code <= 0x303f) ||
+      (code >= 0xff00 && code <= 0xffef)
+    ) {
+      cjkCount++;
+    }
+  }
+  const nonCjkCount = len - cjkCount;
   return Math.ceil(cjkCount * 0.9 + nonCjkCount * 0.28);
 }
 
@@ -36,6 +48,10 @@ export function estimateTokens(text: string): number {
  * Reasoning blocks are excluded since they are not re-sent on follow-up turns.
  */
 export function estimateMessageTokens(msg: Message): number {
+  if (msg.status !== 'streaming') {
+    const cached = messageTokenCache.get(msg);
+    if (cached !== undefined) return cached;
+  }
   let total = 0;
   for (const part of msg.parts) {
     if (part.type === 'text' && part.text) {
@@ -46,7 +62,11 @@ export function estimateMessageTokens(msg: Message): number {
       total += 256;
     }
   }
-  return total > 0 ? total + 6 : 0;
+  const result = total > 0 ? total + 6 : 0;
+  if (msg.status !== 'streaming') {
+    messageTokenCache.set(msg, result);
+  }
+  return result;
 }
 
 /**
@@ -132,17 +152,33 @@ export function computeContextUsageStats(options: {
   maxContextMessages: number;
 }): ContextUsageStats {
   const allUsable = options.messages.filter((m) => m.role === 'user' || m.role === 'assistant');
-  const activeHistory = selectActiveHistoryMessages(
-    allUsable,
-    options.compactedUntilMessageId
-  );
+  let activeHistory = allUsable;
+  if (options.compactedUntilMessageId) {
+    const compactIdx = allUsable.findIndex((m) => m.id === options.compactedUntilMessageId);
+    if (compactIdx >= 0) {
+      activeHistory = allUsable.slice(compactIdx + 1);
+    }
+  }
   const compactedMessageCount = Math.max(0, allUsable.length - activeHistory.length);
-  const sentMessages = sliceContextMessages(activeHistory, options.maxContextMessages);
+  const sentMessages =
+    options.maxContextMessages > 0 && activeHistory.length > options.maxContextMessages
+      ? activeHistory.slice(-options.maxContextMessages)
+      : activeHistory;
 
   const systemTokens = estimateTokens(options.systemPromptBase);
   const memoryTokens = estimateTokens(options.retrievedMemoriesText || '');
   const summaryTokens = estimateTokens(options.contextSummary || '');
-  const historyTokens = sentMessages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
+
+  const sentCount = sentMessages.length;
+  const msgTokens = new Array<number>(sentCount);
+  const prefixTokens = new Array<number>(sentCount + 1);
+  prefixTokens[0] = 0;
+  for (let i = 0; i < sentCount; i++) {
+    const t = estimateMessageTokens(sentMessages[i]);
+    msgTokens[i] = t;
+    prefixTokens[i + 1] = prefixTokens[i] + t;
+  }
+  const historyTokens = prefixTokens[sentCount];
   const draftTokens =
     estimateTokens(options.draftText || '') + Math.max(0, options.draftImageCount || 0) * 1024;
 
@@ -152,8 +188,8 @@ export function computeContextUsageStats(options: {
   // Calibrate against the latest valid done assistant message's server input tokens
   // Skip calibration if compaction, sliding-window truncation, or early message deletion invalidated the prior prompt.
   let lastCalibratedIdx = -1;
-  if (activeHistory.length === sentMessages.length) {
-    for (let i = sentMessages.length - 1; i >= 0; i--) {
+  if (activeHistory.length === sentCount) {
+    for (let i = sentCount - 1; i >= 0; i--) {
       const m = sentMessages[i];
       if (m.role === 'assistant' && m.status === 'done' && (m.usage?.inputTokens ?? 0) > 0) {
         const msgTime = m.updatedAt || m.createdAt;
@@ -161,10 +197,7 @@ export function computeContextUsageStats(options: {
           break;
         }
         const estimatedPrefixBeforeCalibrated =
-          systemTokens +
-          memoryTokens +
-          summaryTokens +
-          sentMessages.slice(0, i).reduce((sum, prev) => sum + estimateMessageTokens(prev), 0);
+          systemTokens + memoryTokens + summaryTokens + prefixTokens[i];
         if (
           (m.usage?.inputTokens ?? 0) <=
           Math.max(4000, estimatedPrefixBeforeCalibrated * 2.5)
@@ -185,10 +218,8 @@ export function computeContextUsageStats(options: {
     const calibratedCompletionTokens =
       !hasReasoningPart && (calibratedMsg.usage?.outputTokens ?? 0) > 0
         ? calibratedMsg.usage!.outputTokens!
-        : estimateMessageTokens(calibratedMsg);
-    const tailTokensAfterCalibrated = sentMessages
-      .slice(lastCalibratedIdx + 1)
-      .reduce((sum, m) => sum + estimateMessageTokens(m), 0);
+        : msgTokens[lastCalibratedIdx];
+    const tailTokensAfterCalibrated = historyTokens - prefixTokens[lastCalibratedIdx + 1];
     usedTokens = Math.max(
       0,
       (calibratedMsg.usage?.inputTokens ?? 0) +

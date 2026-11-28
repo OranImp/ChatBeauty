@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   ArrowLeft,
   Check,
@@ -12,6 +13,7 @@ import {
 import { useAppStore } from '@/store/useAppStore';
 import { DEFAULT_RENDER_ENHANCEMENT_PROMPT } from '@/services/prompts/presets';
 import type { SystemPromptPreset } from '@/types/prompt';
+import { useFlashNotice } from '@/hooks/useFlashNotice';
 import {
   SettingsCollapsibleRow,
   SettingsNavRow,
@@ -27,7 +29,16 @@ export const PromptsTab: React.FC = () => {
     deletePromptPreset,
     resetBuiltinPreset,
     updatePromptSettings,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((s) => ({
+      promptPresets: s.promptPresets,
+      promptSettings: s.promptSettings,
+      savePromptPreset: s.savePromptPreset,
+      deletePromptPreset: s.deletePromptPreset,
+      resetBuiltinPreset: s.resetBuiltinPreset,
+      updatePromptSettings: s.updatePromptSettings,
+    }))
+  );
 
   const [renderDraft, setRenderDraft] = useState(promptSettings.renderEnhancementPrompt);
   const [renderPromptOpen, setRenderPromptOpen] = useState(false);
@@ -41,22 +52,24 @@ export const PromptsTab: React.FC = () => {
   }
 
   const [presetDraft, setPresetDraft] = useState<SystemPromptPreset | null>(null);
-  const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  const { notice: savedNotice, showNotice: flash } = useFlashNotice<string>(1800);
 
   useEffect(() => {
     setRenderDraft(promptSettings.renderEnhancementPrompt);
   }, [promptSettings.renderEnhancementPrompt]);
 
   useEffect(() => {
+    if (!editingPresetId) {
+      setPresetDraft(null);
+      return;
+    }
     const found =
-      promptPresets.find((p) => p.id === selectedPresetId) || promptPresets[0] || null;
+      promptPresets.find((p) => p.id === editingPresetId) ||
+      promptPresets.find((p) => p.id === selectedPresetId) ||
+      promptPresets[0] ||
+      null;
     setPresetDraft(found ? structuredClone(found) : null);
-  }, [selectedPresetId, promptPresets]);
-
-  const flash = (msg: string) => {
-    setSavedNotice(msg);
-    setTimeout(() => setSavedNotice(null), 1800);
-  };
+  }, [editingPresetId, selectedPresetId, promptPresets]);
 
   const handleCreateCustom = async () => {
     const custom: SystemPromptPreset = {

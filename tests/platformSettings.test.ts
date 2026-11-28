@@ -11,11 +11,14 @@ vi.mock('@/services/transport/streamHttp', () => ({
   openAndroidBatterySettings: vi.fn(async () => true),
 }));
 
+const mockStoreState = {
+  appearance: DEFAULT_APPEARANCE_SETTINGS,
+  updateAppearance: vi.fn(async () => undefined),
+};
+
 vi.mock('@/store/useAppStore', () => ({
-  useAppStore: () => ({
-    appearance: DEFAULT_APPEARANCE_SETTINGS,
-    updateAppearance: vi.fn(async () => undefined),
-  }),
+  useAppStore: (selector?: (s: typeof mockStoreState) => unknown) =>
+    selector ? selector(mockStoreState) : mockStoreState,
 }));
 
 import { AppearanceTab } from '@/components/settings/AppearanceTab';

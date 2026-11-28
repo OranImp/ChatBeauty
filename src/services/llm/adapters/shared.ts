@@ -4,11 +4,22 @@ import type {
   Message,
   ModelCapabilities,
   ModelDefinition,
+  ProtocolType,
   ProviderConfig,
   ReasoningEffort,
 } from '@/types/chat';
-import type { GenerationSettings } from '@/types/settings';
-import { resolveModelReasoningProfile } from '@/services/llm/modelProfiles';
+import type { ChatStreamRequest } from '@/types/provider';
+import type {
+  GenerationSettings,
+  ModelReasoningProfile,
+  ReasoningLevelOption,
+} from '@/types/settings';
+import {
+  coerceReasoningEffort,
+  resolveModelReasoningProfile,
+} from '@/services/llm/modelProfiles';
+import { SSEParser } from '@/services/llm/sseParser';
+import { simpleRequest, streamRequest } from '@/services/transport/streamHttp';
 
 export function resolveThinkingBudget(effort: ReasoningEffort): number {
   switch (effort) {
@@ -146,11 +157,15 @@ export function trimBaseUrl(url: string): string {
 }
 
 export function extractTextFromParts(parts: ContentPart[]): string {
-  return parts
-    .filter((p): p is Extract<ContentPart, { type: 'text' }> => p.type === 'text')
-    .map((p) => p.text)
-    .join('\n')
-    .trim();
+  if (parts.length === 1) {
+    const p = parts[0];
+    return p.type === 'text' ? p.text.trim() : '';
+  }
+  const texts: string[] = [];
+  for (const p of parts) {
+    if (p.type === 'text') texts.push(p.text);
+  }
+  return texts.join('\n').trim();
 }
 
 export function sliceContextMessages(messages: Message[], maxMessages: number): Message[] {
@@ -159,7 +174,13 @@ export function sliceContextMessages(messages: Message[], maxMessages: number): 
   return usable.slice(-maxMessages);
 }
 
+const MAX_CAPABILITY_CACHE = 512;
+const capabilityCache = new Map<string, ModelCapabilities>();
+
 export function inferModelCapabilities(modelId: string): ModelCapabilities {
+  const cached = capabilityCache.get(modelId);
+  if (cached) return cached;
+
   const id = modelId.toLowerCase();
   const isImageGen =
     id.includes('dall-e') ||
@@ -199,7 +220,7 @@ export function inferModelCapabilities(modelId: string): ModelCapabilities {
       id.includes('vision') ||
       id.includes('vl'));
 
-  return {
+  const result: ModelCapabilities = {
     chat: !isImageGen && !isAudio,
     reasoning: isReasoning,
     vision: isVision,
@@ -207,6 +228,12 @@ export function inferModelCapabilities(modelId: string): ModelCapabilities {
     speechIn: id.includes('whisper') || id.includes('transcribe') || id.includes('gemini'),
     speechOut: id.includes('tts'),
   };
+  capabilityCache.set(modelId, result);
+  if (capabilityCache.size > MAX_CAPABILITY_CACHE) {
+    const oldest = capabilityCache.keys().next().value;
+    if (oldest !== undefined) capabilityCache.delete(oldest);
+  }
+  return result;
 }
 
 export function toModelDefinition(id: string, displayName?: string): ModelDefinition {
@@ -244,9 +271,12 @@ export function isModelReasoningCapable(
 }
 
 export function extractDataUrlParts(dataUrl: string): { mimeType: string; base64: string } | null {
-  const match = /^data:([^;,]+)(?:;[^;,]+)*;base64,(.+)$/is.exec(dataUrl);
+  const commaIdx = dataUrl.indexOf(',');
+  if (commaIdx <= 0 || commaIdx + 1 >= dataUrl.length) return null;
+  const header = dataUrl.slice(0, commaIdx);
+  const match = /^data:([^;,]+)(?:;[^;,]+)*;base64$/i.exec(header);
   if (!match) return null;
-  return { mimeType: match[1], base64: match[2] };
+  return { mimeType: match[1], base64: dataUrl.slice(commaIdx + 1) };
 }
 
 export function parseHttpHeadersJson(raw: string): Record<string, string> {
@@ -329,18 +359,19 @@ export function mergeHeadersCaseInsensitive(
   base: Record<string, string>,
   extra?: Record<string, string>
 ): Record<string, string> {
-  const out: Record<string, string> = { ...base };
-  if (!extra) return out;
+  if (!extra) return { ...base };
+  const byLower = new Map<string, { key: string; value: string }>();
+  for (const [k, v] of Object.entries(base)) {
+    byLower.set(k.toLowerCase(), { key: k, value: v });
+  }
   for (const [k, v] of Object.entries(extra)) {
     const trimmedKey = k.trim();
     if (!trimmedKey || typeof v !== 'string') continue;
-    const lower = trimmedKey.toLowerCase();
-    for (const existingKey of Object.keys(out)) {
-      if (existingKey.toLowerCase() === lower) {
-        delete out[existingKey];
-      }
-    }
-    out[trimmedKey] = v;
+    byLower.set(trimmedKey.toLowerCase(), { key: trimmedKey, value: v });
+  }
+  const out: Record<string, string> = {};
+  for (const entry of byLower.values()) {
+    out[entry.key] = entry.value;
   }
   return out;
 }
@@ -402,4 +433,154 @@ export function extractExtraHeadersFromPreviewJson(
     out[trimmedKey] = v;
   }
   return out;
+}
+
+export function buildProtocolModelsUrl(
+  protocol: ProtocolType,
+  baseUrl: string,
+  options?: { geminiPageSize?: number }
+): string {
+  const defaultBase =
+    protocol === 'gemini'
+      ? 'https://generativelanguage.googleapis.com/v1beta'
+      : protocol === 'anthropic'
+        ? 'https://api.anthropic.com/v1'
+        : 'https://api.openai.com/v1';
+  const clean = trimBaseUrl(baseUrl) || defaultBase;
+
+  if (protocol === 'gemini') {
+    const modelsUrl = clean.endsWith('/models') ? clean : `${clean}/models`;
+    return options?.geminiPageSize ? `${modelsUrl}?pageSize=${options.geminiPageSize}` : modelsUrl;
+  }
+
+  if (protocol === 'anthropic') {
+    if (clean.endsWith('/messages')) {
+      return clean.replace(/\/messages$/, '/models');
+    }
+    if (clean.endsWith('/models')) return clean;
+    if (clean.endsWith('/v1')) return `${clean}/models`;
+    return `${clean}/v1/models`;
+  }
+
+  if (clean.endsWith('/chat/completions')) {
+    return clean.replace(/\/chat\/completions$/, '/models');
+  }
+  if (clean.endsWith('/responses')) {
+    return clean.replace(/\/responses$/, '/models');
+  }
+  return clean.endsWith('/models') ? clean : `${clean}/models`;
+}
+
+export interface RequestExecutionContext {
+  modelDef: ModelDefinition | undefined;
+  modelParams: CustomModelParams | undefined;
+  profile: ModelReasoningProfile;
+  effort: ReasoningEffort;
+  activeLevel: ReasoningLevelOption | undefined;
+  effective: ResolvedEffectiveParams;
+  thinkingActive: boolean;
+  allowSampling: boolean;
+}
+
+export function resolveRequestExecutionContext(
+  req: ChatStreamRequest,
+  protocol: ProtocolType
+): RequestExecutionContext {
+  const modelDef = req.provider.models.find((m) => m.id === req.modelId);
+  const modelParams = req.modelParams ?? modelDef?.params;
+  const profile =
+    req.reasoningProfile ??
+    resolveModelReasoningProfile({
+      modelId: req.modelId,
+      protocol,
+      modelDef,
+    }).profile;
+  const effort = coerceReasoningEffort(req.generation.reasoningEffort, profile);
+  const activeLevel = profile.levels.find((l) => l.value === effort);
+  const effective = resolveEffectiveParams(req.generation, modelParams, req.conversationParams);
+  const thinkingActive = profile.strategy !== 'none' && effort !== 'off';
+  const allowSampling = thinkingActive
+    ? profile.supportsSamplingWhenThinking !== false
+    : profile.supportsSamplingWhenOff !== false;
+
+  return {
+    modelDef,
+    modelParams,
+    profile,
+    effort,
+    activeLevel,
+    effective,
+    thinkingActive,
+    allowSampling,
+  };
+}
+
+export async function streamSseJsonEvents(
+  options: {
+    url: string;
+    headers: Record<string, string>;
+    body: string;
+    signal: AbortSignal;
+    onDone?: () => void;
+  },
+  onEvent: (eventName: string, parsed: Record<string, unknown>) => void
+): Promise<void> {
+  const parser = new SSEParser();
+
+  const dispatch = (eventName: string, rawData: string) => {
+    if (rawData === '[DONE]') return;
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(rawData) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    onEvent(eventName, parsed);
+  };
+
+  await streamRequest({
+    url: options.url,
+    method: 'POST',
+    headers: options.headers,
+    body: options.body,
+    signal: options.signal,
+    onChunk: (chunk) => {
+      for (const evt of parser.feed(chunk)) {
+        dispatch(evt.event, evt.data);
+      }
+    },
+  });
+
+  for (const evt of parser.flush()) {
+    dispatch(evt.event, evt.data);
+  }
+
+  options.onDone?.();
+}
+
+export async function fetchJsonWithAuth<T>(options: {
+  url: string;
+  provider: ProviderConfig;
+  sessionPrefix: string;
+  signal?: AbortSignal;
+  isWebRuntime?: boolean;
+}): Promise<T> {
+  const res = await simpleRequest({
+    url: options.url,
+    method: 'GET',
+    headers: buildEffectiveProviderHeaders(options.provider, {
+      includeContentType: false,
+      sessionId: toStableSessionId(`${options.sessionPrefix}_${options.provider.id}`),
+      isWebRuntime: options.isWebRuntime,
+    }),
+    signal: options.signal,
+  });
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`拉取模型失败 (HTTP ${res.status}): ${res.body.slice(0, 200)}`);
+  }
+  try {
+    return JSON.parse(res.body) as T;
+  } catch {
+    throw new Error('拉取模型失败：返回内容非有效 JSON');
+  }
 }

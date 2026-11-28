@@ -300,6 +300,39 @@ export const BUILTIN_MODEL_PROFILE_RULES: ModelProfileRule[] = [
   { pattern: '(qwen3|glm-4\\.[5-9]|glm-5|doubao-seed|kimi-k2\\.5|kimi-k2-thinking|thinking)', profileId: 'compat-toggle', note: 'Hybrid toggle thinking models' },
 ];
 
+interface CompiledModelRule {
+  re: RegExp | null;
+  profile: ModelReasoningProfile;
+  protocols?: ProtocolType[];
+}
+
+const MAX_REGEX_CACHE = 512;
+const compiledRegexCache = new Map<string, RegExp | null>();
+
+function getCompiledRuleRegex(pattern: string): RegExp | null {
+  if (compiledRegexCache.has(pattern)) {
+    return compiledRegexCache.get(pattern) ?? null;
+  }
+  let re: RegExp | null = null;
+  try {
+    re = new RegExp(pattern, 'i');
+  } catch {
+    re = null;
+  }
+  compiledRegexCache.set(pattern, re);
+  if (compiledRegexCache.size > MAX_REGEX_CACHE) {
+    const oldest = compiledRegexCache.keys().next().value;
+    if (oldest !== undefined) compiledRegexCache.delete(oldest);
+  }
+  return re;
+}
+
+const COMPILED_BUILTIN_RULES: CompiledModelRule[] = BUILTIN_MODEL_PROFILE_RULES.map((rule) => ({
+  re: getCompiledRuleRegex(rule.pattern),
+  profile: BUILTIN_REASONING_PROFILES[rule.profileId] ?? BUILTIN_REASONING_PROFILES.none,
+  protocols: rule.protocols,
+}));
+
 export type ProfileMatchSource =
   | 'model-override'
   | 'custom-rule'
@@ -319,6 +352,25 @@ export function listAllReasoningProfiles(): ModelReasoningProfile[] {
   return Object.values(BUILTIN_REASONING_PROFILES);
 }
 
+function matchCompiledRuleList(
+  rules: CompiledModelRule[],
+  rawLower: string,
+  strippedLower: string,
+  protocol?: ProtocolType
+): ModelReasoningProfile | undefined {
+  for (const rule of rules) {
+    if (rule.protocols && protocol && !rule.protocols.includes(protocol)) {
+      continue;
+    }
+    const re = rule.re;
+    if (!re) continue;
+    if (re.test(rawLower) || (strippedLower && re.test(strippedLower))) {
+      return rule.profile;
+    }
+  }
+  return undefined;
+}
+
 function matchRuleList(
   rules: ModelProfileRule[] | undefined,
   rawLower: string,
@@ -332,13 +384,10 @@ function matchRuleList(
     }
     const profile = getReasoningProfileById(rule.profileId);
     if (!profile) continue;
-    try {
-      const re = new RegExp(rule.pattern, 'i');
-      if (re.test(rawLower) || (strippedLower && re.test(strippedLower))) {
-        return profile;
-      }
-    } catch {
-      // Ignore malformed user regex cleanly
+    const re = getCompiledRuleRegex(rule.pattern);
+    if (!re) continue;
+    if (re.test(rawLower) || (strippedLower && re.test(strippedLower))) {
+      return profile;
     }
   }
   return undefined;
@@ -362,7 +411,7 @@ export function resolveModelReasoningProfile(options: {
 
   const rawLower = (options.modelId || '').trim().toLowerCase();
   const slashIdx = rawLower.lastIndexOf('/');
-  const strippedLower = slashIdx >= 0 ? rawLower.slice(slashIdx + 1) : rawLower;
+  const strippedLower = slashIdx >= 0 ? rawLower.slice(slashIdx + 1) : '';
 
   if (rawLower) {
     const customHit = matchRuleList(options.customRules, rawLower, strippedLower, options.protocol);
@@ -371,8 +420,8 @@ export function resolveModelReasoningProfile(options: {
     const remoteHit = matchRuleList(options.remoteRules, rawLower, strippedLower, options.protocol);
     if (remoteHit) return { profile: remoteHit, source: 'remote-rule' };
 
-    const builtinHit = matchRuleList(
-      BUILTIN_MODEL_PROFILE_RULES,
+    const builtinHit = matchCompiledRuleList(
+      COMPILED_BUILTIN_RULES,
       rawLower,
       strippedLower,
       options.protocol

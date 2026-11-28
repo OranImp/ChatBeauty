@@ -1,15 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   ArrowUp,
   Brain,
   ChevronDown,
-  ChevronRight,
-  ImagePlus,
   Loader2,
   Mic,
-  Minimize2,
   Plus,
-  RotateCcw,
   SlidersHorizontal,
   Square,
   X,
@@ -21,10 +18,9 @@ import {
   prepareImageAttachment,
 } from '@/services/media/imageUtils';
 import { subscribeDesktopClipboardImagePaste } from '@/services/transport/streamHttp';
-import type { ContentPart, Conversation, CustomModelParams, ProviderConfig } from '@/types/chat';
+import type { ContentPart, Conversation, CustomModelParams, Message } from '@/types/chat';
 import type { LightboxPayload } from '@/components/renderer/LightboxModal';
 import { DEFAULT_GENERATION_SETTINGS } from '@/types/settings';
-import { PROTOCOL_TEMPLATES } from '@/services/llm/registry';
 import {
   getModelDisplayName,
   hasCustomModelDisplayName,
@@ -36,15 +32,18 @@ import {
 } from '@/services/llm/contextManager';
 import { formatMemoriesForPrompt, retrieveRelevantMemories } from '@/services/memory/memoryEngine';
 import { composeSystemPrompt } from '@/services/prompts/presets';
-import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
-import { SmoothSlider } from '@/components/ui/SmoothSlider';
 import type { SettingsTabKey } from '@/components/settings/SettingsModal';
-import { Collapsible, usePresence } from '@/components/ui/MotionPrimitives';
+import { usePresence } from '@/components/ui/MotionPrimitives';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import {
   coerceReasoningEffort,
   resolveModelReasoningProfile,
-  type ProfileMatchSource,
 } from '@/services/llm/modelProfiles';
+import { PlusMenuPopover } from './composer/PlusMenuPopover';
+import { ModelPickerPopover } from './composer/ModelPickerPopover';
+import { ReasoningMenuPopover } from './composer/ReasoningMenuPopover';
+import { ParamsMenuPopover } from './composer/ParamsMenuPopover';
+import { ContextMenuPopover } from './composer/ContextMenuPopover';
 
 interface ChatInputProps {
   onSend: (text: string, images?: Array<Extract<ContentPart, { type: 'image' }>>) => void;
@@ -69,13 +68,7 @@ function formatCompactTokens(tokens: number): string {
   return String(tokens);
 }
 
-const SOURCE_LABELS: Record<ProfileMatchSource, string> = {
-  'model-override': '模型自定义',
-  'custom-rule': '自定义规则',
-  'remote-rule': '在线规则',
-  builtin: '自动匹配',
-  fallback: '默认识别',
-};
+const EMPTY_MESSAGES: Message[] = [];
 
 export const ChatInput: React.FC<ChatInputProps> = ({
   onSend,
@@ -84,11 +77,19 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onOpenSettings,
   onInspect,
 }) => {
+  const activeConv = useAppStore((s) =>
+    s.activeConversationId
+      ? s.conversations.find((c) => c.id === s.activeConversationId)
+      : undefined
+  );
+  const convMessages = useAppStore((s) =>
+    s.activeConversationId ? s.messagesByConv[s.activeConversationId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES
+  );
+  const isCompacting = useAppStore((s) =>
+    Boolean(s.activeConversationId && s.compactingByConv[s.activeConversationId])
+  );
   const {
     appearance,
-    conversations,
-    messagesByConv,
-    activeConversationId,
     providers,
     activeProviderId,
     activeModelId,
@@ -96,7 +97,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     contextSettings,
     memorySettings,
     memoryEntries,
-    compactingByConv,
     promptPresets,
     promptSettings,
     modelProfileSync,
@@ -104,7 +104,25 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     setActiveProviderModel,
     updateGeneration,
     compactConversation,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((s) => ({
+      appearance: s.appearance,
+      providers: s.providers,
+      activeProviderId: s.activeProviderId,
+      activeModelId: s.activeModelId,
+      generation: s.generation,
+      contextSettings: s.contextSettings,
+      memorySettings: s.memorySettings,
+      memoryEntries: s.memoryEntries,
+      promptPresets: s.promptPresets,
+      promptSettings: s.promptSettings,
+      modelProfileSync: s.modelProfileSync,
+      updateConversationConfig: s.updateConversationConfig,
+      setActiveProviderModel: s.setActiveProviderModel,
+      updateGeneration: s.updateGeneration,
+      compactConversation: s.compactConversation,
+    }))
+  );
 
   const [text, setText] = useState('');
   const [debouncedDraftText, setDebouncedDraftText] = useState('');
@@ -143,14 +161,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     setActiveMenu(null);
   };
 
-  useEffect(() => {
-    if (!activeMenu) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeAllMenus();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [activeMenu]);
+  useEscapeKey(Boolean(activeMenu), closeAllMenus);
 
   useEffect(() => {
     const onExternalOverlay = (e: Event) => {
@@ -167,9 +178,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     };
   }, []);
 
-  const activeConv = conversations.find((c) => c.id === activeConversationId);
-  const { provider: currentProvider, modelId: currentModelId } =
-    resolveValidProviderAndModel(activeConv, providers, activeProviderId, activeModelId);
+  const { provider: currentProvider, modelId: currentModelId } = useMemo(
+    () =>
+      resolveValidProviderAndModel(activeConv, providers, activeProviderId, activeModelId),
+    [activeConv, providers, activeProviderId, activeModelId]
+  );
   const currentModelDef = currentProvider?.models.find((m) => m.id === currentModelId);
 
   useEffect(() => {
@@ -181,13 +194,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     return () => clearTimeout(timer);
   }, [text]);
 
-  const { profile: reasoningProfile, source: profileSource } = resolveModelReasoningProfile({
-    modelId: currentModelId,
-    protocol: currentProvider?.protocol,
-    modelDef: currentModelDef,
-    customRules: modelProfileSync.customRules,
-    remoteRules: modelProfileSync.remoteRules,
-  });
+  const { profile: reasoningProfile, source: profileSource } = useMemo(
+    () =>
+      resolveModelReasoningProfile({
+        modelId: currentModelId,
+        protocol: currentProvider?.protocol,
+        modelDef: currentModelDef,
+        customRules: modelProfileSync.customRules,
+        remoteRules: modelProfileSync.remoteRules,
+      }),
+    [
+      currentModelId,
+      currentProvider?.protocol,
+      currentModelDef,
+      modelProfileSync.customRules,
+      modelProfileSync.remoteRules,
+    ]
+  );
 
   const effectiveReasoning = coerceReasoningEffort(
     activeConv?.reasoningEffort ?? generation.reasoningEffort,
@@ -435,7 +458,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       reasoningProfile.supportsSamplingWhenThinking === false) ||
     (effectiveReasoning === 'off' && reasoningProfile.supportsSamplingWhenOff === false);
 
-  const convMessages = activeConv ? messagesByConv[activeConv.id] || [] : [];
   const activeWindowMessagesCount = useMemo(
     () => selectActiveHistoryMessages(convMessages, activeConv?.compactedUntilMessageId).length,
     [convMessages, activeConv?.compactedUntilMessageId]
@@ -457,48 +479,87 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     ]
   );
 
+  const recentUserSigRef = useRef<{ sig: string; msgs: Message[] }>({ sig: '', msgs: [] });
+  const recentUserMessages = useMemo(() => {
+    const picked: Message[] = [];
+    for (let i = convMessages.length - 1; i >= 0 && picked.length < 2; i--) {
+      if (convMessages[i].role === 'user') {
+        picked.push(convMessages[i]);
+      }
+    }
+    picked.reverse();
+    const sig = picked.map((m) => `${m.id}:${m.updatedAt}`).join('|');
+    if (sig === recentUserSigRef.current.sig) {
+      return recentUserSigRef.current.msgs;
+    }
+    recentUserSigRef.current = { sig, msgs: picked };
+    return picked;
+  }, [convMessages]);
+
   const relevantMemories = useMemo(
     () =>
-      retrieveRelevantMemories(memoryEntries, debouncedDraftText, convMessages, memorySettings),
-    [memoryEntries, debouncedDraftText, convMessages, memorySettings]
+      retrieveRelevantMemories(
+        memoryEntries,
+        debouncedDraftText,
+        recentUserMessages,
+        memorySettings
+      ),
+    [memoryEntries, debouncedDraftText, recentUserMessages, memorySettings]
   );
   const retrievedMemoriesText = useMemo(
     () => formatMemoriesForPrompt(relevantMemories),
     [relevantMemories]
   );
 
-  const baseContextStats = useMemo(
-    () =>
-      computeContextUsageStats({
-        messages: convMessages,
-        compactedUntilMessageId: activeConv?.compactedUntilMessageId,
-        compactedAt: activeConv?.compactedAt,
-        contextSummary: activeConv?.contextSummary,
-        systemPromptBase,
-        retrievedMemoriesText,
-        draftText: '',
-        draftImageCount: 0,
-        modelId: currentModelId,
-        modelDef: currentModelDef,
-        contextSettings,
-        maxContextMessages: generation.maxContextMessages,
-      }),
-    [
-      convMessages,
-      activeConv?.compactedUntilMessageId,
-      activeConv?.compactedAt,
-      activeConv?.contextSummary,
+  const lastStatsRef = useRef<{
+    convId: string | undefined;
+    stats: ReturnType<typeof computeContextUsageStats>;
+  } | null>(null);
+  const contextPopoverOpen = activeMenu === 'context';
+
+  const baseContextStats = useMemo(() => {
+    if (
+      isStreaming &&
+      !contextPopoverOpen &&
+      lastStatsRef.current &&
+      lastStatsRef.current.convId === activeConv?.id
+    ) {
+      return lastStatsRef.current.stats;
+    }
+    const stats = computeContextUsageStats({
+      messages: convMessages,
+      compactedUntilMessageId: activeConv?.compactedUntilMessageId,
+      compactedAt: activeConv?.compactedAt,
+      contextSummary: activeConv?.contextSummary,
       systemPromptBase,
       retrievedMemoriesText,
-      currentModelId,
-      currentModelDef,
+      draftText: '',
+      draftImageCount: 0,
+      modelId: currentModelId,
+      modelDef: currentModelDef,
       contextSettings,
-      generation.maxContextMessages,
-    ]
-  );
+      maxContextMessages: generation.maxContextMessages,
+    });
+    lastStatsRef.current = { convId: activeConv?.id, stats };
+    return stats;
+  }, [
+    isStreaming,
+    contextPopoverOpen,
+    convMessages,
+    activeConv?.id,
+    activeConv?.compactedUntilMessageId,
+    activeConv?.compactedAt,
+    activeConv?.contextSummary,
+    systemPromptBase,
+    retrievedMemoriesText,
+    currentModelId,
+    currentModelDef,
+    contextSettings,
+    generation.maxContextMessages,
+  ]);
 
   const contextStats = useMemo(() => {
-    const draftTokens = estimateTokens(text) + attachedImages.length * 1024;
+    const draftTokens = estimateTokens(debouncedDraftText) + attachedImages.length * 1024;
     const usedTokens = baseContextStats.usedTokens + draftTokens;
     const ratio =
       baseContextStats.maxTokens > 0 ? Math.min(1, usedTokens / baseContextStats.maxTokens) : 0;
@@ -518,13 +579,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     };
   }, [
     baseContextStats,
-    text,
+    debouncedDraftText,
     attachedImages.length,
     contextSettings.autoCompactEnabled,
     contextSettings.keepRecentMessages,
     activeWindowMessagesCount,
   ]);
-  const isCompacting = Boolean(activeConv && compactingByConv[activeConv.id]);
 
   const popoverPanelWidth =
     renderedMenu === 'model' || renderedMenu === 'params'
@@ -534,8 +594,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         : renderedMenu === 'context'
           ? 'right-0 w-72 sm:w-80 max-w-[calc(100vw-24px)] origin-bottom-right'
           : 'left-0 w-72 max-w-[calc(100vw-24px)] origin-bottom-left';
-
-  let modelRowIdx = 0;
 
   return (
     <div className="relative z-20 px-2 sm:px-6 pt-1 pb-2 safe-bottom shrink-0">
@@ -567,594 +625,118 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             }`}
           >
             <div>
-            {renderedMenu === 'plus' && (
-              <div className="p-3 space-y-3">
-                <div className="space-y-1">
-                  <div className="text-[11px] text-muted px-1">多模态与图片输入</div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveMenu(null);
-                      fileInputRef.current?.click();
-                    }}
-                    className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl bg-surface/75 hover:bg-fg/10 border border-borderc/60 active:scale-[0.985] text-fg transition"
-                  >
-                    <span className="flex items-center gap-2">
-                      <ImagePlus className="w-4 h-4 text-accent" />
-                      <span>上传图片（识图）</span>
-                    </span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-fg/10 text-muted">
-                      {attachedImages.length > 0
-                        ? `已附 ${attachedImages.length}/${MAX_ATTACHED_IMAGES} 张`
-                        : `最多 ${MAX_ATTACHED_IMAGES} 张`}
-                    </span>
-                  </button>
-                </div>
+              {renderedMenu === 'plus' && (
+                <PlusMenuPopover
+                  attachedImagesCount={attachedImages.length}
+                  activeConv={activeConv}
+                  renderEnabled={renderEnabled}
+                  promptPresets={promptPresets}
+                  activePresetId={activePresetId}
+                  onUploadImage={() => {
+                    setActiveMenu(null);
+                    fileInputRef.current?.click();
+                  }}
+                  onOpenPromptsSettings={() => {
+                    setActiveMenu(null);
+                    onOpenSettings('prompts');
+                  }}
+                  onUpdateConversationConfig={updateConversationConfig}
+                />
+              )}
 
-                <div className="pt-2 border-t border-borderc space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-fg">提示词与渲染协议</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveMenu(null);
-                        onOpenSettings('prompts');
-                      }}
-                      className="text-muted hover:text-fg transition"
-                    >
-                      编辑预设
-                    </button>
-                  </div>
+              {renderedMenu === 'model' && (
+                <ModelPickerPopover
+                  providers={providers}
+                  currentProvider={currentProvider}
+                  currentModelId={currentModelId}
+                  collapsedProviders={collapsedProviders}
+                  setCollapsedProviders={setCollapsedProviders}
+                  modelProfileSync={modelProfileSync}
+                  onSelectModel={(providerId, modelId) => {
+                    void setActiveProviderModel(providerId, modelId);
+                    setActiveMenu(null);
+                  }}
+                  onManageProviders={() => {
+                    setActiveMenu(null);
+                    onOpenSettings('providers');
+                  }}
+                />
+              )}
 
-                  {activeConv && (
-                    <>
-                      <div
-                        className="cb-list-item flex items-center justify-between px-2.5 py-2 rounded-xl bg-surface border border-borderc"
-                        style={{ '--stagger-i': 0 } as React.CSSProperties}
-                      >
-                        <span className="text-fg">学术公式与 SVG 渲染增强</span>
-                        <ToggleSwitch
-                          checked={renderEnabled}
-                          onChange={(checked) =>
-                            void updateConversationConfig(activeConv.id, {
-                              enableRenderPrompt: checked,
-                            })
-                          }
-                          ariaLabel="渲染增强"
-                        />
-                      </div>
-
-                      <div className="flex flex-wrap gap-1">
-                        {promptPresets.map((p, idx) => (
-                          <button
-                            key={p.id}
-                            type="button"
-                            onClick={() =>
-                              void updateConversationConfig(activeConv.id, {
-                                systemPromptPresetId: p.id,
-                              })
-                            }
-                            style={{ '--stagger-i': idx + 1 } as React.CSSProperties}
-                            className={`cb-list-item px-2.5 py-1 rounded-lg active:scale-[0.97] transition ${
-                              activePresetId === p.id
-                                ? 'bg-accent text-accentfg font-medium'
-                                : 'bg-surface text-muted hover:text-fg'
-                            }`}
-                          >
-                            {p.name}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {renderedMenu === 'model' && (() => {
-              const isProviderCollapsed = (p: ProviderConfig) =>
-                collapsedProviders[p.id] ?? (providers.length > 2 && p.id !== currentProvider?.id);
-              const allCollapsed =
-                providers.length > 1 && providers.every((p) => isProviderCollapsed(p));
-              const toggleAllProviders = () => {
-                const nextVal = !allCollapsed;
-                const next: Record<string, boolean> = {};
-                for (const p of providers) {
-                  next[p.id] = nextVal;
-                }
-                setCollapsedProviders(next);
-              };
-
-              return (
-              <div className="p-3 max-h-[60vh] overflow-y-auto no-scrollbar space-y-2.5">
-                <div className="flex items-center justify-between gap-2 px-1">
-                  <span className="font-semibold text-fg">切换模型</span>
-                  <div className="flex items-center gap-2.5">
-                    {providers.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={toggleAllProviders}
-                        className="text-muted hover:text-fg transition"
-                      >
-                        {allCollapsed ? '全部展开' : '全部折叠'}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveMenu(null);
-                        onOpenSettings('providers');
-                      }}
-                      className="text-muted hover:text-fg transition"
-                    >
-                      管理供应商
-                    </button>
-                  </div>
-                </div>
-
-                {providers.length === 0 ? (
-                  <div className="cb-list-item p-3 rounded-xl bg-surface text-center space-y-2.5">
-                    <p className="text-muted">尚未添加任何大模型供应商</p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveMenu(null);
-                        onOpenSettings('providers');
-                      }}
-                      className="px-3.5 py-1.5 rounded-xl bg-accent text-accentfg font-medium active:scale-95 transition"
-                    >
-                      添加供应商
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {providers.map((p) => {
-                      const modelList =
-                        p.models.length > 0
-                          ? p.models
-                          : p.defaultModel
-                            ? [{ id: p.defaultModel, name: p.defaultModel, capabilities: { chat: true } }]
-                            : [];
-                      const collapsed = isProviderCollapsed(p);
-                      const isCurrentProvider = currentProvider?.id === p.id;
-                      return (
-                        <div
-                          key={p.id}
-                          className="rounded-xl border border-borderc/60 bg-surface/35 overflow-hidden"
-                        >
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setCollapsedProviders((prev) => ({ ...prev, [p.id]: !collapsed }))
-                            }
-                            aria-expanded={!collapsed}
-                            className="w-full px-2.5 py-2 flex items-center justify-between gap-2 text-[11.5px] text-muted hover:text-fg hover:bg-fg/[0.04] transition"
-                          >
-                            <span className="flex items-center gap-1.5 min-w-0">
-                              <ChevronRight
-                                className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                                  !collapsed ? 'rotate-90 text-fg' : ''
-                                }`}
-                              />
-                              <span className="truncate font-medium text-fg/90">{p.name}</span>
-                              {isCurrentProvider && (
-                                <span
-                                  className="w-1.5 h-1.5 rounded-full bg-accent shrink-0"
-                                  title="当前使用"
-                                />
-                              )}
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-fg/10 text-muted font-mono shrink-0">
-                                {modelList.length}
-                              </span>
-                            </span>
-                            <span className="shrink-0 ml-2 font-mono text-[10px]">
-                              {PROTOCOL_TEMPLATES[p.protocol].shortLabel}
-                            </span>
-                          </button>
-                          <Collapsible open={!collapsed}>
-                            <div className="px-1.5 pb-1.5 pt-1 border-t border-borderc/40 space-y-0.5">
-                              {modelList.map((m) => {
-                                const idx = modelRowIdx++;
-                                const selected = isCurrentProvider && currentModelId === m.id;
-                                const { profile: mProf } = resolveModelReasoningProfile({
-                                  modelId: m.id,
-                                  protocol: p.protocol,
-                                  modelDef: m,
-                                  customRules: modelProfileSync.customRules,
-                                  remoteRules: modelProfileSync.remoteRules,
-                                });
-                                const hasAlias = hasCustomModelDisplayName(m);
-                                const labelText = getModelDisplayName(m, m.id);
-                                return (
-                                  <button
-                                    key={`${p.id}_${m.id}`}
-                                    type="button"
-                                    onClick={() => {
-                                      void setActiveProviderModel(p.id, m.id);
-                                      setActiveMenu(null);
-                                    }}
-                                    style={{ '--stagger-i': idx } as React.CSSProperties}
-                                    className={`cb-list-item w-full text-left px-2.5 py-1.5 rounded-xl flex items-center justify-between gap-2 active:scale-[0.985] transition ${
-                                      selected
-                                        ? 'bg-accent text-accentfg font-medium'
-                                        : 'text-fg hover:bg-fg/5'
-                                    }`}
-                                  >
-                                    <div className="min-w-0 flex-1">
-                                      <div
-                                        className={`truncate ${
-                                          hasAlias ? 'font-sans font-medium' : 'font-mono'
-                                        }`}
-                                      >
-                                        {labelText}
-                                      </div>
-                                      {hasAlias && (
-                                        <div
-                                          className={`text-[10px] font-mono truncate ${
-                                            selected ? 'opacity-80' : 'text-muted/85'
-                                          }`}
-                                        >
-                                          {m.id}
-                                        </div>
-                                      )}
-                                    </div>
-                                    <span
-                                      className={`text-[10px] shrink-0 ${
-                                        selected ? 'opacity-90' : 'text-muted'
-                                      }`}
-                                    >
-                                      {mProf.strategy === 'none'
-                                        ? '标准'
-                                        : mProf.strategy === 'fixed'
-                                          ? '内置思考'
-                                          : `${mProf.levels.length} 档思考`}
-                                    </span>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </Collapsible>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              );
-            })()}
-
-            {renderedMenu === 'reasoning' && (
-              <div className="p-2.5 space-y-1.5">
-                <div className="px-1.5 py-1 flex items-center justify-between gap-2 border-b border-borderc pb-2">
-                  <span className="font-semibold text-fg truncate">
-                    {reasoningProfile.familyName}
-                  </span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-fg/10 text-muted shrink-0">
-                    {SOURCE_LABELS[profileSource]}
-                  </span>
-                </div>
-
-                {reasoningProfile.strategy === 'none' ? (
-                  <div className="cb-list-item p-2.5 space-y-2.5 text-muted leading-relaxed">
-                    <p>当前模型未配备可调思考强度。若这是支持思考的新模型或中转站自定义名称，可在供应商配置中指定思考系列或同步规则库。</p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveMenu(null);
-                        onOpenSettings('providers');
-                      }}
-                      className="w-full px-3 py-1.5 rounded-xl bg-surface hover:bg-fg/10 border border-borderc text-fg font-medium active:scale-95 transition"
-                    >
-                      前往设置思考系列 / 更新规则库
-                    </button>
-                  </div>
-                ) : reasoningProfile.strategy === 'fixed' ? (
-                  <div className="cb-list-item p-2.5 space-y-2.5 text-muted leading-relaxed">
-                    <p>{reasoningProfile.levels[0]?.desc || '模型内置固定思维链推理。'}</p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveMenu(null);
-                        onOpenSettings('providers');
-                      }}
-                      className="w-full px-3 py-1.5 rounded-xl bg-surface hover:bg-fg/10 border border-borderc text-fg font-medium active:scale-95 transition"
-                    >
-                      自定义模型系列映射
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {reasoningProfile.levels.map((opt, idx) => {
-                      const selected = effectiveReasoning === opt.value;
-                      return (
-                        <button
-                          key={opt.value}
-                          type="button"
-                          onClick={() => {
-                            setDraftBudgetOverridden(false);
-                            if (activeConv) {
-                              const patch: Partial<Conversation> = { reasoningEffort: opt.value };
-                              if (activeConv.customParams?.thinkingBudget !== undefined) {
-                                const nextCustom: CustomModelParams = {
-                                  ...activeConv.customParams,
-                                };
-                                delete nextCustom.thinkingBudget;
-                                patch.customParams =
-                                  Object.keys(nextCustom).length > 0 ? nextCustom : undefined;
-                              }
-                              void updateConversationConfig(activeConv.id, patch);
-                            }
-                            void updateGeneration({
-                              reasoningEffort: opt.value,
-                              ...(opt.budgetTokens !== undefined
-                                ? { reasoningBudgetTokens: opt.budgetTokens }
-                                : {}),
-                            });
-                            setActiveMenu(null);
-                          }}
-                          style={{ '--stagger-i': idx } as React.CSSProperties}
-                          className={`cb-list-item w-full text-left px-2.5 py-2 rounded-xl active:scale-[0.985] transition ${
-                            selected
-                              ? 'bg-accent text-accentfg font-medium'
-                              : 'text-fg hover:bg-fg/5'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span>{opt.label}</span>
-                            {selected && <span className="text-[10px]">当前</span>}
-                          </div>
-                          <div
-                            className={`text-[11px] mt-0.5 ${
-                              selected ? 'opacity-85' : 'text-muted'
-                            }`}
-                          >
-                            {opt.desc}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {renderedMenu === 'params' && (
-              <div className="p-3 max-h-[65vh] overflow-y-auto no-scrollbar space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-fg">当前会话参数覆盖</span>
-                  <button
-                    type="button"
-                    onClick={handleResetConvParams}
-                    className="flex items-center gap-1 text-muted hover:text-fg transition"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    <span>恢复默认</span>
-                  </button>
-                </div>
-
-                <div
-                  className="cb-list-item space-y-2.5"
-                  style={{ '--stagger-i': 0 } as React.CSSProperties}
-                >
-                  <label className="block space-y-1">
-                    <div className="flex justify-between text-muted">
-                      <span>Temperature</span>
-                      <span className="font-mono tabular-nums text-fg">
-                        {effectiveTemp.toFixed(2)}
-                      </span>
-                    </div>
-                    <SmoothSlider
-                      min={0}
-                      max={2}
-                      decimals={2}
-                      value={effectiveTemp}
-                      onChange={(val) => patchConvParams({ temperature: val })}
-                      ariaLabel="会话 Temperature"
-                    />
-                  </label>
-
-                  <label className="block space-y-1">
-                    <div className="flex justify-between text-muted">
-                      <span>Top-P</span>
-                      <span className="font-mono tabular-nums text-fg">
-                        {effectiveTopP.toFixed(2)}
-                      </span>
-                    </div>
-                    <SmoothSlider
-                      min={0.05}
-                      max={1}
-                      decimals={2}
-                      value={effectiveTopP}
-                      onChange={(val) => patchConvParams({ topP: val })}
-                      ariaLabel="会话 Top-P"
-                    />
-                  </label>
-
-                  <label className="block space-y-1">
-                    <div className="flex justify-between text-muted">
-                      <span>Max Output Tokens</span>
-                      <span className="font-mono tabular-nums text-fg">{effectiveMaxTokens}</span>
-                    </div>
-                    <SmoothSlider
-                      min={256}
-                      max={32768}
-                      decimals={0}
-                      value={effectiveMaxTokens}
-                      onChange={(val) => patchConvParams({ maxTokens: val })}
-                      ariaLabel="会话 Max Tokens"
-                    />
-                  </label>
-
-                  {showBudgetSlider && (
-                    <label className="block space-y-1">
-                      <div className="flex justify-between items-center text-muted gap-2">
-                        <span className="flex items-center gap-1.5">
-                          <span>思考预算 Tokens</span>
-                          {hasBudgetOverride && (
-                            <button
-                              type="button"
-                              onClick={clearThinkingBudgetOverride}
-                              className="text-[10px] px-1.5 py-0.5 rounded bg-fg/10 text-muted hover:text-fg transition"
-                            >
-                              跟随档位
-                            </button>
-                          )}
-                        </span>
-                        <span className="font-mono tabular-nums text-fg">
-                          {!hasBudgetOverride && effectiveBudget < 0
-                            ? '动态 (-1)'
-                            : effectiveBudget}
-                        </span>
-                      </div>
-                      <SmoothSlider
-                        min={1024}
-                        max={32768}
-                        decimals={0}
-                        value={
-                          effectiveBudget >= 1024
-                            ? Math.min(32768, effectiveBudget)
-                            : 8192
-                        }
-                        onChange={(val) => patchConvParams({ thinkingBudget: val })}
-                        ariaLabel="会话思考预算 Tokens"
-                      />
-                    </label>
-                  )}
-
-                  {samplingAutoOmitted && (
-                    <p className="text-[11px] text-muted leading-snug">
-                      当前模型/思考模式会自动省略 Temperature 与 Top-P 以防请求报错。
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {renderedMenu === 'context' && (
-              <div className="p-3.5 space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-fg">上下文占用统计</span>
-                  <span
-                    className={`font-mono text-[11px] px-2 py-0.5 rounded-full ${
-                      contextStats.ratio >= contextStats.threshold
-                        ? 'bg-rose-500/15 text-rose-700 dark:text-rose-400'
-                        : contextStats.ratio >= 0.6
-                          ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
-                          : 'bg-surface text-muted'
-                    }`}
-                  >
-                    {contextStats.percent}%
-                  </span>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="h-2 rounded-full bg-surface border border-borderc overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-300 ${
-                        contextStats.ratio >= contextStats.threshold
-                          ? 'bg-rose-500'
-                          : contextStats.ratio >= 0.6
-                            ? 'bg-amber-400'
-                            : 'bg-accent'
-                      }`}
-                      style={{ width: `${Math.min(100, Math.max(2, contextStats.percent))}%` }}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between text-[11px] font-mono text-muted">
-                    <span>
-                      {contextStats.usedTokens.toLocaleString()} /{' '}
-                      {contextStats.maxTokens.toLocaleString()} tok
-                    </span>
-                    <span>
-                      {contextSettings.autoCompactEnabled
-                        ? `阈值 ${Math.round(contextStats.threshold * 100)}%`
-                        : '自动压缩关'}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5 pt-2 border-t border-borderc text-[11.5px]">
-                  <div className="flex items-center justify-between text-muted">
-                    <span>系统提示词</span>
-                    <span className="font-mono tabular-nums text-fg">
-                      {contextStats.systemTokens.toLocaleString()} tok
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-muted">
-                    <span>按需记忆注入（{relevantMemories.length} 条）</span>
-                    <span className="font-mono tabular-nums text-fg">
-                      {contextStats.memoryTokens.toLocaleString()} tok
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-muted">
-                    <span>早期摘要（已压缩 {contextStats.compactedMessageCount} 条）</span>
-                    <span className="font-mono tabular-nums text-fg">
-                      {contextStats.summaryTokens.toLocaleString()} tok
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-muted">
-                    <span>活跃对话（{contextStats.activeMessageCount} 条）</span>
-                    <span className="font-mono tabular-nums text-fg">
-                      {contextStats.historyTokens.toLocaleString()} tok
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-muted">
-                    <span>当前输入草稿</span>
-                    <span className="font-mono tabular-nums text-fg">
-                      {contextStats.draftTokens.toLocaleString()} tok
-                    </span>
-                  </div>
-                </div>
-
-                {compactFeedback && (
-                  <div
-                    className={`px-2.5 py-1.5 rounded-xl border text-[11px] ${
-                      compactFeedback.ok
-                        ? 'border-borderc bg-surface text-fg'
-                        : 'border-amber-500/35 bg-amber-500/10 text-amber-800 dark:text-amber-300'
-                    }`}
-                  >
-                    {compactFeedback.text}
-                  </div>
-                )}
-
-                <div className="flex items-center gap-2 pt-1">
-                  <button
-                    type="button"
-                    disabled={
-                      !activeConv ||
-                      isStreaming ||
-                      isCompacting ||
-                      activeWindowMessagesCount <= contextSettings.keepRecentMessages
+              {renderedMenu === 'reasoning' && (
+                <ReasoningMenuPopover
+                  reasoningProfile={reasoningProfile}
+                  profileSource={profileSource}
+                  effectiveReasoning={effectiveReasoning}
+                  onSelectLevel={(effort, budgetTokens) => {
+                    setDraftBudgetOverridden(false);
+                    if (activeConv) {
+                      const patch: Partial<Conversation> = { reasoningEffort: effort };
+                      if (activeConv.customParams?.thinkingBudget !== undefined) {
+                        const nextCustom: CustomModelParams = {
+                          ...activeConv.customParams,
+                        };
+                        delete nextCustom.thinkingBudget;
+                        patch.customParams =
+                          Object.keys(nextCustom).length > 0 ? nextCustom : undefined;
+                      }
+                      void updateConversationConfig(activeConv.id, patch);
                     }
-                    onClick={() => {
-                      if (!activeConv) return;
-                      void compactConversation(activeConv.id).then((res) =>
-                        setCompactFeedback({ ok: res.ok, text: res.message })
-                      );
-                    }}
-                    className="flex-1 flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-borderc bg-surface hover:bg-bg text-fg disabled:opacity-45 disabled:cursor-not-allowed transition"
-                  >
-                    {isCompacting ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Minimize2 className="w-3.5 h-3.5" />
-                    )}
-                    <span>{isCompacting ? '压缩中…' : '立即压缩'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      closeAllMenus();
-                      onOpenSettings('generation');
-                    }}
-                    className="px-2.5 py-1.5 rounded-xl bg-accent/15 text-accent font-medium hover:bg-accent/25 transition"
-                  >
-                    压缩设置
-                  </button>
-                </div>
-              </div>
-            )}
+                    void updateGeneration({
+                      reasoningEffort: effort,
+                      ...(budgetTokens !== undefined
+                        ? { reasoningBudgetTokens: budgetTokens }
+                        : {}),
+                    });
+                    setActiveMenu(null);
+                  }}
+                  onOpenProvidersSettings={() => {
+                    setActiveMenu(null);
+                    onOpenSettings('providers');
+                  }}
+                />
+              )}
+
+              {renderedMenu === 'params' && (
+                <ParamsMenuPopover
+                  effectiveTemp={effectiveTemp}
+                  effectiveTopP={effectiveTopP}
+                  effectiveMaxTokens={effectiveMaxTokens}
+                  effectiveBudget={effectiveBudget}
+                  showBudgetSlider={showBudgetSlider}
+                  hasBudgetOverride={hasBudgetOverride}
+                  samplingAutoOmitted={samplingAutoOmitted}
+                  onPatchParams={patchConvParams}
+                  onClearThinkingBudgetOverride={clearThinkingBudgetOverride}
+                  onResetParams={handleResetConvParams}
+                />
+              )}
+
+              {renderedMenu === 'context' && (
+                <ContextMenuPopover
+                  contextStats={contextStats}
+                  contextSettings={contextSettings}
+                  relevantMemoriesCount={relevantMemories.length}
+                  compactFeedback={compactFeedback}
+                  isCompacting={isCompacting}
+                  canCompact={Boolean(
+                    activeConv &&
+                      !isStreaming &&
+                      !isCompacting &&
+                      activeWindowMessagesCount > contextSettings.keepRecentMessages
+                  )}
+                  onCompactNow={() => {
+                    if (!activeConv) return;
+                    void compactConversation(activeConv.id).then((res) =>
+                      setCompactFeedback({ ok: res.ok, text: res.message })
+                    );
+                  }}
+                  onOpenGenerationSettings={() => {
+                    closeAllMenus();
+                    onOpenSettings('generation');
+                  }}
+                />
+              )}
             </div>
           </div>
         )}

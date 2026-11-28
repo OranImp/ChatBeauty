@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   Cloud,
   Download,
@@ -40,13 +41,21 @@ function formatWebDavHost(endpoint: string): string {
 export const DataSyncTab: React.FC = () => {
   const {
     conversations,
-    messagesByConv,
     activeConversationId,
     webdav,
     updateWebDav,
     prepareForDatabaseRestore,
     reloadFromDatabase,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((s) => ({
+      conversations: s.conversations,
+      activeConversationId: s.activeConversationId,
+      webdav: s.webdav,
+      updateWebDav: s.updateWebDav,
+      prepareForDatabaseRestore: s.prepareForDatabaseRestore,
+      reloadFromDatabase: s.reloadFromDatabase,
+    }))
+  );
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
@@ -89,7 +98,7 @@ export const DataSyncTab: React.FC = () => {
 
   const handleExportCurrent = (format: 'md' | 'html') => {
     if (!activeConv) return;
-    const msgs = messagesByConv[activeConv.id] || [];
+    const msgs = useAppStore.getState().messagesByConv[activeConv.id] || [];
     const safeTitle = activeConv.title.replace(/[\\/:*?"<>|]/g, '_');
     if (format === 'md') {
       const md = exportConversationMarkdown(activeConv, msgs);

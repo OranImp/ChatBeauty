@@ -1,11 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useMemo, useState } from 'react';
 import { Check, Copy, Pencil, RotateCw, Trash2 } from 'lucide-react';
 import type { ContentPart, Message } from '@/types/chat';
 import type { AppearanceSettings } from '@/types/settings';
 import type { ResolvedTheme } from '@/components/renderer/svgUtils';
 import type { LightboxPayload } from '@/components/renderer/LightboxModal';
 import { MessageRenderer } from '@/components/renderer/MessageRenderer';
-import { copyTextSafe } from '@/services/media/clipboard';
+import { useCopyFeedback } from '@/hooks/useCopyFeedback';
 
 interface MessageItemProps {
   message: Message;
@@ -19,7 +19,7 @@ interface MessageItemProps {
   onDelete: (id: string) => void;
 }
 
-export const MessageItem: React.FC<MessageItemProps> = ({
+export const MessageItem: React.FC<MessageItemProps> = memo(({
   message,
   modelDisplayName,
   theme,
@@ -30,35 +30,27 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   onEditResend,
   onDelete,
 }) => {
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback();
   const [editing, setEditing] = useState(false);
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    return () => {
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+  const { rawText, imageParts } = useMemo(() => {
+    const texts: string[] = [];
+    const imgs: Array<Extract<ContentPart, { type: 'image' }>> = [];
+    for (const p of message.parts) {
+      if (p.type === 'text') texts.push(p.text);
+      else if (p.type === 'image') imgs.push(p);
+    }
+    return {
+      rawText: texts.length === 1 ? texts[0] : texts.join('\n'),
+      imageParts: imgs,
     };
-  }, []);
-
-  const rawText = message.parts
-    .filter((p) => p.type === 'text')
-    .map((p) => p.text)
-    .join('\n');
-  const imageParts = message.parts.filter(
-    (p): p is Extract<ContentPart, { type: 'image' }> => p.type === 'image'
-  );
+  }, [message.parts]);
   const [draft, setDraft] = useState(rawText);
 
   const isUser = message.role === 'user';
   const isStreaming = message.status === 'streaming';
 
-  const handleCopy = async () => {
-    if (await copyTextSafe(rawText)) {
-      setCopied(true);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
-    }
-  };
+  const handleCopy = () => copy(rawText);
 
   if (isUser) {
     return (
@@ -265,4 +257,4 @@ export const MessageItem: React.FC<MessageItemProps> = ({
       )}
     </div>
   );
-};
+});

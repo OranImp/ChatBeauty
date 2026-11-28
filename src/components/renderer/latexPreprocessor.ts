@@ -3,9 +3,25 @@ const FENCE_RE = /^([ \t]*)(`{3,}(?=[^`\n]*$)|~{3,})([^\n]*)$/;
 const MATH_ENVS =
   'align\\*?|aligned|equation\\*?|gather\\*?|cases|matrix|pmatrix|bmatrix|vmatrix|Bmatrix|Vmatrix|split';
 
+const ENV_REGEX = new RegExp(
+  `((?<!\\\\)(?:\\\\\\\\)*)(\\\\begin\\{(${MATH_ENVS})\\}(?:[^\\\\]|\\\\[\\s\\S])*?\\\\end\\{\\3\\})`,
+  'g'
+);
+
+function isRepeatedChar(str: string, ch: string): boolean {
+  for (let i = 0; i < str.length; i++) {
+    if (str[i] !== ch) return false;
+  }
+  return str.length > 0;
+}
+
 function protectInlineCodeSpans(text: string, hold: (value: string) => string): string {
-  let out = '';
-  let i = 0;
+  const firstTick = text.indexOf('`');
+  if (firstTick === -1) return text;
+
+  const chunks: string[] = [];
+  let cursor = 0;
+  let i = firstTick;
   const len = text.length;
 
   while (i < len) {
@@ -35,22 +51,26 @@ function protectInlineCodeSpans(text: string, hold: (value: string) => string): 
       }
 
       if (closeStart !== -1) {
+        if (i > cursor) chunks.push(text.slice(cursor, i));
         const spanEnd = closeStart + openLen;
-        out += hold(text.slice(i, spanEnd));
+        chunks.push(hold(text.slice(i, spanEnd)));
         i = spanEnd;
+        cursor = spanEnd;
         continue;
       }
 
-      out += text.slice(i, i + openLen);
       i += openLen;
       continue;
     }
 
-    out += text[i];
-    i++;
+    const nextTick = text.indexOf('`', i + 1);
+    if (nextTick === -1) break;
+    i = nextTick;
   }
 
-  return out;
+  if (chunks.length === 0) return text;
+  if (cursor < len) chunks.push(text.slice(cursor));
+  return chunks.join('');
 }
 
 /**
@@ -92,7 +112,7 @@ export function preprocessLatex(input: string, isStreaming = false): string {
       const trimmed = line.trim();
       if (
         trimmed.length >= fenceLen &&
-        [...trimmed].every((ch) => ch === fenceChar)
+        isRepeatedChar(trimmed, fenceChar)
       ) {
         outLines.push(hold(fenceBuf.join('\n')));
         inFence = false;
@@ -110,93 +130,97 @@ export function preprocessLatex(input: string, isStreaming = false): string {
   // 2. Protect inline code spans (`...`, ``...``, multi-line) per CommonMark
   text = protectInlineCodeSpans(text, hold);
 
-  // 3. Protect existing $$...$$ blocks before normalizing bare environments or \[...\]
-  text = text.replace(/((?<!\\)(?:\\\\)*)\$\$([\s\S]*?(?<!\\)(?:\\\\)*)\$\$/g, (_m, prefix: string, body: string) => {
-    return `${prefix}${hold(`$$${body}$$`)}`;
-  });
+  // Fast-path: no math delimiters or LaTeX escapes outside protected code blocks/spans
+  if (text.indexOf('$') === -1 && text.indexOf('\\') === -1) {
+    if (protectedSlots.length === 0) return text;
+  } else {
+    // 3. Protect existing $$...$$ blocks before normalizing bare environments or \[...\]
+    text = text.replace(/((?<!\\)(?:\\\\)*)\$\$([\s\S]*?(?<!\\)(?:\\\\)*)\$\$/g, (_m, prefix: string, body: string) => {
+      return `${prefix}${hold(`$$${body}$$`)}`;
+    });
 
-  // 4. Wrap and protect bare top-level \begin{align}...\end{align} BEFORE \[...\] so inner \\[6pt] stays intact
-  const envRegex = new RegExp(
-    `((?<!\\\\)(?:\\\\\\\\)*)(\\\\begin\\{(${MATH_ENVS})\\}(?:[^\\\\]|\\\\[\\s\\S])*?\\\\end\\{\\3\\})`,
-    'g'
-  );
-  text = text.replace(envRegex, (_m, prefix: string, block: string) => {
-    return `${prefix}${hold(`\n$$\n${block.trim()}\n$$\n`)}`;
-  });
+    // 4. Wrap and protect bare top-level \begin{align}...\end{align} BEFORE \[...\] so inner \\[6pt] stays intact
+    ENV_REGEX.lastIndex = 0;
+    text = text.replace(ENV_REGEX, (_m, prefix: string, block: string) => {
+      return `${prefix}${hold(`\n$$\n${block.trim()}\n$$\n`)}`;
+    });
 
-  // 5. Convert \[ ... \] display math to $$\n...\n$$ and protect it (even backslash count guard)
-  text = text.replace(/((?<!\\)(?:\\\\)*)\\\[((?:[^\\]|\\[\s\S])*?)\\\]/g, (_m, prefix: string, inner: string) => {
-    const trimmed = inner.trim();
-    if (!trimmed) return prefix;
-    return `${prefix}${hold(`\n$$\n${trimmed}\n$$\n`)}`;
-  });
+    // 5. Convert \[ ... \] display math to $$\n...\n$$ and protect it (even backslash count guard)
+    text = text.replace(/((?<!\\)(?:\\\\)*)\\\[((?:[^\\]|\\[\s\S])*?)\\\]/g, (_m, prefix: string, inner: string) => {
+      const trimmed = inner.trim();
+      if (!trimmed) return prefix;
+      return `${prefix}${hold(`\n$$\n${trimmed}\n$$\n`)}`;
+    });
 
-  // 6. Convert \( ... \) inline math to $...$ and protect from currency escaping
-  text = text.replace(/((?<!\\)(?:\\\\)*)\\\(((?:[^\\]|\\[\s\S])*?)\\\)/g, (_m, prefix: string, inner: string) => {
-    const trimmed = inner.trim();
-    if (!trimmed) return prefix;
-    return `${prefix}${hold(`$${trimmed}$`)}`;
-  });
+    // 6. Convert \( ... \) inline math to $...$ and protect from currency escaping
+    text = text.replace(/((?<!\\)(?:\\\\)*)\\\(((?:[^\\]|\\[\s\S])*?)\\\)/g, (_m, prefix: string, inner: string) => {
+      const trimmed = inner.trim();
+      if (!trimmed) return prefix;
+      return `${prefix}${hold(`$${trimmed}$`)}`;
+    });
 
-  // 7. Escape standalone currency like "$100" when it has no valid math closure on the same line
-  text = text
-    .split('\n')
-    .map((line) => {
-      // Quick check: skip lines with fewer than 1 unescaped $
-      if (!line.includes('$')) return line;
-      // Count unescaped $
-      const positions: number[] = [];
-      for (let i = 0; i < line.length; i++) {
-        if (line[i] === '$' && (i === 0 || line[i - 1] !== '\\')) {
-          positions.push(i);
-        }
-      }
-      if (positions.length === 1) {
-        const pos = positions[0];
-        if (/^\$\d/.test(line.slice(pos))) {
-          return `${line.slice(0, pos)}\\$${line.slice(pos + 1)}`;
-        }
-      }
-      // If multiple $, check currency-looking "$123 " pairs where content between has spaces & words without math ops
-      if (positions.length >= 2) {
-        let updated = '';
-        let cursor = 0;
-        let i = 0;
-        while (i < positions.length) {
-          const p1 = positions[i];
-          const p2 = i + 1 < positions.length ? positions[i + 1] : -1;
-          if (p2 !== -1) {
-            const between = line.slice(p1 + 1, p2);
-            const startsCurrency = /^\d[\d,.]*(?:[kKmMbB%])?(?:\s|$)/.test(between);
-            const hasMathOps = /[\\^_{}=+\-*/<>|]/.test(between);
-            const hasWords = /\s+[A-Za-z\u4e00-\u9fa5]/.test(between);
-            if (startsCurrency && !hasMathOps && hasWords) {
-              updated += `${line.slice(cursor, p1)}\\$${line.slice(p1 + 1, p2)}`;
-              cursor = p2;
-              i += 1;
-              continue;
+    // 7. Escape standalone currency like "$100" when it has no valid math closure on the same line
+    if (text.indexOf('$') !== -1) {
+      text = text
+        .split('\n')
+        .map((line) => {
+          // Quick check: skip lines with fewer than 1 unescaped $
+          if (!line.includes('$')) return line;
+          // Count unescaped $
+          const positions: number[] = [];
+          for (let i = 0; i < line.length; i++) {
+            if (line[i] === '$' && (i === 0 || line[i - 1] !== '\\')) {
+              positions.push(i);
             }
-            i += 2;
-          } else {
-            if (/^\$\d/.test(line.slice(p1))) {
-              updated += `${line.slice(cursor, p1)}\\$`;
-              cursor = p1 + 1;
-            }
-            i += 1;
           }
-        }
-        updated += line.slice(cursor);
-        return updated;
-      }
-      return line;
-    })
-    .join('\n');
+          if (positions.length === 1) {
+            const pos = positions[0];
+            if (/^\$\d/.test(line.slice(pos))) {
+              return `${line.slice(0, pos)}\\$${line.slice(pos + 1)}`;
+            }
+          }
+          // If multiple $, check currency-looking "$123 " pairs where content between has spaces & words without math ops
+          if (positions.length >= 2) {
+            let updated = '';
+            let cursor = 0;
+            let i = 0;
+            while (i < positions.length) {
+              const p1 = positions[i];
+              const p2 = i + 1 < positions.length ? positions[i + 1] : -1;
+              if (p2 !== -1) {
+                const between = line.slice(p1 + 1, p2);
+                const startsCurrency = /^\d[\d,.]*(?:[kKmMbB%])?(?:\s|$)/.test(between);
+                const hasMathOps = /[\\^_{}=+\-*/<>|]/.test(between);
+                const hasWords = /\s+[A-Za-z\u4e00-\u9fa5]/.test(between);
+                if (startsCurrency && !hasMathOps && hasWords) {
+                  updated += `${line.slice(cursor, p1)}\\$${line.slice(p1 + 1, p2)}`;
+                  cursor = p2;
+                  i += 1;
+                  continue;
+                }
+                i += 2;
+              } else {
+                if (/^\$\d/.test(line.slice(p1))) {
+                  updated += `${line.slice(cursor, p1)}\\$`;
+                  cursor = p1 + 1;
+                }
+                i += 1;
+              }
+            }
+            updated += line.slice(cursor);
+            return updated;
+          }
+          return line;
+        })
+        .join('\n');
+    }
 
-  // 8. Streaming tolerance: close dangling unclosed $$ BEFORE restoring protected code/math slots
-  if (isStreaming) {
-    const ddCount = (text.match(/(?<!\\)(?:\\\\)*\$\$/g) || []).length;
-    if (ddCount % 2 === 1) {
-      text = `${text}\n$$`;
+    // 8. Streaming tolerance: close dangling unclosed $$ BEFORE restoring protected code/math slots
+    if (isStreaming) {
+      const ddCount = (text.match(/(?<!\\)(?:\\\\)*\$\$/g) || []).length;
+      if (ddCount % 2 === 1) {
+        text = `${text}\n$$`;
+      }
     }
   }
 

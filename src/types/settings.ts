@@ -5,6 +5,13 @@ export { DEFAULT_MEMORY_SETTINGS, type MemorySettings } from './memory';
 
 export type ThemeMode = 'oled' | 'dark' | 'light' | 'system';
 
+export const THEME_OPTIONS: Array<{ id: ThemeMode; name: string; desc: string }> = [
+  { id: 'dark', name: '暖炭黑', desc: '深邃暖灰' },
+  { id: 'oled', name: 'OLED 纯黑', desc: '纯黑省电' },
+  { id: 'light', name: '暖纸白', desc: '羊皮纸亮色' },
+  { id: 'system', name: '跟随系统', desc: '自动切换' },
+];
+
 export type ReasoningStrategy =
   | 'none'
   | 'openai-effort'

@@ -1,5 +1,13 @@
+import Dexie from 'dexie';
 import { create } from 'zustand';
-import { db, KV_KEYS, loadInitialState, setKv } from '@/db/database';
+import {
+  db,
+  discardPendingSettingsKv,
+  KV_KEYS,
+  loadInitialState,
+  scheduleDebouncedKv,
+  setKv,
+} from '@/db/database';
 import type {
   ContentPart,
   Conversation,
@@ -61,16 +69,60 @@ import {
   syncBackgroundStreamingState,
   writeNativeMemoryFile,
 } from '@/services/transport/streamHttp';
-import { createDemoShowcaseData, DEMO_CONVERSATION_ID } from '@/components/chat/DemoShowcase';
+
+const DEMO_CONVERSATION_ID = 'demo-showcase-full-adder';
+const MAX_CACHED_CONVS = 8;
+const STREAM_DB_FLUSH_MS = 1500;
 
 function uid(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 const deletedConvIds = new Set<string>();
+const recentLoadedConvOrder: string[] = [];
 let memoryNoticeTimer: ReturnType<typeof setTimeout> | null = null;
 let restoreEpoch = 0;
 let memoryWriteQueue: Promise<void> = Promise.resolve();
+
+function touchAndPruneMessagesMap(
+  prevMap: Record<string, Message[]>,
+  keepConvId: string,
+  newList: Message[],
+  activeConversationId: string | null,
+  streamingByConv: Record<string, string>,
+  abortControllers: Record<string, AbortController>,
+  compactingByConv: Record<string, boolean>
+): Record<string, Message[]> {
+  const existingIdx = recentLoadedConvOrder.indexOf(keepConvId);
+  if (existingIdx !== -1) {
+    recentLoadedConvOrder.splice(existingIdx, 1);
+  }
+  recentLoadedConvOrder.push(keepConvId);
+
+  const nextMap: Record<string, Message[]> = {
+    ...prevMap,
+    [keepConvId]: newList,
+  };
+
+  let i = 0;
+  while (recentLoadedConvOrder.length > MAX_CACHED_CONVS && i < recentLoadedConvOrder.length) {
+    const candidateId = recentLoadedConvOrder[i];
+    const isProtected =
+      candidateId === keepConvId ||
+      candidateId === activeConversationId ||
+      Boolean(streamingByConv[candidateId]) ||
+      Boolean(abortControllers[candidateId]) ||
+      Boolean(compactingByConv[candidateId]);
+    if (isProtected) {
+      i += 1;
+      continue;
+    }
+    recentLoadedConvOrder.splice(i, 1);
+    delete nextMap[candidateId];
+  }
+
+  return nextMap;
+}
 
 export function resolveValidProviderAndModel(
   conv: Conversation | undefined,
@@ -203,14 +255,19 @@ interface AppState {
 export const useAppStore = create<AppState>((set, get) => {
   const loadMessagesFor = async (conversationId: string) => {
     const list = await db.messages
-      .where('conversationId')
-      .equals(conversationId)
-      .sortBy('createdAt');
+      .where('[conversationId+createdAt]')
+      .between([conversationId, Dexie.minKey], [conversationId, Dexie.maxKey])
+      .toArray();
     set((s) => ({
-      messagesByConv: {
-        ...s.messagesByConv,
-        [conversationId]: list,
-      },
+      messagesByConv: touchAndPruneMessagesMap(
+        s.messagesByConv,
+        conversationId,
+        list,
+        s.activeConversationId,
+        s.streamingByConv,
+        s.abortControllers,
+        s.compactingByConv
+      ),
     }));
     return list;
   };
@@ -664,10 +721,15 @@ export const useAppStore = create<AppState>((set, get) => {
     let reasoningDurationMs = 0;
     let usage: Message['usage'] | undefined;
     let lastFlush = 0;
+    let dirty = false;
+    let rafId: number | null = null;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    let dbWriteInFlight = false;
 
-    const syncAssistantMessage = (status: Message['status'], error?: string, forceDb = false) => {
-      if (epoch !== restoreEpoch || isConvDeleted(conversation.id)) return;
-
+    const buildAssistantSnapshot = (
+      status: Message['status'],
+      error?: string
+    ): Message => {
       const parts: Message['parts'] = [];
       if (reasoningText) {
         parts.push({
@@ -679,8 +741,7 @@ export const useAppStore = create<AppState>((set, get) => {
       if (answerText) {
         parts.push({ type: 'text', text: answerText });
       }
-
-      const updated: Message = {
+      return {
         ...initialAssistant,
         parts,
         updatedAt: Date.now(),
@@ -688,21 +749,80 @@ export const useAppStore = create<AppState>((set, get) => {
         error,
         status,
       };
+    };
 
-      set((s) => ({
-        messagesByConv: {
-          ...s.messagesByConv,
-          [conversation.id]: (s.messagesByConv[conversation.id] || []).map((m) =>
-            m.id === assistantMsgId ? updated : m
-          ),
-        },
-      }));
+    const applyAssistantSnapshotToStore = (updated: Message) => {
+      set((s) => {
+        const currentList = s.messagesByConv[conversation.id];
+        if (!currentList || currentList.length === 0) return {};
+        let targetIdx = -1;
+        for (let i = currentList.length - 1; i >= 0; i--) {
+          if (currentList[i].id === assistantMsgId) {
+            targetIdx = i;
+            break;
+          }
+        }
+        if (targetIdx === -1) return {};
+        const nextList = currentList.slice();
+        nextList[targetIdx] = updated;
+        return {
+          messagesByConv: {
+            ...s.messagesByConv,
+            [conversation.id]: nextList,
+          },
+        };
+      });
+    };
+
+    const cancelScheduledFlush = () => {
+      if (rafId !== null && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(rafId);
+      }
+      rafId = null;
+      if (timerId !== null) {
+        clearTimeout(timerId);
+      }
+      timerId = null;
+    };
+
+    const flushStreamingSnapshot = () => {
+      cancelScheduledFlush();
+      if (!dirty) return;
+      dirty = false;
+      if (epoch !== restoreEpoch || isConvDeleted(conversation.id)) return;
+
+      const updated = buildAssistantSnapshot('streaming');
+      applyAssistantSnapshotToStore(updated);
 
       const now = Date.now();
-      if (forceDb || now - lastFlush > 380) {
+      if (!dbWriteInFlight && now - lastFlush >= STREAM_DB_FLUSH_MS) {
         lastFlush = now;
-        void db.messages.put(updated);
+        dbWriteInFlight = true;
+        void db.messages
+          .put(updated)
+          .catch(() => undefined)
+          .finally(() => {
+            dbWriteInFlight = false;
+          });
       }
+    };
+
+    const scheduleStreamFlush = () => {
+      dirty = true;
+      if (rafId !== null || timerId !== null) return;
+      if (typeof requestAnimationFrame === 'function') {
+        rafId = requestAnimationFrame(flushStreamingSnapshot);
+      }
+      timerId = setTimeout(flushStreamingSnapshot, 32);
+    };
+
+    const finalizeAssistantMessage = async (status: Message['status'], error?: string) => {
+      cancelScheduledFlush();
+      dirty = false;
+      if (epoch !== restoreEpoch || isConvDeleted(conversation.id)) return;
+      const updated = buildAssistantSnapshot(status, error);
+      applyAssistantSnapshotToStore(updated);
+      await db.messages.put(updated);
     };
 
     try {
@@ -787,14 +907,14 @@ export const useAppStore = create<AppState>((set, get) => {
             if (reasoningStartMs === null) reasoningStartMs = Date.now();
             reasoningText += delta;
             reasoningDurationMs = Date.now() - reasoningStartMs;
-            syncAssistantMessage('streaming');
+            scheduleStreamFlush();
           },
           onTextDelta: (delta) => {
             if (reasoningStartMs !== null && reasoningDurationMs === 0) {
               reasoningDurationMs = Date.now() - reasoningStartMs;
             }
             answerText += delta;
-            syncAssistantMessage('streaming');
+            scheduleStreamFlush();
           },
           onUsage: (u) => {
             usage = u;
@@ -803,16 +923,17 @@ export const useAppStore = create<AppState>((set, get) => {
         controller.signal
       );
 
-      syncAssistantMessage('done', undefined, true);
+      await finalizeAssistantMessage('done');
     } catch (err) {
       const isAbort = err instanceof DOMException && err.name === 'AbortError';
       if (isAbort) {
-        syncAssistantMessage('aborted', undefined, true);
+        await finalizeAssistantMessage('aborted');
       } else {
         const message = err instanceof Error ? err.message : String(err);
-        syncAssistantMessage('error', message, true);
+        await finalizeAssistantMessage('error', message);
       }
     } finally {
+      cancelScheduledFlush();
       const updatedAt = Date.now();
       const staleEpoch = epoch !== restoreEpoch;
       const deleted = staleEpoch || isConvDeleted(conversation.id);
@@ -932,6 +1053,8 @@ export const useAppStore = create<AppState>((set, get) => {
     prepareForDatabaseRestore: () => {
       restoreEpoch += 1;
       deletedConvIds.clear();
+      recentLoadedConvOrder.length = 0;
+      discardPendingSettingsKv();
       Object.values(get().abortControllers).forEach((ctrl) => ctrl.abort());
       set({
         conversations: [],
@@ -954,6 +1077,7 @@ export const useAppStore = create<AppState>((set, get) => {
     openDemoShowcase: async () => {
       get().stopStreaming(DEMO_CONVERSATION_ID);
       deletedConvIds.delete(DEMO_CONVERSATION_ID);
+      const { createDemoShowcaseData } = await import('@/components/chat/DemoShowcase');
       const now = Date.now();
       const rawDemo = createDemoShowcaseData(now);
       const demoConv: Conversation = {
@@ -970,10 +1094,15 @@ export const useAppStore = create<AppState>((set, get) => {
         conversations: [demoConv, ...s.conversations.filter((c) => c.id !== demoConv.id)].sort(
           (a, b) => b.updatedAt - a.updatedAt
         ),
-        messagesByConv: {
-          ...s.messagesByConv,
-          [demoConv.id]: rawDemo.messages,
-        },
+        messagesByConv: touchAndPruneMessagesMap(
+          s.messagesByConv,
+          demoConv.id,
+          rawDemo.messages,
+          demoConv.id,
+          s.streamingByConv,
+          s.abortControllers,
+          s.compactingByConv
+        ),
         activeConversationId: demoConv.id,
       }));
     },
@@ -996,7 +1125,15 @@ export const useAppStore = create<AppState>((set, get) => {
       set((s) => ({
         conversations: [conv, ...s.conversations],
         activeConversationId: conv.id,
-        messagesByConv: { ...s.messagesByConv, [conv.id]: [] },
+        messagesByConv: touchAndPruneMessagesMap(
+          s.messagesByConv,
+          conv.id,
+          [],
+          conv.id,
+          s.streamingByConv,
+          s.abortControllers,
+          s.compactingByConv
+        ),
       }));
       return conv;
     },
@@ -1011,11 +1148,25 @@ export const useAppStore = create<AppState>((set, get) => {
         state.activeProviderId,
         state.activeModelId
       );
-      set({
+      const existingList = state.messagesByConv[id];
+      set((s) => ({
         activeConversationId: id,
         ...(provider ? { activeProviderId: provider.id, activeModelId: modelId } : {}),
-      });
-      if (!get().messagesByConv[id]) {
+        ...(existingList
+          ? {
+              messagesByConv: touchAndPruneMessagesMap(
+                s.messagesByConv,
+                id,
+                existingList,
+                id,
+                s.streamingByConv,
+                s.abortControllers,
+                s.compactingByConv
+              ),
+            }
+          : {}),
+      }));
+      if (!existingList) {
         await loadMessagesFor(id);
       }
     },
@@ -1518,16 +1669,9 @@ export const useAppStore = create<AppState>((set, get) => {
           ? targetProfile.defaultLevel
           : coerceReasoningEffort(currentEffort, targetProfile);
 
-      await setKv(KV_KEYS.ACTIVE_PROVIDER, providerId);
-      await setKv(KV_KEYS.ACTIVE_MODEL, modelId);
       set({ activeProviderId: providerId, activeModelId: modelId });
 
       if (activeConv) {
-        await db.conversations.update(activeConv.id, {
-          providerId,
-          modelId,
-          reasoningEffort: nextEffort,
-        });
         set((s) => ({
           conversations: s.conversations.map((c) =>
             c.id === activeConv.id
@@ -1536,6 +1680,20 @@ export const useAppStore = create<AppState>((set, get) => {
           ),
         }));
       }
+
+      await db.transaction('rw', [db.kv, db.conversations], async () => {
+        await db.kv.bulkPut([
+          { key: KV_KEYS.ACTIVE_PROVIDER, value: providerId },
+          { key: KV_KEYS.ACTIVE_MODEL, value: modelId },
+        ]);
+        if (activeConv) {
+          await db.conversations.update(activeConv.id, {
+            providerId,
+            modelId,
+            reasoningEffort: nextEffort,
+          });
+        }
+      });
     },
 
     fetchProviderModels: async (provider) => {
@@ -1547,39 +1705,53 @@ export const useAppStore = create<AppState>((set, get) => {
     testProviderConnection: async (provider, modelId) => {
       const adapter = getProviderAdapter(provider.protocol);
       const ctrl = new AbortController();
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        ctrl.abort();
+      }, 15_000);
       let snippet = '';
-      await adapter.chatStream(
-        {
-          provider,
-          modelId,
-          systemPrompt: 'Reply strictly with OK.',
-          messages: [
-            {
-              id: 'test_1',
-              conversationId: 'test',
-              role: 'user',
-              parts: [{ type: 'text', text: 'Ping' }],
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-              status: 'done',
+      try {
+        await adapter.chatStream(
+          {
+            provider,
+            modelId,
+            systemPrompt: 'Reply strictly with OK.',
+            messages: [
+              {
+                id: 'test_1',
+                conversationId: 'test',
+                role: 'user',
+                parts: [{ type: 'text', text: 'Ping' }],
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                status: 'done',
+              },
+            ],
+            generation: {
+              ...get().generation,
+              maxTokens: 256,
+              reasoningEffort: 'off',
+              reasoningBudgetTokens: 0,
             },
-          ],
-          generation: {
-            ...get().generation,
-            maxTokens: 256,
-            reasoningEffort: 'off',
-            reasoningBudgetTokens: 0,
+            sessionId: toStableSessionId(`test_${provider.id}`),
           },
-          sessionId: toStableSessionId(`test_${provider.id}`),
-        },
-        {
-          onTextDelta: (d) => {
-            snippet += d;
+          {
+            onTextDelta: (d) => {
+              snippet += d;
+            },
+            onReasoningDelta: () => {},
           },
-          onReasoningDelta: () => {},
-        },
-        ctrl.signal
-      );
+          ctrl.signal
+        );
+      } catch (err) {
+        if (timedOut) {
+          throw new Error('连接测试超时 (15s)');
+        }
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
       return snippet.trim() || '连接正常';
     },
 
@@ -1627,7 +1799,7 @@ export const useAppStore = create<AppState>((set, get) => {
         next = { ...s.appearance, ...patch };
         return { appearance: next };
       });
-      await setKv(KV_KEYS.APPEARANCE, next);
+      scheduleDebouncedKv(KV_KEYS.APPEARANCE, next);
     },
 
     updateGeneration: async (patch) => {
@@ -1636,7 +1808,7 @@ export const useAppStore = create<AppState>((set, get) => {
         next = { ...s.generation, ...patch };
         return { generation: next };
       });
-      await setKv(KV_KEYS.GENERATION, next);
+      scheduleDebouncedKv(KV_KEYS.GENERATION, next);
     },
 
     updateWebDav: async (patch) => {
@@ -1645,7 +1817,7 @@ export const useAppStore = create<AppState>((set, get) => {
         next = { ...s.webdav, ...patch };
         return { webdav: next };
       });
-      await setKv(KV_KEYS.WEBDAV, next);
+      scheduleDebouncedKv(KV_KEYS.WEBDAV, next);
     },
 
     updateModelProfileSync: async (patch) => {
@@ -1710,7 +1882,7 @@ export const useAppStore = create<AppState>((set, get) => {
         next = { ...s.contextSettings, ...patch };
         return { contextSettings: next };
       });
-      await setKv(KV_KEYS.CONTEXT, next);
+      scheduleDebouncedKv(KV_KEYS.CONTEXT, next);
     },
 
     updateMemorySettings: async (patch) => {
@@ -1719,7 +1891,7 @@ export const useAppStore = create<AppState>((set, get) => {
         next = { ...s.memorySettings, ...patch };
         return { memorySettings: next };
       });
-      await setKv(KV_KEYS.MEMORY_SETTINGS, next);
+      scheduleDebouncedKv(KV_KEYS.MEMORY_SETTINGS, next);
     },
 
     saveMemoryDocument: async (markdown) => {

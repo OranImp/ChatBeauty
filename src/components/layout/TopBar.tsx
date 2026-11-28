@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   Download,
   MoreVertical,
@@ -8,10 +9,10 @@ import {
 } from 'lucide-react';
 import { resolveValidProviderAndModel, useAppStore } from '@/store/useAppStore';
 import { getModelDisplayName, hasCustomModelDisplayName } from '@/services/llm/adapters/shared';
-import { exportConversationMarkdown } from '@/db/backup';
 import { triggerDownload } from '@/components/renderer/svgUtils';
 import type { SettingsTabKey } from '@/components/settings/SettingsModal';
 import { usePresence } from '@/components/ui/MotionPrimitives';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 interface TopBarProps {
   sidebarOpen: boolean;
@@ -26,13 +27,21 @@ export const TopBar: React.FC<TopBarProps> = ({
 }) => {
   const {
     conversations,
-    messagesByConv,
     activeConversationId,
     providers,
     activeProviderId,
     activeModelId,
     createConversation,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((s) => ({
+      conversations: s.conversations,
+      activeConversationId: s.activeConversationId,
+      providers: s.providers,
+      activeProviderId: s.activeProviderId,
+      activeModelId: s.activeModelId,
+      createConversation: s.createConversation,
+    }))
+  );
 
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const morePresence = usePresence(moreMenuOpen, 170);
@@ -49,14 +58,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     return () => window.removeEventListener('cb:overlay-open', onOverlayOpen);
   }, []);
 
-  useEffect(() => {
-    if (!moreMenuOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMoreMenuOpen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [moreMenuOpen]);
+  useEscapeKey(moreMenuOpen, () => setMoreMenuOpen(false));
 
   const activeConv = conversations.find((c) => c.id === activeConversationId);
   const { provider: headerProvider, modelId: headerModelId } = resolveValidProviderAndModel(
@@ -69,15 +71,16 @@ export const TopBar: React.FC<TopBarProps> = ({
   const headerModelLabel = getModelDisplayName(headerModelDef, headerModelId);
   const headerModelHasAlias = hasCustomModelDisplayName(headerModelDef);
 
-  const handleExportMd = () => {
+  const handleExportMd = async () => {
     if (!activeConv) return;
-    const msgs = messagesByConv[activeConv.id] || [];
+    setMoreMenuOpen(false);
+    const msgs = useAppStore.getState().messagesByConv[activeConv.id] || [];
+    const { exportConversationMarkdown } = await import('@/db/backup');
     const md = exportConversationMarkdown(activeConv, msgs);
     triggerDownload(
       `${activeConv.title.replace(/[\\/:*?"<>|]/g, '_')}.md`,
       new Blob([md], { type: 'text/markdown;charset=utf-8' })
     );
-    setMoreMenuOpen(false);
   };
 
   return (
